@@ -39,5 +39,7 @@ layout {
     }
   }
   @export_name("u", [*]f32, true);
+  @export_name("tsc", [*]u16, true);        // TSC start/end, 6 x u16 per PE
   @export_name("run", fn(u32, f32)void);    // (timesteps, alpha)
+  @export_name("pack", fn()void);           // copy timestamps into tsc
 }

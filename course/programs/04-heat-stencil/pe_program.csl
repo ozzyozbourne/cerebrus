@@ -9,6 +9,15 @@ param recv_e: color;
 
 const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
 
+// In-kernel timing with the tile's timestamp counter (TSC), as the SDK
+// benchmarks do: t0 when run() starts, t1 just before the last step unblocks
+// the host. Each timestamp is 48 bits in three u16 words.
+const timestamp = @import_module("<time>");
+var t0 = @zeros([3]u16);
+var t1 = @zeros([3]u16);
+var tsc = @zeros([6]u16);              // t0 then t1, exported for the host
+var tsc_ptr: [*]u16 = &tsc;
+
 // u[0] and u[n+1] are ghost cells holding the neighbours' edge values
 // (or the fixed boundary temperature at the two ends of the rod).
 var u: [n + 2]f32;
@@ -26,9 +35,11 @@ const ghost_w    = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{1} -> u[0] });
 const ghost_e    = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{1} -> u[n + 1] });
 
 // One hardware queue per direction (WSE-3 binds each queue to one color).
-// All four IDs differ: on WSE-3 an async fabric op runs on the microthread
-// with its queue's ID, and two concurrent ops must not share a microthread
-// (output queue 2 + input queue 2 would both use microthread 2 -> hang).
+// Queues 0/1 belong to memcpy. All four IDs differ: an async fabric op runs on
+// the microthread whose ID equals its queue ID (always on WSE-2; the default on
+// WSE-3 unless you pass .ut_id), and two concurrent ops must not share a
+// microthread (output queue 2 + input queue 2 would both use microthread 2:
+// the simulator aborts with "trying to term ut_instr[..], but it's not ours").
 const oq_e = @get_output_queue(2);
 const oq_w = @get_output_queue(3);
 const iq_w = @get_input_queue(4);
@@ -76,7 +87,14 @@ fn update() void {
   @fmacs(lap_dsd, lap_dsd, mid, -2.0);
   @fmacs(mid, mid, lap_dsd, alpha);
   step += 1;
-  if (step < steps) start_step() else sys_mod.unblock_cmd_stream();
+  if (step < steps) start_step() else finish();
+}
+
+// Keep this tiny: helpers are inlined into every completion task, so code
+// here makes every step slower. Copying the timestamps is done in pack().
+fn finish() void {
+  timestamp.get_timestamp(&t1);
+  sys_mod.unblock_cmd_stream();
 }
 
 fn op_done() void {
@@ -90,7 +108,16 @@ task t_re() void { op_done(); }
 
 fn run(T: u32, a: f32) void {
   steps = T; step = 0; alpha = a;
-  if (steps == 0) { sys_mod.unblock_cmd_stream(); } else { start_step(); }
+  timestamp.enable_tsc();
+  timestamp.get_timestamp(&t0);
+  if (steps == 0) { finish(); } else { start_step(); }
+}
+
+// Separate RPC, called after run(): copy both timestamps into the export.
+fn pack() void {
+  tsc[0] = t0[0]; tsc[1] = t0[1]; tsc[2] = t0[2];
+  tsc[3] = t1[0]; tsc[4] = t1[1]; tsc[5] = t1[2];
+  sys_mod.unblock_cmd_stream();
 }
 
 comptime {
@@ -107,5 +134,7 @@ comptime {
     @initialize_queue(iq_w, .{ .color = recv_w });
   }
   @export_symbol(u_ptr, "u");
+  @export_symbol(tsc_ptr, "tsc");
   @export_symbol(run);
+  @export_symbol(pack);
 }

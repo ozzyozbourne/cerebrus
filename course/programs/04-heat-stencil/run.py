@@ -25,7 +25,16 @@ rt.memcpy_h2d(us, local.ravel(), 0, 0, P, 1, n + 2, **kw)
 rt.launch('run', np.uint32(args.steps), np.float32(args.alpha), nonblock=False)
 res = np.zeros(P * (n + 2), dtype=np.float32)
 rt.memcpy_d2h(res, us, 0, 0, P, 1, n + 2, **kw)
+# Kernel timing: each PE's TSC at run() start and at the final unblock.
+rt.launch('pack', nonblock=False)
+tw = np.zeros(P * 6, dtype=np.uint32)        # one u16 per 32-bit word
+rt.memcpy_d2h(tw, rt.get_id('tsc'), 0, 0, P, 1, 6, streaming=False,
+              order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_16BIT, nonblock=False)
 rt.stop()
+tw = (tw & 0xffff).astype(np.int64).reshape(P, 6)
+t_start = tw[:, 0] | (tw[:, 1] << 16) | (tw[:, 2] << 32)
+t_end = tw[:, 3] | (tw[:, 4] << 16) | (tw[:, 5] << 32)
+kern = (t_end - t_start).tolist()
 device = res.reshape(P, n + 2)[:, 1:-1].ravel()
 
 # Reference: identical f32 arithmetic on the host
@@ -36,4 +45,8 @@ for _ in range(args.steps):
 np.testing.assert_allclose(device, ref[1:-1], rtol=1e-5, atol=1e-6)
 print(f"{P} PEs x {n} cells, {args.steps} steps; temperature profile (every {max(1, L // 16)}th cell):")
 print(np.array2string(device[:: max(1, L // 16)], precision=3))
+pe = 1 if P > 2 else 0                       # an interior PE when there is one
+print(f"kernel cycles per PE (TSC): {kern}")
+if args.steps > 0:
+    print(f"PE {pe}: {kern[pe]} cycles / {args.steps} steps = {kern[pe] / args.steps:.1f} cycles per step")
 print("SUCCESS!")

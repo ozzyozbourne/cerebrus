@@ -10,7 +10,7 @@ const memcpy = @import_module("<memcpy/get_params>", .{
 layout {
   @set_rectangle(1, 1);
   @set_tile_code(0, 0, "pe_program.csl", .{ .memcpy_params = memcpy.get_params(0), .N = N });
-  @export_name("stats", [*]f32, false);      // false = pointer is immutable (const)
+  @export_name("stats", [*]f32, false);      // false = host may read but not write
   @export_name("count", [*]u32, false);
   @export_name("wait_done", fn()void);   // barrier RPC
 }

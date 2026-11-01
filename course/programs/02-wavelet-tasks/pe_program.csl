@@ -8,6 +8,7 @@ var stats = [4]f32 { 0.0, 0.0, -1.0e30, 1.0e30 };
 var count = [1]u32 { 0 };
 const stats_ptr: [*]f32 = &stats;
 const count_ptr: [*]u32 = &count;
+var host_waiting: bool = false;   // set by wait_done() if it runs before the last task
 
 // The color memcpy streams on is chosen by the host side (a param).
 const h2d_color: color = @get_color(@bitcast(u16, sys_mod.MEMCPYH2D_1));
@@ -32,7 +33,6 @@ task on_value(v: f32) void {
 // RPC the host calls after streaming. A streaming memcpy_h2d "completes" as
 // soon as all wavelets are injected -- NOT when the data tasks have consumed
 // them. Without this barrier the host reads half-finished statistics.
-var host_waiting: bool = false;
 fn wait_done() void {
   if (count[0] == @as(u32, N)) {
     sys_mod.unblock_cmd_stream();     // all done already
@@ -43,7 +43,8 @@ fn wait_done() void {
 
 comptime {
   @bind_data_task(on_value, recv_task_id);
-  @initialize_queue(h2d_iq, .{ .color = h2d_color });
+  // WSE-3 only: connect the color to input queue 2 (WSE-2 binds the color directly).
+  if (@is_arch("wse3")) @initialize_queue(h2d_iq, .{ .color = h2d_color });
   @export_symbol(stats_ptr, "stats");
   @export_symbol(count_ptr, "count");
   @export_symbol(wait_done);
