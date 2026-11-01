@@ -57,10 +57,18 @@ const CHAPTERS = [
 // Small helpers used by chapter widgets
 const $ = (s, r = document) => r.querySelector(s);
 const svgNS = "http://www.w3.org/2000/svg";
+// Colours passed as cssVar("--x") become live CSS variables (set via inline style),
+// so drawings follow the light/dark theme toggle without being redrawn.
+const STYLE_ATTRS = new Set(["fill", "stroke", "stop-color", "color"]);
 function el(tag, attrs = {}, parent) {
   const e = document.createElementNS(svgNS, tag);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  for (const k in attrs) {
+    const v = attrs[k];
+    if (STYLE_ATTRS.has(k) && typeof v === "string" && v.startsWith("var(")) e.style.setProperty(k, v);
+    else e.setAttribute(k, v);
+  }
   if (parent) parent.appendChild(e);
   return e;
 }
-function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function cssVar(name) { return `var(${name})`; }
+function cssValue(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }

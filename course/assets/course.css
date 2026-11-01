@@ -175,3 +175,17 @@ pre.output code { color: inherit; }
 .seq text { font-size: 12px; }
 pre, code, .code-tour, .readout { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
 .grid2 > * { min-width: 0; }
+
+/* --- shared fixes after review --- */
+/* Button text must stay readable on the light-orange dark-mode accent. */
+:root { --on-accent: #ffffff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-accent: #1b1e25; } }
+:root[data-theme="dark"] { --on-accent: #1b1e25; }
+.btn { color: var(--on-accent); }
+.tabs button.on, .code-tour .pin { color: var(--on-accent) !important; }
+/* Phones: keep diagrams and widgets at a legible minimum width; they scroll inside their own box. */
+@media (max-width: 680px) {
+  figure, .widget { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  figure > svg, .widget > svg { min-width: 620px; }
+  figure > figcaption { position: sticky; left: 0; max-width: calc(100vw - 64px); }
+}
