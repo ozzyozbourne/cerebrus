@@ -766,7 +766,7 @@ const SVGT = (p, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y
 
 /* ---------- interleaved vs sharded ---------- */
 (function () {
-  const pal = n => Array.from({ length: n }, (_, i) => `hsl(${Math.round(i * 360 / n)}, 70%, 72%)`);
+  const pal = n => Array.from({ length: n }, (_, i) => `hsl(${Math.round(i * 320 / n)}, 70%, 72%)`);
   function draw() {
     const m = $("#sh-mode").value, svg = $("#sh-svg"); svg.innerHTML = "";
     let n, owner, oname, note;
@@ -785,7 +785,7 @@ const SVGT = (p, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y
     for (let t = 0; t < 64; t++) { const x = t % 8, y = Math.floor(t / 8), o = owner(t);
       const r = el("rect", { x: X0 + x * S, y: Y0 + y * S, width: S - 2, height: S - 2, rx: 3, "stroke-width": .8, class: "line" }, svg); r.style.fill = P[o];
       SVGT(svg, X0 + x * S + S / 2 - 1, Y0 + y * S + S / 2 + 4, o, { "text-anchor": "middle", "font-size": 11, class: "on-fill" }); }
-    const cols = n === 16 ? 4 : 4, BW = 104, BH = 56, RX = 330;
+    const cols = 4, BW = 98, BH = 56, RX = 336;
     SVGT(svg, RX, 22, m === "dram" ? "owners: DRAM banks" : "owners: cores (their L1)", { "font-size": 12, "font-weight": 600 });
     for (let i = 0; i < n; i++) { const x = RX + (i % cols) * (BW + 8), y = Y0 + Math.floor(i / cols) * (BH + 8);
       el("rect", { x, y, width: BW, height: BH, rx: 5, class: "box", "stroke-width": 1 }, svg);
@@ -862,9 +862,9 @@ const SVGT = (p, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y
     // right: WSE-3
     SVGT(svg, 400, 22, "Cerebras WSE-3", { "font-weight": 700 });
     el("rect", { x: 400, y: 40, width: 340, height: 200, rx: 10, class: "box", "stroke-width": 1 }, svg);
-    const frac = Math.min(1, pes / 900000), rs = Math.max(6, 200 * Math.sqrt(frac) * 1.6);
-    el("rect", { x: 410, y: 50, width: Math.min(320, rs * 1.6), height: Math.min(180, rs), class: "acc", "stroke-width": 1.2 }, svg);
-    const ww = Math.min(320, rs * 1.6), hh = Math.min(180, rs);
+    const frac = Math.min(1, pes / 900000), ww = Math.max(8, 320 * Math.sqrt(frac)), hh = Math.max(6, 180 * Math.sqrt(frac));
+    el("rect", { x: 410, y: 50, width: ww, height: hh, class: "acc", "stroke-width": 1.2 }, svg);
+    SVGT(svg, 730, 232, "PE area used, to scale", { "text-anchor": "end", "font-size": 11, class: "muted" });
     for (let i = 1; i < 5; i++) { el("line", { x1: 410, y1: 50 + i * hh / 5, x2: 410 + ww, y2: 50 + i * hh / 5, class: "s-blu", "stroke-width": .8 }, svg);
       el("line", { x1: 410 + i * ww / 5, y1: 50, x2: 410 + i * ww / 5, y2: 50 + hh, class: "s-grn", "stroke-width": .8 }, svg); }
     SVGT(svg, 400, 262, `${pes.toLocaleString()} PEs (~${side} × ${side}) hold W at ≤ 24 KB each`, { "font-size": 12 });
