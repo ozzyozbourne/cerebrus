@@ -71,3 +71,7 @@ Re-measured: single-tile-matvec on SDK 2.10.1, WSE-3 simulator, N=25 (780 cycles
 - Llama-3 layer shapes (layers, KV heads) come from the public model configs, not the research files; they are tagged as an assumption.
 - N4 (animated generation bars), N5 (animated decode) and N6 (kernel intensity counter) were not built; the D6 table covers N4's content.
 - No responsive redraw for phones; this relies on the shared horizontal-scroll CSS.
+
+## Cross-chapter notes (CROSS_CHAPTER_NOTES.md)
+- Item 2 (clock) applied: the "one PE ×900,000" table now uses the range 0.85–1.1 GHz: 21–27 B/cycle, ≈ 12–16 PF, ridge 0.6–0.75. The text cites WSE-2 1.1 GHz [Vendor, HC22], says no WSE-3 clock has been published, and gives the SDK's 850 MHz assumption [SDK]. At 1.1 GHz the build-up gives ≈ 15.8 PF, matching the analysts' 15.6 PF.
+- Item 6 (Cerebras decode is not memory-bandwidth bound) was already applied in "Bound versus reality": the memory bound is 150k–600k tok/s against 2,100–2,314 measured, and the limit is pipeline latency and communication. It is also stated in the calculator note and the D2 entry above.

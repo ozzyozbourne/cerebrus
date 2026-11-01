@@ -69,7 +69,7 @@
 </div>
 
 <h2>The chip: a grid on two tori</h2>
-<p>A Blackhole die is a 17 × 12 grid of <em>tiles</em> (grid locations). There are 140 Tensix tiles, 24 DRAM tiles (each group of three shares one 4 GiB GDDR6 channel), 14 Ethernet tiles, 2 PCIe tiles, 4 L2CPU tiles (each a cluster of four 64-bit SiFive x280 cores that can run Linux), and one ARC and one security tile <span class="tag vendor">tt-isa-documentation BlackholeA0; tt-metal blackhole_140_arch.yaml</span>. Every tile has a router on each of two <strong>networks-on-chip (NoCs)</strong>. Each NoC is a 2-D <em>torus</em>: the left and right edges, and the top and bottom edges, are wired together. NoC 0 only flows right and down. NoC 1 connects the same tiles but only flows left and up <span class="tag vendor">ISA docs, RoutingPaths</span>.</p>
+<p>A Blackhole die is a 17 × 12 grid of <em>tiles</em> (grid locations). There are 140 Tensix tiles, 24 DRAM tiles (each group of three shares one 4 GiB GDDR6 channel), 14 Ethernet tiles, 2 PCIe tiles, 4 L2CPU tiles (each a cluster of four 64-bit SiFive x280 cores that can run Linux), and one ARC and one security tile <span class="tag vendor">ISA docs, BlackholeA0</span> <span class="tag vendor">tt-metal SoC descriptor</span>. Every tile has a router on each of two <strong>networks-on-chip (NoCs)</strong>. Each NoC is a 2-D <em>torus</em>: the left and right edges, and the top and bottom edges, are wired together. NoC 0 only flows right and down. NoC 1 connects the same tiles but only flows left and up <span class="tag vendor">ISA docs, RoutingPaths</span>.</p>
 <ul>
 <li><strong>Routing is fixed by the addresses.</strong> On NoC 0 a packet travels right, turns at most once, then travels down. On NoC 1 it travels up first, then left. Routers are cut-through ("wormhole switching"). Two packets only contend if they need the same link; crossing inside a router is free <span class="tag vendor">ISA docs</span>.</li>
 <li><strong>Packets and flits.</strong> A packet is one header flit plus up to 256 data flits. A Blackhole flit is 64 B, so a packet carries up to 16 KiB; Wormhole flits are 32 B, so its packets carry up to 8 KiB. The NoC clock went from 1 GHz to 1.35 GHz <span class="tag vendor">ISA docs, BlackholeA0 NoC</span>.</li>
@@ -278,7 +278,7 @@ CreateKernel(program, <span class="s">"writer.cpp"</span>,  all_cores, DataMovem
 <label>reader <input type="range" id="cb-r" min="1" max="6" value="3"> <span id="cb-rv">3</span></label>
 <label>compute <input type="range" id="cb-c" min="1" max="6" value="3"> <span id="cb-cv">3</span></label>
 <label>writer <input type="range" id="cb-w" min="1" max="6" value="2"> <span id="cb-wv">2</span></label>
-<label><input type="checkbox" id="cb-jit"> DRAM latency spikes (tiles 2 and 6 take +6)</label>
+<label><input type="checkbox" id="cb-jit"> DRAM latency spikes (tiles 2 and 6 take +6, the rest −1)</label>
 </div>
 <svg id="cb-svg" viewBox="0 0 680 250" width="680" role="img" aria-label="Pipeline timeline"></svg>
 <div class="readout" id="cb-out"></div>
@@ -514,7 +514,7 @@ const SVGT = (p, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y
     return ["T", "acc", "Tensix"];
   }
   const cx = x => X0 + x * CW + CW / 2, cy = y => Y0 + y * CH + CH / 2;
-  const svg = $("#chip-svg"), gT = el("g", {}, svg), gR = el("g", {}, svg), gM = el("g", {}, svg);
+  const svg = $("#chip-svg"), gT = el("g", {}, svg), gR = el("g", { "pointer-events": "none" }, svg), gM = el("g", { "pointer-events": "none" }, svg);
   for (let x = 0; x < W; x++) SVGT(svg, cx(x), Y0 - 8, x, { "text-anchor": "middle", "font-size": 10, class: "muted" });
   for (let y = 0; y < H; y++) SVGT(svg, X0 - 10, cy(y) + 4, y, { "text-anchor": "end", "font-size": 10, class: "muted" });
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -676,7 +676,7 @@ const SVGT = (p, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y
   function params() {
     const r = +$("#cb-r").value, c = +$("#cb-c").value, w = +$("#cb-w").value, jit = $("#cb-jit").checked;
     $("#cb-rv").textContent = r; $("#cb-cv").textContent = c; $("#cb-wv").textContent = w;
-    const R = Array.from({ length: 8 }, (_, k) => r + (jit && (k === 2 || k === 6) ? 6 : 0));
+    const R = Array.from({ length: 8 }, (_, k) => jit ? (k === 2 || k === 6 ? r + 6 : Math.max(1, r - 1)) : r);
     return { R, C: Array(8).fill(c), Wd: Array(8).fill(w) };
   }
   function sim() {

@@ -251,16 +251,16 @@ Cerebras markets "7,000×" the memory bandwidth of an H100 <span class="tag vend
 <p>Keep this trade-off in mind for the rest of Part II. Cerebras turns a memory-bandwidth problem into a <strong>data-placement and communication problem</strong>, and Chapters 3–6 are mostly about how the wafer makes placement and neighbour-to-neighbour movement cheap.</p>
 
 <h2>Where the wafer's headline numbers come from</h2>
-<p>The 21 PB/s and ~15.6 PF are one PE's numbers multiplied by 900,000. Building them up from one PE shows that the WSE-3's low ridge is the ridge of one small core, and that every dense-FLOP figure for the wafer rests on an unpublished clock.</p>
+<p>The 21 PB/s and ~15.6 PF are one PE's numbers multiplied by 900,000. Building them up from one PE shows that the WSE-3's low ridge is the ridge of one small core, and that every dense-FLOP figure for the WSE-3 rests on a clock that has not been published.</p>
 <div class="table-wrap"><table class="num">
 <tr><th>Quantity</th><th>One WSE-3 PE</th><th>× 900,000</th></tr>
 <tr><td>SRAM</td><td>48 KB <span class="tag vendor">Vendor</span></td><td>44 GB <span class="tag vendor">Vendor</span></td></tr>
 <tr><td>SRAM ports</td><td>8 banks × 4 B = 32 B/cycle max <span class="tag derived">Derived</span></td><td>—</td></tr>
-<tr><td>SRAM bandwidth (vendor total ÷ cores)</td><td>≈ 23 GB/s ≈ 27 B/cycle at 850 MHz <span class="tag derived">Derived</span></td><td>21 PB/s <span class="tag vendor">Vendor</span></td></tr>
-<tr><td>FP16 multiply-adds</td><td>8 per cycle = 16 FLOP/cycle <span class="tag vendor">Vendor SIMD width</span></td><td>≈ 12–14 PF at 0.85–1 GHz <span class="tag derived">Derived</span> (cf. 15.6 PF <span class="tag analyst">Analyst</span>)</td></tr>
-<tr><td>Ridge (FP16)</td><td>16 ÷ 27 ≈ 0.6 FLOP/B <span class="tag derived">Derived</span></td><td>same</td></tr>
+<tr><td>SRAM bandwidth (vendor total ÷ cores)</td><td>≈ 23 GB/s ≈ 21–27 B/cycle at 1.1–0.85 GHz <span class="tag derived">Derived</span></td><td>21 PB/s <span class="tag vendor">Vendor</span></td></tr>
+<tr><td>FP16 multiply-adds</td><td>8 per cycle = 16 FLOP/cycle <span class="tag vendor">Vendor SIMD width</span></td><td>≈ 12–16 PF at 0.85–1.1 GHz <span class="tag derived">Derived</span> (cf. 15.6 PF <span class="tag analyst">Analyst</span>)</td></tr>
+<tr><td>Ridge (FP16)</td><td>16 ÷ (21–27) ≈ 0.6–0.75 FLOP/B <span class="tag derived">Derived</span></td><td>same</td></tr>
 </table></div>
-<p>No clock speed has been published for any wafer generation. The SDK's own benchmarks assume 850 MHz <span class="tag sdk">SDK 2.10.1</span>, so every dense-FLOP figure for the wafer is an estimate. Chapter 3 explains the eight banks.</p>
+<p>The only published clock is the WSE-2's: 1.1 GHz (Hot Chips 2022) <span class="tag vendor">Vendor</span>. No WSE-3 clock has been published, and the SDK's own benchmarks assume 850 MHz <span class="tag sdk">SDK 2.10.1</span>. At 1.1 GHz the build-up gives ≈ 15.8 PF, close to the analysts' 15.6 PF; at 850 MHz it gives ≈ 12.2 PF <span class="tag derived">Derived</span>. Either way, every dense-FLOP figure for the WSE-3 is an estimate. Chapter 3 explains the eight banks.</p>
 
 <div class="callout ok">
 <strong>Measured: one PE's roofline on the simulator</strong>

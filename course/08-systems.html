@@ -182,7 +182,7 @@
 
 <div class="widget" id="cap">
 <h4>How many wafers, and how fast can it possibly decode?</h4>
-<p class="hint">Weights and KV cache pinned in SRAM (44 GB per WSE-3), compared with the HBM of H100s and B200s. KV assumes Llama-3 shapes (8 KV heads × 128, KV stored at 16-bit); layer counts for sizes between the presets are interpolated, so treat those as illustrative. The speed limit is aggregate memory bandwidth ÷ bytes read per decode step (all weights + every user's KV). It assumes perfect splitting across devices and ignores compute, hops and speculative decoding. All outputs <span class="tag derived">Derived</span>.</p>
+<p class="hint">Weights and KV cache pinned in SRAM (44 GB per WSE-3), compared with the HBM of H100s and B200s. KV assumes Llama-3 shapes (8 KV heads × 128, KV stored at 16-bit); layer counts for sizes between the presets are interpolated, so treat those as illustrative. The speed limit is aggregate memory bandwidth ÷ bytes read per decode step (all weights + every user's KV). It assumes perfect splitting across devices and ignores compute, hops and speculative decoding. Device figures: WSE-3 44 GB and 21 PB/s, H100 80 GB and 3.35 TB/s, B200 192 GB and ~8 TB/s <span class="tag vendor">Vendor</span>; the GEMV rate is the SDK benchmark result below. Red marks are published Cerebras speeds (16-bit presets only). All outputs <span class="tag derived">Derived</span>.</p>
 <div class="controls">
 <div class="seg" id="p-pre"><span class="lbl">Model</span><button type="button" data-v="8">8B</button><button type="button" data-v="70" aria-pressed="true">70B</button><button type="button" data-v="120">120B</button><button type="button" data-v="405">405B</button><button type="button" data-v="1000">1T</button></div>
 </div>
@@ -255,7 +255,7 @@ Weight streaming and multi-wafer inference are run by Cerebras's machine-learnin
 <details><summary>How many times does each weight cross the MemoryX link in one training step, and in what format?</summary><p>Twice inward as FP16 (forward pass, then backward pass in transposed order) and once outward as an FP32 gradient, which SwarmX sums across systems before MemoryX applies the update. That is 32 bits in each direction per parameter <span class="tag vendor">Vendor</span>.</p></details>
 <details><summary>One user is generating with Llama 70B on four CS-3s. While wafer 3 processes their token, what are wafers 1, 2 and 4 doing?</summary><p>Nothing for that user: the next token cannot start until this one leaves wafer 4 and loops back. The other wafers stay busy only with other users' tokens in flight. That is why per-user speed and total throughput are separate numbers.</p></details>
 <details><summary>Why can't the 36 GB left on a 4-wafer Llama-70B deployment serve 100 users at 8K context?</summary><p>Each token of context costs ~0.33 MB of KV cache per sequence, so 100 × 8,192 tokens ≈ 268 GB, far more than 36 GB. About 13 users at 8K fit <span class="tag derived">Derived</span>.</p></details>
-<details><summary>Roughly how many WSE-3 wafers to hold a 405B model at 16-bit?</summary><p>810 GB of weights ÷ 44 GB ≈ 19 wafers before any KV cache, or about 5 at 4-bit. In the widget, 405B at 16-bit with one 8K-context user needs 20, because the KV cache takes the rest.</p></details>
+<details><summary>Roughly how many WSE-3 wafers to hold a 405B model at 16-bit?</summary><p>810 GB of weights ÷ 44 GB ≈ 19 wafers before any KV cache, or about 5 at 4-bit. In the widget, one 8K-context user (~4 GB of KV) still fits in 19; ten such users need 20 <span class="tag derived">Derived</span>.</p></details>
 <details><summary>A CS-4 rack has three 44 GB wafers. Can it hold Llama 70B at 16-bit with weights pinned?</summary><p>No: 3 × 44 = 132 GB &lt; 140 GB before any KV cache. At 8-bit (70 GB) it fits, with about 62 GB to spare <span class="tag derived">Derived</span>.</p></details>
 </div>
 </main>
@@ -297,9 +297,9 @@ Weight streaming and multi-wafer inference are run by Cerebras's machine-learnin
       { y: 2026.6, lane: 0, l: "CS-4", d: "Aug 2026 · CS-4: one rack, 3 × WSE-3T, 750 PF sparse, 129.6 PB/s, 7.2 Tb/s; Direct Wafer Links (~2 µs hop). [Vendor]" },
       { y: 2027.3, lane: 0, l: "CS-5", hollow: 1, d: "2027 target · CS-5: Nexus + next-generation WSE; up to 10,000 tok/s/user on gpt-oss-120b; >50T-parameter models. CS-6 (no date): wafer-scale SRAM + 3D-stacked DRAM. [Vendor roadmap]" },
       { y: 2021.6, lane: 1, l: "MemoryX/SwarmX", d: "2021 · Weight streaming announced: MemoryX (4 TB – 2.4 PB design range, 20 B/param) and SwarmX; 'up to 120 trillion parameters', up to 192 CS-2s. [Vendor]" },
-      { y: 2024.65, lane: 2, l: "450", d: "Aug 2024 · Cerebras Inference launches: Llama 3.1-70B on 4 × CS-3 at 450 tok/s, 16-bit, $0.60/M tokens. [Vendor]" },
-      { y: 2024.82, lane: 2, l: "2,100", dy: -1, d: "Oct 2024 · Same hardware, new kernels + async wafer I/O + speculative decoding: 2,100 tok/s on Llama 3.1-70B. [Vendor]" },
-      { y: 2024.9, lane: 2, l: "405B", dy: 1, d: "Nov 2024 · Llama 3.1-405B at 969 tok/s, 128K context, 16-bit. [Vendor, citing Artificial Analysis]" },
+      { y: 2024.65, lane: 2, l: "70B: 450 → 2,100 · 405B", d: "Aug 2024 · Cerebras Inference launches: Llama 3.1-70B on 4 × CS-3 at 450 tok/s, 16-bit, $0.60/M tokens. [Vendor]" },
+      { y: 2024.82, lane: 2, l: "", d: "Oct 2024 · Same hardware, new kernels + async wafer I/O + speculative decoding: 2,100 tok/s on Llama 3.1-70B. [Vendor]" },
+      { y: 2024.9, lane: 2, l: "", d: "Nov 2024 · Llama 3.1-405B at 969 tok/s, 128K context, 16-bit. [Vendor, citing Artificial Analysis]" },
       { y: 2026.4, lane: 2, l: "Kimi 1T", d: "May 2026 · Kimi K2.6 (~1T, MoE) at 981 tok/s, 6.7× the fastest GPU cloud [Indep, AA]; ~20 CS-3, 4-bit weights [Vendor, via press]." },
       { y: 2022.87, lane: 3, l: "Andromeda", d: "Nov 2022 · Andromeda: 16 CS-2; 15.87× one CS-2 on one GPT-3 XL workload. [Vendor]" },
       { y: 2023.5, lane: 3, l: "CG-1/2", dy: 1, d: "2023 · Condor Galaxy 1 and 2: 64 CS-2 each, 4 EF sparse. [Vendor]" },
@@ -314,7 +314,7 @@ Weight streaming and multi-wafer inference are run by Cerebras's machine-learnin
       const pick = () => { if (sel) sel.classList.remove("sel"); sel = g; g.classList.add("sel"); out.textContent = p.d; };
       g.addEventListener("click", pick);
       g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
-      if (p.l === "450") pick();
+      if (p.y === 2024.65) pick();
     });
     // remove undefined fill attributes
     svg.querySelectorAll('[fill="undefined"]').forEach(n => n.removeAttribute("fill"));
@@ -350,8 +350,9 @@ Weight streaming and multi-wafer inference are run by Cerebras's machine-learnin
       txt(root, 400, 124, "one summed copy", { "font-size": 11.5, class: "muted" });
       for (let i = 0; i < N; i++) {
         const x = wx(i), cx = x + 75;
-        el("path", { d: `M${372 + (i - (N - 1) / 2) * 14} ${SX.y + SX.h} L${cx - 8} 246`, class: "s-amb", "stroke-width": 1.8, fill: "none", "marker-end": "url(#a8)" }, root);
-        el("path", { d: `M${cx + 8} 250 L${388 + (i - (N - 1) / 2) * 14} ${SX.y + SX.h + 4}`, class: "s-pur", "stroke-width": 1.8, fill: "none", "marker-end": "url(#a9)" }, root);
+        const ax = N === 1 ? 380 : SX.x + 40 + i * (SX.w - 80) / (N - 1);
+        el("path", { d: `M${ax - 7} ${SX.y + SX.h} L${cx - 8} 246`, class: "s-amb", "stroke-width": 1.8, fill: "none", "marker-end": "url(#a8)" }, root);
+        el("path", { d: `M${cx + 8} 250 L${ax + 7} ${SX.y + SX.h + 4}`, class: "s-pur", "stroke-width": 1.8, fill: "none", "marker-end": "url(#a9)" }, root);
         el("rect", { x, y: 252, width: 150, height: 118, rx: 8, class: "acc", "stroke-width": 1.6 }, root);
         txt(root, cx, 272, `CS-3 #${i + 1}`, { "text-anchor": "middle", "font-weight": 700 });
         txt(root, cx, 289, `batch shard ${i + 1}/${N}`, { "text-anchor": "middle", "font-size": 12, class: "muted" });
@@ -460,7 +461,7 @@ Weight streaming and multi-wafer inference are run by Cerebras's machine-learnin
       const cls = c === kc ? "blu" : r === rr && c === oc ? "grn" : r === rr ? "acc" : "box";
       el("rect", { x: gx + c * s, y: gy + r * s, width: s - 6, height: s - 6, rx: 4, class: cls, "stroke-width": 1.2 }, svg);
     }
-    txt(svg, gx + C * s / 2, gy - 22, "H (features) across the wafer →", { "text-anchor": "middle", "font-size": 12.5 });
+    txt(svg, gx + C * s - 6, 19, "H (features) across the wafer →", { "text-anchor": "end", "font-size": 12.5 });
     txt(svg, gx - 12, gy + R * s / 2, "B·S ↓", { "text-anchor": "end", "font-size": 12.5 });
     txt(svg, gx - 12, gy + R * s / 2 + 16, "(tokens)", { "text-anchor": "end", "font-size": 11.5, class: "muted" });
     // weight packet entering
