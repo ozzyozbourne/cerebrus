@@ -11,3 +11,5 @@ Fixers: apply any item that touches your chapter.
 8. **Halo columns (ch02, ch07, ch09).** 1 halo + 3 memcpy columns on the west (hence offset 4), 2 memcpy + 1 halo on the east, so the fabric is 7 columns wider and 2 rows taller. Source: reviews/ch07-depth.md.
 9. **"At least" (ch07, ch09).** The user rectangle must be AT LEAST 7 columns narrower and 2 rows shorter than the fabric.
 10. **Clock in sanity checks (ch03, ch04).** Replace "~1 GHz" with WSE-2 1.1 GHz [Vendor, HC22] and the SDK's 850 MHz. Ch02 now shows a per-PE budget at both clocks.
+11. **Queue collision measured (ch12, ch15).** Fails on both chips: FATAL at cycle 2,123 (WSE-3) / 2,125 (WSE-2), "trying to term ut_instr[3], but it's not ours". Giving the receives `.ut_id` 4/5 fixes it on WSE-3. One shared completion task also hangs, on both chips (measured by the ch05 fixer).
+12. **Task IDs (ch07, ch09, ch10–12).** Recommend user local task IDs 8–20. Control task IDs are [0,64). Data tasks on WSE-3 must bind to input queues. Do not bind your own task to 29.

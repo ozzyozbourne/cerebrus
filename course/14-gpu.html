@@ -85,7 +85,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 </svg>
 <div class="controls"><button type="button" class="btn secondary" id="sm-warp">Highlight what one warp uses</button></div>
 <div class="readout" id="sm-out" aria-live="polite">Tap or hover a block.</div>
-<figcaption><b>One H100 SM; the chip has 132.</b> Four sub-partitions, one warp scheduler and one Tensor Core each, 128 FP32 lanes and 65,536 32-bit registers (256 KB) per SM, 256 KB L1/shared memory (up to 228 KB shared), at most 64 warps = 2,048 threads and 32 blocks per SM <span class="tag vendor">Vendor, Hopper whitepaper and CUDA CC 9.0 limits, via secondary sources</span>. INT32/FP64 lane counts, LD/ST, SFU, texture and instruction-cache details are drawn from the whitepaper layout but were not re-checked this session <span class="tag unv">Unverified</span>.</figcaption>
+<figcaption><b>One H100 SM; the chip has 132.</b> Four sub-partitions, one warp scheduler and one Tensor Core each, 128 FP32 lanes and 65,536 32-bit registers (256 KB) per SM, 256 KB L1/shared memory (up to 228 KB shared), at most 64 warps = 2,048 threads and 32 blocks per SM <span class="tag vendor">Vendor</span> (Hopper whitepaper and CUDA compute-capability 9.0 limits, via secondary sources). INT32/FP64 lane counts, LD/ST, SFU, texture and instruction-cache details are drawn from the whitepaper layout but were not re-checked this session <span class="tag unv">Unverified</span>.</figcaption>
 </figure>
 
 <h3>Where the 989 TF comes from</h3>
@@ -110,7 +110,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 <desc id="hier-d">H100: registers 33 MiB chip-wide at about 1 cycle; L1 and shared memory 33 MiB at roughly 20 to 30 cycles; L2 50 MB at 200 to 300 cycles; HBM3 80 GB at roughly 400 to 800 cycles and 3.35 TB/s. WSE-3 PE: registers, 48 KB SRAM at 1 cycle, neighbours over the fabric, host and MemoryX off-wafer.</desc>
 <g id="hier"></g>
 </svg>
-<figcaption><b>Fast storage is tiny; big storage is far away.</b> Capacities are chip-wide: 132 × 256 KB = 33 MiB each for registers and L1/shared, so register + L1 ≈ 66 MiB <span class="tag derived">Derived</span>, more than the 50 MB L2. Sizes and HBM bandwidth <span class="tag vendor">Vendor, Hopper whitepaper</span>. L2 latency 200–300 cycles and the 2 × 25 MB L2 split come from RRZE gpu-benches, and >5.5 TB/s L2 read bandwidth from Chips and Cheese, both on an H100 <em>PCIe</em> card <span class="tag indep">Indep</span>. L1 and HBM cycle ranges are rough figures from secondary cheat sheets <span class="tag unv">Unverified</span>. WSE-3: 44 GB of SRAM at 21 PB/s aggregate <span class="tag vendor">Vendor</span>.</figcaption>
+<figcaption><b>Fast storage is tiny; big storage is far away.</b> Capacities are chip-wide: 132 × 256 KB = 33 MiB each for registers and L1/shared, so register + L1 ≈ 66 MiB <span class="tag derived">Derived</span>, more than the 50 MB L2. Sizes and HBM bandwidth <span class="tag vendor">Vendor</span> (Hopper whitepaper). L2 latency 200–300 cycles and the 2 × 25 MB L2 split come from RRZE gpu-benches, and >5.5 TB/s L2 read bandwidth from Chips and Cheese, both on an H100 <em>PCIe</em> card <span class="tag indep">Indep</span>. L1 and HBM cycle ranges are rough figures from secondary cheat sheets <span class="tag unv">Unverified</span>. WSE-3: 44 GB of SRAM at 21 PB/s aggregate <span class="tag vendor">Vendor</span>.</figcaption>
 </figure>
 <p><strong>Shared memory</strong> is a scratchpad the programmer manages explicitly, like a PE's SRAM. <strong>L1</strong> is a hardware cache carved from the same 256 KB, which a PE does not have (Chapter 3). The fair GPU counterpart to the wafer's 21 PB/s is not HBM but aggregate register + shared-memory bandwidth. Shared memory has 32 banks of 4 bytes, about 128 B/clk per SM, giving 132 × 128 B × 1.83 GHz ≈ 31 TB/s <span class="tag derived">Derived</span> <span class="tag unv">bank width unverified</span>, with registers several times faster again. The real difference is <em>capacity at that speed</em>: ~66 MiB on an H100 versus 44 GB on a wafer.</p>
 
@@ -215,7 +215,7 @@ Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely 
 <title id="pipe-t">Warp-specialised Hopper GEMM</title>
 <desc id="pipe-d">A producer warpgroup issues TMA copies from global memory into a ring of four shared-memory stages, each guarded by full and empty barriers; two consumer warpgroups wait on full, run wgmma Tensor Core instructions, and release the stage by arriving on empty.</desc>
 </svg>
-<figcaption><b>Producer / consumer inside one SM.</b> The producer waits until stage <i>s</i> is <code>empty</code>, then issues one TMA bulk copy; the TMA engine generates every address and signals <code>full[s]</code> when the bytes land. A consumer waits on <code>full[s]</code>, runs <code>wgmma</code>, then arrives on <code>empty[s]</code>. In CUTLASS's "ping-pong" variant the producer drops to 40 registers and the consumers rise to 232 (<code>setmaxnreg</code>) <span class="tag unv">Unverified background: Hopper whitepaper, PyTorch CUTLASS ping-pong blog, PTX ISA</span>.</figcaption>
+<figcaption><b>Producer / consumer inside one SM.</b> The producer waits until stage <i>s</i> is <code>empty</code>, then issues one TMA bulk copy; the TMA engine generates every address and signals <code>full[s]</code> when the bytes land. A consumer waits on <code>full[s]</code>, runs <code>wgmma</code>, then arrives on <code>empty[s]</code>. In CUTLASS's "ping-pong" variant the producer drops to 40 registers and the consumers rise to 232 (<code>setmaxnreg</code>) <span class="tag unv">Unverified</span> (background from the Hopper whitepaper, the PyTorch CUTLASS ping-pong blog and the PTX ISA).</figcaption>
 </figure>
 <p>Related Hopper features: <strong>TMA</strong> (Tensor Memory Accelerator) copies 1D–5D tiles between global and shared memory from a descriptor built on the host. <strong>Thread-block clusters</strong> group blocks on neighbouring SMs, which can read each other's shared memory (<strong>distributed shared memory</strong>), and TMA can multicast one tile into several SMs <span class="tag unv">Unverified background</span>. Blackwell moves the accumulator out of registers into a per-SM <strong>tensor memory</strong> (reported as 256 KB) and lets a single thread issue the MMA <span class="tag unv">Unverified background, Colfax tutorials</span>. The trend: each generation moves more of the kernel into asynchronous, explicitly scheduled engines. This rhymes with Tenstorrent's reader / compute / writer kernels and circular buffers (Chapter 13) and with CSL's async DSDs and task activation (Chapters 5–6). That analogy is this course's own, not a vendor claim.</p>
 
@@ -228,7 +228,8 @@ Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely 
   <span class="c">// this thread's global index</span>
   <span class="n">int</span> i = blockIdx.x * blockDim.x
         + threadIdx.x;
-  <span class="k">if</span> (i &lt; n)            <span class="c">// last block is partial</span>
+  <span class="c">// guard: the last block is partial</span>
+  <span class="k">if</span> (i &lt; n)
     y[i] = a * x[i] + y[i];
 }
 <span class="c">// host: cudaMemcpy x, y into HBM</span>
@@ -304,7 +305,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 <title id="topo-t">HGX H100 and NVL72 topologies</title>
 <desc id="topo-d">Left: an HGX H100 board with 8 GPUs, each linked to 4 NVSwitch chips at 900 GB/s, and one 400 Gb/s network card per GPU to an InfiniBand or Ethernet fabric. Right: an NVL72 rack with 72 GPUs connected through NVSwitch trays into one NVLink domain of about 130 TB/s, with racks linked by the scale-out network.</desc>
 </svg>
-<figcaption><b>Two networks.</b> HGX H100: each GPU has 18 NVLink 4 links to the board's 4 NVSwitch chips (900 GB/s bidirectional) and one 400 Gb/s ConnectX-7 NIC <span class="tag vendor">Vendor, DGX H100 descriptions via secondary</span>. NVL72: 72 GPUs at 1.8 TB/s each ≈ 130 TB/s <span class="tag vendor">Vendor</span>. The 18 compute trays × 4 GPUs and 9 NVSwitch trays layout is <span class="tag unv">Unverified background</span>.</figcaption>
+<figcaption><b>Two networks.</b> HGX H100: each GPU has 18 NVLink 4 links to the board's 4 NVSwitch chips (900 GB/s bidirectional) and one 400 Gb/s ConnectX-7 NIC <span class="tag vendor">Vendor</span> (DGX H100 descriptions, via secondary sources). NVL72: 72 GPUs at 1.8 TB/s each ≈ 130 TB/s <span class="tag vendor">Vendor</span>. The 18 compute trays × 4 GPUs and 9 NVSwitch trays layout is <span class="tag unv">Unverified background</span>.</figcaption>
 </figure>
 <p>Beyond one GPU, NVIDIA combines the proprietary scale-up fabric (NVLink/NVSwitch: ~130 TB/s across a GB200 NVL72 rack and ~216 TB/s on Rubin <span class="tag vendor">Vendor</span>) with a separate InfiniBand or Ethernet scale-out network. Per GPU and per direction, NVLink 4 gives 450 GB/s and a 400 Gb/s NIC gives 50 GB/s, a 9× gap <span class="tag derived">Derived</span>. That gap decides where each kind of parallelism goes:</p>
 <div class="table-wrap"><table class="mini">
@@ -672,6 +673,8 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
       T(s, x + 17, 56, "GPU", { "text-anchor": "middle", "font-size": 10.5 });
     }
     sw.forEach(([x, y]) => { el("rect", { x, y, width: 60, height: 26, rx: 4, class: "pur" }, s); T(s, x + 30, y + 17, "NVSwitch", { "text-anchor": "middle", "font-size": 11 }); });
+    el("rect", { x: 80, y: 163, width: 220, height: 18, rx: 4, fill: cssVar("--surface") }, s);
+    el("rect", { x: 85, y: 209, width: 210, height: 18, rx: 4, fill: cssVar("--surface") }, s);
     T(s, 190, 176, "NVLink 4: 900 GB/s per GPU (bidir.)", { "text-anchor": "middle", "font-size": 12 });
     T(s, 190, 222, "1 × 400 Gb/s NIC per GPU (dashed)", { "text-anchor": "middle", "font-size": 12, class: "muted" });
     for (let r = 0; r < 4; r++) for (let c = 0; c < 18; c++) el("rect", { x: 410 + c * 18.5, y: 36 + r * 13, width: 15, height: 10, rx: 2, class: "acc" }, s);
