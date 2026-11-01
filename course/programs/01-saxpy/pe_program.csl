@@ -1,0 +1,27 @@
+param memcpy_params;
+param N: i16;
+
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+
+// Both vectors live in this PE's 48 KB SRAM. There is no other memory.
+var x: [N]f32;
+var y: [N]f32;
+var x_ptr: [*]f32 = &x;
+var y_ptr: [*]f32 = &y;
+
+// A DSD is a hardware loop descriptor: base address + length (+ stride).
+const x_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -> x[i] });
+const y_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -> y[i] });
+
+fn saxpy(a: f32) void {
+  // One instruction walks all N elements: y[i] = y[i] + x[i] * a
+  @fmacs(y_dsd, y_dsd, x_dsd, a);
+  // Tell memcpy this RPC is finished so the host's next command can run.
+  sys_mod.unblock_cmd_stream();
+}
+
+comptime {
+  @export_symbol(x_ptr, "x");
+  @export_symbol(y_ptr, "y");
+  @export_symbol(saxpy);
+}

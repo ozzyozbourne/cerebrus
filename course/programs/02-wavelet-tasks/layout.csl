@@ -1,0 +1,16 @@
+// 02-wavelet-tasks: the host streams N numbers into one PE. Every arriving
+// 32-bit wavelet triggers a *data task* that updates running statistics.
+// Teaches: streaming memcpy, input queues, data tasks (wavelet-triggered tasks).
+param N: i16;
+param MEMCPYH2D_DATA_1_ID: i16;    // which color memcpy uses for our stream
+
+const memcpy = @import_module("<memcpy/get_params>", .{
+  .width = 1, .height = 1, .MEMCPYH2D_1 = MEMCPYH2D_DATA_1_ID });
+
+layout {
+  @set_rectangle(1, 1);
+  @set_tile_code(0, 0, "pe_program.csl", .{ .memcpy_params = memcpy.get_params(0), .N = N });
+  @export_name("stats", [*]f32, false);      // false = pointer is immutable (const)
+  @export_name("count", [*]u32, false);
+  @export_name("wait_done", fn()void);   // barrier RPC
+}

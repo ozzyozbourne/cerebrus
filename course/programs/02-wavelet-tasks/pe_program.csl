@@ -1,0 +1,50 @@
+param memcpy_params;
+param N: i16;
+
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+
+// stats = [sum, sum of squares, max, min]
+var stats = [4]f32 { 0.0, 0.0, -1.0e30, 1.0e30 };
+var count = [1]u32 { 0 };
+const stats_ptr: [*]f32 = &stats;
+const count_ptr: [*]u32 = &count;
+
+// The color memcpy streams on is chosen by the host side (a param).
+const h2d_color: color = @get_color(@bitcast(u16, sys_mod.MEMCPYH2D_1));
+// On WSE-3 a wavelet lands in an *input queue*; the data task is bound to the queue.
+// (Queues 0 and 1 are reserved by memcpy on WSE-3, so we use 2.)
+const h2d_iq: input_queue = @get_input_queue(2);
+const recv_task_id: data_task_id =
+  if (@is_arch("wse2")) @get_data_task_id(h2d_color)   // WSE-2: task ID == color
+  else @get_data_task_id(h2d_iq);                      // WSE-3: task ID == input queue
+
+// Runs once per wavelet; the 32-bit payload arrives as the argument.
+task on_value(v: f32) void {
+  stats[0] += v;
+  stats[1] += v * v;
+  if (v > stats[2]) stats[2] = v;
+  if (v < stats[3]) stats[3] = v;
+  count[0] += 1;
+  // Last value processed: if the host is waiting in wait_done(), release it.
+  if (count[0] == @as(u32, N) and host_waiting) sys_mod.unblock_cmd_stream();
+}
+
+// RPC the host calls after streaming. A streaming memcpy_h2d "completes" as
+// soon as all wavelets are injected -- NOT when the data tasks have consumed
+// them. Without this barrier the host reads half-finished statistics.
+var host_waiting: bool = false;
+fn wait_done() void {
+  if (count[0] == @as(u32, N)) {
+    sys_mod.unblock_cmd_stream();     // all done already
+  } else {
+    host_waiting = true;              // leave the command stream blocked;
+  }                                   // on_value() unblocks it later
+}
+
+comptime {
+  @bind_data_task(on_value, recv_task_id);
+  @initialize_queue(h2d_iq, .{ .color = h2d_color });
+  @export_symbol(stats_ptr, "stats");
+  @export_symbol(count_ptr, "count");
+  @export_symbol(wait_done);
+}

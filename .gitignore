@@ -1,0 +1,6 @@
+# Cerebras compiler / simulator outputs
+out/
+sim.log
+sim_stats.json
+simconfig.json
+simfab_traces/
