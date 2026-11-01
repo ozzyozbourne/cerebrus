@@ -189,3 +189,4 @@ pre, code, .code-tour, .readout { font-variant-ligatures: none; font-feature-set
   figure > svg, .widget > svg { min-width: 620px; }
   figure > figcaption { position: sticky; left: 0; max-width: calc(100vw - 64px); }
 }
+.tag.unv { background: var(--red-soft); color: var(--red); }

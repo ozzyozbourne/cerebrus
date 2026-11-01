@@ -31,3 +31,4 @@ Most vendor documentation sites were unreachable during research, so many web fa
 - Theme toggle: `cssVar("--x")` now returns `var(--x)`, and `el()` writes fill/stroke as inline style, so drawings follow the theme live. Use `cssValue()` only if you truly need the computed colour string. Prefer `cssVar` or the CSS classes in new code.
 - Phones (≤680px): `figure > svg` and `.widget > svg` keep min-width 620px and scroll horizontally inside their box, so text stays legible. Per-figure redesigns are optional, not required.
 - Buttons, active tabs and code-tour pins use `--on-accent` for text, which fixes the white-on-light-orange contrast in dark mode. Text drawn in SVG on coloured bars (fill "#fff") is still each chapter's job; prefer `cssVar("--on-accent")` or dark text.
+- New provenance tag available to all chapters: `<span class="tag unv">Unverified</span>`, for facts that could not be confirmed from a reachable source.
