@@ -1,0 +1,56 @@
+param memcpy_params;
+param M: i16;
+param is_root: bool;
+param bcast: color;
+
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+
+var x: [M]f32;      // root: source vector; others: received copy
+var y: [M]f32;      // result y = s * x
+var s = [1]f32 { 0.0 };
+var x_ptr: [*]f32 = &x;
+var y_ptr: [*]f32 = &y;
+var s_ptr: [*]f32 = &s;
+
+const x_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{M} -> x[i] });
+const y_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{M} -> y[i] });
+
+const oq: output_queue = @get_output_queue(2);
+const iq: input_queue  = @get_input_queue(4);
+const out_dsd = @get_dsd(fabout_dsd, if (@is_arch("wse3")) .{ .extent = M, .output_queue = oq }
+                                     else .{ .extent = M, .output_queue = oq, .fabric_color = bcast });
+const in_dsd  = @get_dsd(fabin_dsd, .{ .extent = M, .input_queue = iq });
+
+const recv_done: local_task_id = @get_local_task_id(10);
+const send_done: local_task_id = @get_local_task_id(11);
+
+task t_recv() void {               // x has fully arrived
+  @fmuls(y_dsd, x_dsd, s[0]);      // y = x * s
+  sys_mod.unblock_cmd_stream();
+}
+task t_send() void {               // root: broadcast is out
+  @fmuls(y_dsd, x_dsd, s[0]);
+  sys_mod.unblock_cmd_stream();
+}
+
+fn go() void {
+  if (is_root) {
+    @fmovs(out_dsd, x_dsd, .{ .async = true, .activate = send_done });
+  } else {
+    @fmovs(x_dsd, in_dsd, .{ .async = true, .activate = recv_done });
+  }
+}
+
+comptime {
+  @bind_local_task(t_recv, recv_done);
+  @bind_local_task(t_send, send_done);
+  if (is_root) {
+    @initialize_queue(oq, if (@is_arch("wse3")) .{ .color = bcast } else .{});
+  } else {
+    @initialize_queue(iq, .{ .color = bcast });
+  }
+  @export_symbol(x_ptr, "x");
+  @export_symbol(y_ptr, "y");
+  @export_symbol(s_ptr, "s");
+  @export_symbol(go);
+}

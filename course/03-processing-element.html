@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inside a Processing Element</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 3 · Part II · The machine</div>
+<h1>Inside a processing element</h1>
+<p class="lede">The wafer is 900,000 copies of one small computer. Each processing element (PE) is a compute engine with 48 KB of private memory, wired to a five-port router. Understand one PE and you understand the building block of everything else.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Draw a PE and name its parts: CE, SRAM banks, registers, DSRs, microthreads, router.</li>
+<li>Budget a PE's 48 KB for code and data.</li>
+<li>Explain why the WSE has no caches and why sparsity is "free".</li>
+</ul>
+</div>
+
+<h2>The anatomy</h2>
+<figure>
+<svg viewBox="0 0 760 420" width="760" role="img" aria-label="Exploded view of a processing element">
+  <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <!-- PE outline -->
+  <rect x="20" y="20" width="520" height="380" rx="14" fill="none" class="s-muted" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="34" y="44" font-weight="700">One PE (one "tile")</text>
+
+  <!-- CE -->
+  <rect x="40" y="60" width="340" height="320" rx="10" class="box" stroke-width="1.5"/>
+  <text x="56" y="84" font-weight="700">Compute engine (CE)</text>
+
+  <!-- SRAM banks -->
+  <text x="56" y="110" font-size="13" font-weight="600">SRAM · 48 KB = 8 banks × 6 KB</text>
+  <g id="banks"></g>
+  <text x="56" y="182" font-size="12" class="muted">single-cycle · interleaved by 32-bit word · code AND data</text>
+
+  <rect x="56" y="196" width="96" height="44" rx="6" class="pur" stroke-width="1.3"/>
+  <text x="104" y="215" text-anchor="middle" font-size="12" font-weight="600">SW cache</text>
+  <text x="104" y="231" text-anchor="middle" font-size="11" class="muted">256 B → 512 B</text>
+  <rect x="160" y="196" width="96" height="44" rx="6" class="blu" stroke-width="1.3"/>
+  <text x="208" y="215" text-anchor="middle" font-size="12" font-weight="600">16 GPRs</text>
+  <text x="208" y="231" text-anchor="middle" font-size="11" class="muted">WSE-3</text>
+  <rect x="264" y="196" width="100" height="44" rx="6" class="acc" stroke-width="1.3"/>
+  <text x="314" y="215" text-anchor="middle" font-size="12" font-weight="600">48 DSRs</text>
+  <text x="314" y="231" text-anchor="middle" font-size="11" class="muted">hold DSDs (Ch. 6)</text>
+
+  <rect x="56" y="252" width="308" height="50" rx="6" class="grn" stroke-width="1.3"/>
+  <text x="210" y="272" text-anchor="middle" font-size="13" font-weight="600">SIMD datapath</text>
+  <g id="lanes"></g>
+
+  <rect x="56" y="312" width="150" height="56" rx="6" class="amb" stroke-width="1.3"/>
+  <text x="131" y="332" text-anchor="middle" font-size="12" font-weight="600">task picker</text>
+  <text x="131" y="348" text-anchor="middle" font-size="11" class="muted">activated ∧ unblocked</text>
+  <text x="131" y="362" text-anchor="middle" font-size="11" class="muted">(Ch. 5)</text>
+  <rect x="214" y="312" width="150" height="56" rx="6" class="amb" stroke-width="1.3"/>
+  <text x="289" y="332" text-anchor="middle" font-size="12" font-weight="600">8 microthreads</text>
+  <g id="uts"></g>
+
+  <!-- Router -->
+  <rect x="420" y="150" width="100" height="100" rx="10" class="blu" stroke-width="2"/>
+  <text x="470" y="196" text-anchor="middle" font-weight="700">Router</text>
+  <text x="470" y="214" text-anchor="middle" font-size="11" class="muted">24 colors</text>
+  <path d="M470 150 V100" class="s-blu" stroke-width="2" marker-end="url(#a4)"/><text x="478" y="112" font-size="12">N</text>
+  <path d="M470 250 V300" class="s-blu" stroke-width="2" marker-end="url(#a4)"/><text x="478" y="296" font-size="12">S</text>
+  <path d="M520 200 H580" class="s-blu" stroke-width="2" marker-end="url(#a4)"/><text x="560" y="192" font-size="12">E</text>
+  <path d="M420 200 H385" class="s-blu" stroke-width="2" marker-end="url(#a4)"/>
+  <text x="398" y="190" font-size="12" font-weight="600">RAMP</text>
+  <text x="470" y="268" text-anchor="middle" font-size="11" class="muted">(W port drawn as RAMP side)</text>
+
+  <!-- notes -->
+  <text x="580" y="70" font-size="13" font-weight="700">Not here:</text>
+  <text x="580" y="92" font-size="13" class="muted">✕ DRAM</text>
+  <text x="580" y="112" font-size="13" class="muted">✕ hardware cache</text>
+  <text x="580" y="132" font-size="13" class="muted">✕ instruction cache</text>
+  <text x="580" y="152" font-size="13" class="muted">✕ OS / threads</text>
+  <text x="580" y="320" font-size="13" font-weight="700">Size</text>
+  <text x="580" y="340" font-size="13" class="muted">~0.05 mm² per PE</text>
+  <text x="580" y="360" font-size="13" class="muted">≈ ½ logic, ½ SRAM</text>
+</svg>
+<figcaption><b>A 48 KB computer with a router attached.</b> Figures are WSE-3 <span class="tag vendor">Vendor, Hot Chips 2024</span> unless noted. The RAMP is the router's fifth port, connecting it to its own CE. WSE-2 register counts were not found.</figcaption>
+</figure>
+
+<h3>Memory: 48 KB, one cycle, nothing else</h3>
+<p>The SRAM is 8 single-ported banks of 6 KB, interleaved by 32-bit word, single-cycle access. Interleaving lets a vector instruction read and write several consecutive words per cycle without bank conflicts. This 48 KB holds <em>everything</em> the PE knows: its code, its stack, its data, and the buffers the runtime needs. The SDK's own benchmarks keep data under about 46 KB, implying ~2 KB for code and runtime in those configurations <span class="tag sdk">SDK 2.10.1</span>. A quick sanity check: 21 PB/s ÷ 900,000 PEs ≈ 23 GB/s per PE, a few 32-bit accesses per cycle at ~1 GHz <span class="tag derived">Derived</span>.</p>
+
+<p>There is a tiny <strong>software-managed cache</strong> (256 B on WSE-2, 512 B on WSE-3) for hot values such as accumulators — "software-managed" meaning the compiler decides what goes there; nothing is cached automatically.</p>
+
+<div class="widget" id="budget">
+<h4>Budget a PE's 48 KB</h4>
+<p class="hint">Suppose each PE holds an M × N block of a matrix plus a few vectors in f32. How big can the block be?</p>
+<div class="controls">
+<label>M <input type="range" id="b-m" min="8" max="128" step="4" value="48"> <span id="b-mv" class="mono"></span></label>
+<label>N <input type="range" id="b-n" min="8" max="128" step="4" value="48"> <span id="b-nv" class="mono"></span></label>
+<label>dtype <select id="b-t"><option value="4">f32 (4 B)</option><option value="2">f16 (2 B)</option></select></label>
+</div>
+<svg id="b-svg" viewBox="0 0 640 90" width="640" role="img" aria-label="Memory budget bar"></svg>
+<div class="readout" id="b-out"></div>
+</div>
+
+<h3>Compute: SIMD lanes driven by descriptors</h3>
+<p>The WSE-3 datapath is <strong>8-way SIMD for FP16/BF16 and 16-way for INT8</strong>, up from 4-wide FP16 on earlier generations <span class="tag vendor">Vendor</span>. You almost never write per-element loops: the CE executes a whole vector operation from one instruction whose operands are <em>data structure descriptors</em> held in the 48 DSRs — base address, length, stride (Chapter 6). It can run up to <strong>eight such operations at once, one per microthread</strong>. On WSE-3 microthread IDs are exposed to the programmer; two operations must never share one at the same time <span class="tag sdk">SDK 2.10.1</span> — a rule that caused a real hang in Lab 3.</p>
+
+<h3>Control: tasks, not a program counter marching through main</h3>
+<p>There is no operating system and no long-running main loop. Code is a set of <strong>tasks</strong>, and a hardware picker runs whichever task is activated and not blocked. Arriving data activates tasks. Chapter 5 is devoted to this.</p>
+
+<h2>Why no caches?</h2>
+<p>A cache exists to hide the distance between compute and a large, slow memory. On the WSE there is no large slow memory on the wafer: the "main memory" is the 48 KB beside the core, and it is already single-cycle. A hardware cache would add area and power to fix a problem the PE does not have. The cost moves to the programmer: whatever data a PE needs must already be in its 48 KB, or must arrive over the fabric.</p>
+
+<figure>
+<svg viewBox="0 0 760 170" width="760" role="img" aria-label="Relative versus absolute bandwidth">
+  <text x="20" y="22" font-weight="700">GEMV y = A·x on one PE</text>
+  <rect x="20" y="40" width="330" height="110" rx="8" class="box"/>
+  <text x="34" y="64" font-size="13" font-weight="600">A cached machine</text>
+  <text x="34" y="86" font-size="13" class="muted">reads x once into cache, reuses it</text>
+  <text x="34" y="106" font-size="13" class="muted">for every row → counts "relative"</text>
+  <text x="34" y="126" font-size="13" class="muted">bandwidth that never touches DRAM</text>
+  <rect x="410" y="40" width="330" height="110" rx="8" class="grn" stroke-width="1.3"/>
+  <text x="424" y="64" font-size="13" font-weight="600">The WSE</text>
+  <text x="424" y="86" font-size="13">every operand is an actual SRAM access:</text>
+  <text x="424" y="106" font-size="13">"absolute" bandwidth = real traffic,</text>
+  <text x="424" y="126" font-size="13">and SRAM is fast enough to take it</text>
+</svg>
+<figcaption><b>The SDK's single-tile matvec benchmark reports both numbers</b> <span class="tag sdk">SDK 2.10.1</span>: "relative" bandwidth (what a cache would have to supply) and "absolute" (what the SRAM really serves). It is a neat demonstration that reuse is not absorbed by a cache here.</figcaption>
+</figure>
+
+<h2>Sparsity comes free with dataflow</h2>
+<p>Because computation is triggered by arriving data, a zero that is never sent never triggers work. Senders filter zeros; receivers only compute on what arrives. The SDK shows the software side: a wavelet is 32 bits, so a sparse value can travel as 16 bits of data plus a 16-bit index in the upper half <span class="tag sdk">SDK 2.10.1, topic-04</span>. This mechanism is what Cerebras's sparse-FLOPS headline numbers assume.</p>
+
+<figure>
+<svg viewBox="0 0 760 120" width="760" role="img" aria-label="A 32-bit wavelet carrying a sparse value">
+  <rect x="80" y="30" width="300" height="44" class="pur" stroke-width="1.5"/>
+  <rect x="380" y="30" width="300" height="44" class="grn" stroke-width="1.5"/>
+  <text x="230" y="57" text-anchor="middle" font-weight="600">upper 16 bits: index</text>
+  <text x="530" y="57" text-anchor="middle" font-weight="600">lower 16 bits: f16 value</text>
+  <text x="80" y="96" font-size="12" class="muted">bit 31</text>
+  <text x="680" y="96" font-size="12" class="muted" text-anchor="end">bit 0</text>
+  <text x="380" y="20" text-anchor="middle" font-size="13">one wavelet payload (32 bits) — only non-zeros are sent</text>
+</svg>
+<figcaption><b>Index + value in one wavelet.</b> The receiving data task gets both halves as two 16-bit arguments: <code>task main_task(wavelet_data: i16, index: i16)</code>.</figcaption>
+</figure>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Your PE program needs two 64 × 64 f32 matrices. Does it fit?</summary><p>2 × 64 × 64 × 4 B = 32 KB. It fits in 48 KB, but leaves ~14 KB for code, runtime buffers and everything else. Two 96 × 96 matrices (72 KB) would not.</p></details>
+<details><summary>Why would a hardware cache be wasted on a PE?</summary><p>Its only memory is already single-cycle SRAM beside it. There is no slower level to hide.</p></details>
+<details><summary>What limits how many vector operations a WSE-3 PE runs concurrently?</summary><p>The 8 microthreads. Each async DSD operation occupies one, and two concurrent operations cannot share one.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const b = $("#banks");
+  for (let i = 0; i < 8; i++) {
+    el("rect", { x: 56 + i * 39, y: 118, width: 34, height: 48, rx: 4, class: "grn", "stroke-width": 1.2 }, b);
+    el("text", { x: 73 + i * 39, y: 146, "text-anchor": "middle", "font-size": 11 }, b).textContent = "6K";
+  }
+  const l = $("#lanes");
+  for (let i = 0; i < 8; i++) el("rect", { x: 74 + i * 34, y: 280, width: 28, height: 14, rx: 3, fill: cssVar("--green"), opacity: .75 }, l);
+  const u = $("#uts");
+  for (let i = 0; i < 8; i++) el("circle", { cx: 230 + i * 17, cy: 352, r: 6, fill: cssVar("--amber"), opacity: .8 }, u);
+
+  function budget() {
+    const M = +$("#b-m").value, N = +$("#b-n").value, t = +$("#b-t").value;
+    $("#b-mv").textContent = M; $("#b-nv").textContent = N;
+    const A = M * N * t, vec = (2 * M + N) * t, code = 2048, total = 48 * 1024;
+    const svg = $("#b-svg"); svg.innerHTML = "";
+    const Wd = 600, x0 = 20, s = Wd / total;
+    let x = x0;
+    const parts = [["matrix A", A, "--accent"], ["vectors x,y,b", vec, "--blue"], ["code + runtime (~2 KB)", code, "--purple"]];
+    el("rect", { x: x0, y: 20, width: Wd, height: 34, rx: 6, class: "box" }, svg);
+    for (const [name, sz, c] of parts) {
+      const w = Math.min(sz * s, x0 + Wd - x);
+      if (w > 0) el("rect", { x, y: 20, width: w, height: 34, fill: cssVar(c), opacity: .85 }, svg);
+      x += sz * s;
+    }
+    const used = A + vec + code, ok = used <= total;
+    el("line", { x1: x0 + Wd, x2: x0 + Wd, y1: 12, y2: 62, stroke: cssVar("--red"), "stroke-width": 2 }, svg);
+    el("text", { x: x0 + Wd, y: 78, "text-anchor": "end", "font-size": 12 }, svg).textContent = "48 KB";
+    el("text", { x: x0, y: 78, "font-size": 12, class: "muted" }, svg).textContent = "■ A   ■ vectors   ■ code/runtime";
+    $("#b-out").textContent = `A: ${M}×${N}×${t} B = ${(A / 1024).toFixed(1)} KB   vectors: ${(vec / 1024).toFixed(2)} KB   code≈2 KB\n` +
+      `total ${(used / 1024).toFixed(1)} KB of 48 KB → ${ok ? "FITS (" + ((total - used) / 1024).toFixed(1) + " KB free)" : "DOES NOT FIT — split the matrix over more PEs"}`;
+  }
+  ["#b-m", "#b-n", "#b-t"].forEach(s => $(s).oninput = budget); budget();
+})();
+</script>
+</body>
+</html>

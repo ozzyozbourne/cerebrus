@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One Chip, One Wafer</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 2 · Part I · Why wafer-scale</div>
+<h1>One chip, one wafer</h1>
+<p class="lede">A normal chip is one small rectangle cut from a 300 mm silicon wafer. Cerebras keeps the whole wafer as one chip: 46,225 mm², about 57× the area of an H100 die. This chapter covers what that buys, what it costs, and how a chip that size survives manufacturing defects.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Quote the WSE-2 and WSE-3 specs with the right caveats (sparse vs dense FLOPs, vendor vs measured).</li>
+<li>Explain how small cores plus redundancy turn "every wafer has defects" into a usable chip.</li>
+<li>Say why software sees a clean rectangle of PEs, and how big that rectangle is.</li>
+</ul>
+</div>
+
+<h2>From reticle to wafer</h2>
+<p>Lithography exposes a wafer one <em>reticle</em> field at a time — at most about 26 × 33 mm. That is why the largest conventional GPU dies stop near 800 mm², and why NVIDIA's B200 glues two such dies together with a 10 TB/s link. Cerebras prints an ordinary grid of reticle-sized fields, then adds wires <em>across the scribe lines</em> between them so that the on-chip network continues seamlessly from one field to the next. The result is the largest square that fits in the wafer, wired as one chip.</p>
+
+<figure>
+<svg viewBox="0 0 760 330" width="760" role="img" aria-label="Wafer with conventional dies versus one wafer-scale engine">
+  <defs><clipPath id="wcl"><circle cx="165" cy="165" r="140"/></clipPath><clipPath id="wcl2"><circle cx="545" cy="165" r="140"/></clipPath></defs>
+  <text x="165" y="18" text-anchor="middle" font-weight="700">Conventional: dice into ~60 GPUs</text>
+  <circle cx="165" cy="165" r="140" class="box" stroke-width="1.5"/>
+  <g clip-path="url(#wcl)" id="dies"></g>
+  <text x="165" y="322" text-anchor="middle" font-size="13" class="muted">each die ≤ one reticle (~800 mm²)</text>
+
+  <text x="545" y="18" text-anchor="middle" font-weight="700">Cerebras: keep the largest square</text>
+  <circle cx="545" cy="165" r="140" class="box" stroke-width="1.5"/>
+  <rect x="438" y="58" width="214" height="214" class="acc" stroke-width="2"/>
+  <g id="stitch"></g>
+  <text x="545" y="160" text-anchor="middle" font-weight="700" font-size="16">WSE</text>
+  <text x="545" y="180" text-anchor="middle" font-size="13">46,225 mm²</text>
+  <text x="545" y="322" text-anchor="middle" font-size="13" class="muted">reticle fields stitched by wires across scribe lines</text>
+</svg>
+<figcaption><b>Same wafer, two products.</b> Dashed lines on the right are reticle boundaries that the fabric crosses as if they were not there <span class="tag vendor">Vendor (Hot Chips 2019/2022)</span>.</figcaption>
+</figure>
+
+<h2>The numbers, generation by generation</h2>
+<p>Every generation is the same 46,225 mm² square. Gains come from process shrinks, wider SIMD, and in 2026 a higher clock.</p>
+<div class="table-wrap"><table>
+<tr><th>Spec</th><th>WSE-1 (CS-1, 2019)</th><th>WSE-2 (CS-2, 2021)</th><th>WSE-3 (CS-3, 2024)</th><th>WSE-3T (CS-4, 2026)</th></tr>
+<tr><td>Process</td><td>TSMC 16nm</td><td>TSMC 7nm</td><td>TSMC 5nm</td><td>same silicon as WSE-3, higher clock</td></tr>
+<tr><td>Transistors</td><td>1.2 T</td><td>2.6 T</td><td>4 T</td><td>4 T</td></tr>
+<tr><td>Cores (PEs)</td><td>400,000</td><td>850,000</td><td>900,000</td><td>900,000</td></tr>
+<tr><td>On-wafer SRAM</td><td>~18 GB</td><td>40 GB</td><td>44 GB</td><td>44 GB</td></tr>
+<tr><td>SRAM per PE</td><td>48 KB</td><td>48 KB</td><td>48 KB + 512 B cache</td><td>—</td></tr>
+<tr><td>Memory bandwidth</td><td>—</td><td>20 PB/s</td><td>21 PB/s</td><td>43.2 PB/s</td></tr>
+<tr><td>Fabric bandwidth</td><td>—</td><td>220 Pb/s</td><td>214 Pb/s (~27 PB/s)</td><td>53.5 PB/s</td></tr>
+<tr><td>FP16 SIMD per core</td><td>4-wide*</td><td>4-wide*</td><td>8-wide FP16/BF16, 16-wide INT8</td><td>—</td></tr>
+<tr><td>Peak AI compute</td><td>—</td><td>~7.5 PF dense <span class="tag analyst">Analyst</span></td><td>125 PF <em>sparse</em> <span class="tag vendor">Vendor</span>; ~15.6 PF dense <span class="tag analyst">Analyst</span></td><td>250 PF sparse; dense disputed</td></tr>
+<tr><td>System power</td><td>—</td><td>15–20 kW (sources conflict)</td><td>~23 kW, 15U</td><td>3 wafers per rack</td></tr>
+</table></div>
+<p style="font-size:14px;color:var(--muted)">All rows <span class="tag vendor">Vendor</span> unless tagged. *4-wide FP16 on WSE-1/2 comes from a secondary source. The WSE-1 process node is widely reported but was not re-verified for this course.</p>
+
+<div class="stat-row">
+  <div class="stat"><div class="v">900k</div><div class="l">PEs on a WSE-3 <span class="tag vendor">Vendor</span></div></div>
+  <div class="stat"><div class="v">48 KB</div><div class="l">SRAM per PE, every generation</div></div>
+  <div class="stat"><div class="v">~737k</div><div class="l">PEs a CS-2 program can use <span class="tag sdk">SDK 2.10.1</span></div></div>
+  <div class="stat"><div class="v">none</div><div class="l">official clock frequency published</div></div>
+</div>
+
+<div class="callout key">
+<strong>Read the FLOPs carefully</strong>
+WSE-3's 125 PF is a <em>sparse</em> FP16 figure; Cerebras has never published a dense one. A sanity check agrees with the analyst estimate: 900k cores × 8 FP16 FMAs (16 FLOPs) × ~1 GHz ≈ 14–15 PF dense <span class="tag derived">Derived; clock unconfirmed</span>. The WSE-2 → WSE-3 jump is mostly SIMD width (4 → 8) plus 6% more cores. NVIDIA plays the same game: the H100's 1,979 TF BF16 is a 2:4-sparsity number; dense is ~989 TF.
+</div>
+
+<h2>Surviving defects</h2>
+<p>Every wafer has defects — a few dozen point flaws is normal. On a GPU wafer a defect landing in a die usually kills or downgrades that die, and the bigger the die, the more silicon goes with it. A wafer-scale chip cannot throw itself away, so Cerebras makes the unit of failure tiny: a core is about 0.05 mm², roughly 1/100th of an H100 SM. Spare cores and spare fabric links are built in, and the fabric is configured at manufacturing time to route around bad cores.</p>
+
+<figure>
+<svg viewBox="0 0 760 250" width="760" role="img" aria-label="Rerouting around a defective core">
+  <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <text x="20" y="20" font-weight="700">Physical cores (with spare column)</text>
+  <g id="phys"></g>
+  <text x="420" y="20" font-weight="700">What software sees</text>
+  <g id="logi"></g>
+</svg>
+<figcaption><b>Repair happens below the programming model.</b> A defective core (red ✕) is skipped and its row shifts into the spare column (dashed). Software sees a perfect rectangle — on a CS-2 that is 750 × 994 fabric positions <span class="tag sdk">SDK 2.10.1</span>. The exact spare-core scheme is not public; this is a schematic.</figcaption>
+</figure>
+
+<div class="widget" id="yield">
+<h4>Defect simulator: big dies vs tiny cores</h4>
+<p class="hint">Random point defects land on a wafer. On the left, any die they hit is lost. On the right, only the tiny core they hit is lost (and replaced by a spare). Move the slider and re-roll.</p>
+<div class="controls">
+<label>Defect density <input type="range" id="y-d" min="0.0002" max="0.003" step="0.0001" value="0.001"> <span id="y-dv" class="mono"></span></label>
+<button class="btn secondary" id="y-roll" type="button">Re-roll defects</button>
+</div>
+<svg id="y-svg" viewBox="0 0 700 330" width="700" role="img" aria-label="Defect simulation"></svg>
+<div class="readout" id="y-out"></div>
+</div>
+
+<p>Cerebras's own model at 0.001 defects/mm² has the wafer taking 46 defects and losing only about 2.2 mm² of silicon, which it presents as a "164× reduction in dead silicon" versus a GPU <span class="tag vendor">Vendor modelling</span>. The simulator above makes the same point with your own numbers. Spare-core ratios are not published; a widely repeated claim of "70,000 disabled cores" traces only to a blog post and is unverified.</p>
+
+<h2>Power, cooling and the edges</h2>
+<div class="grid2">
+<div>
+<h3>Power goes in through the face</h3>
+<p>A ~23 kW system cannot feed a wafer from its edges. Power is delivered vertically through the face of the wafer, and a closed water loop (the CS-3 "engine block") removes the heat. A custom connector lets the wafer expand thermally without cracking. The CS-4 puts AC/DC conversion about 0.5 mm from the wafer, versus about 50 mm on GPU boards <span class="tag vendor">Vendor</span>.</p>
+</div>
+<div>
+<h3>I/O lives on the rim</h3>
+<p>Data enters and leaves at the wafer edges. That has a software consequence you will meet in Chapter 7: the runtime reserves columns on the west and east sides of your program for host I/O, so on a CS-2 your rectangle of PEs must be 7 columns narrower and 2 rows shorter than the 750 × 994 fabric — about 737k usable PEs out of 850k marketed <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span>.</p>
+</div>
+</div>
+
+<figure>
+<svg viewBox="0 0 760 260" width="760" role="img" aria-label="Cross-section of a CS system">
+  <rect x="60" y="30" width="640" height="34" rx="4" class="amb" stroke-width="1.5"/><text x="380" y="52" text-anchor="middle" font-size="14">power delivery (vertical, through the wafer face)</text>
+  <g id="pwr"></g>
+  <rect x="60" y="110" width="640" height="26" rx="3" class="acc" stroke-width="2"/><text x="380" y="128" text-anchor="middle" font-size="14" font-weight="700">the wafer (WSE)</text>
+  <rect x="60" y="150" width="640" height="34" rx="4" class="blu" stroke-width="1.5"/><text x="380" y="172" text-anchor="middle" font-size="14">cold plate · closed water loop</text>
+  <rect x="20" y="104" width="34" height="38" rx="3" class="grn" stroke-width="1.5"/><text x="37" y="160" text-anchor="middle" font-size="11">I/O</text>
+  <rect x="706" y="104" width="34" height="38" rx="3" class="grn" stroke-width="1.5"/><text x="723" y="160" text-anchor="middle" font-size="11">I/O</text>
+  <text x="380" y="220" text-anchor="middle" font-size="13" class="muted">Schematic only — layer thicknesses and the exact stack are not public.</text>
+</svg>
+<figcaption><b>Power from above, heat out below, data out the sides.</b></figcaption>
+</figure>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Why is a small core size essential to wafer-scale yield?</summary><p>A defect only kills the unit it lands in. With ~0.05 mm² cores and spares, each defect costs a tiny area instead of a whole ~800 mm² die.</p></details>
+<details><summary>A slide says "WSE-3: 125 PFLOPS". What should you ask?</summary><p>Sparse or dense, and at what precision? 125 PF is sparse FP16; dense is not published (analysts estimate ~15.6 PF).</p></details>
+<details><summary>Why can't your program use all 850,000 WSE-2 cores?</summary><p>Spares are hidden by the repair logic, and the I/O runtime reserves columns around your program. The SDK exposes a 750 × 994 fabric; your rectangle must be 7 columns and 2 rows smaller.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  // static diagram: dies on wafer + stitch lines
+  const dies = $("#dies");
+  for (let x = 25; x < 305; x += 34) for (let y = 25; y < 305; y += 30)
+    el("rect", { x, y, width: 31, height: 27, class: "blu", "stroke-width": 1 }, dies);
+  const st = $("#stitch");
+  for (let i = 1; i < 6; i++) {
+    el("line", { x1: 438 + i * 214 / 6, x2: 438 + i * 214 / 6, y1: 58, y2: 272, stroke: cssVar("--accent"), "stroke-dasharray": "3 3", opacity: .7 }, st);
+    el("line", { y1: 58 + i * 214 / 6, y2: 58 + i * 214 / 6, x1: 438, x2: 652, stroke: cssVar("--accent"), "stroke-dasharray": "3 3", opacity: .7 }, st);
+  }
+  // redundancy diagram
+  const ph = $("#phys"), lg = $("#logi"), S = 34, bad = [2, 3];
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++) {
+    const spare = c === 5, isBad = r === bad[0] && c === bad[1];
+    el("rect", { x: 30 + c * (S + 8), y: 40 + r * (S + 6), width: S, height: S, rx: 4,
+      class: isBad ? "red" : spare ? "box" : "grn", "stroke-width": 1.5, "stroke-dasharray": spare ? "4 3" : "" }, ph);
+    if (isBad) el("text", { x: 30 + c * (S + 8) + S / 2, y: 40 + r * (S + 6) + 23, "text-anchor": "middle", "font-weight": 700, class: "f-red" }, ph).textContent = "✕";
+  }
+  // shifted row arrows
+  for (let c = bad[1]; c < 5; c++) {
+    const y = 40 + bad[0] * (S + 6) + S + 3;
+    el("path", { d: `M${30 + c * (S + 8) + S / 2} ${y} q ${(S + 8) / 2} 10 ${S + 8} 0`, fill: "none", stroke: cssVar("--blue"), "stroke-width": 1.5, "marker-end": "url(#ar3)" }, ph);
+  }
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++)
+    el("rect", { x: 440 + c * (S + 8), y: 40 + r * (S + 6), width: S, height: S, rx: 4, class: "grn", "stroke-width": 1.5 }, lg);
+  el("text", { x: 440, y: 248, "font-size": 13, class: "muted" }, lg).textContent = "a perfect 5 × 5 rectangle";
+  // power arrows
+  for (let x = 90; x < 700; x += 60) el("path", { d: `M${x} 68 V104`, stroke: cssVar("--amber"), "stroke-width": 2, "marker-end": "url(#ar3)" }, $("#pwr"));
+
+  // yield simulator
+  const svg = $("#y-svg"), R = 150, cx1 = 165, cx2 = 535, cy = 165;
+  const dieW = 26, dieH = 32;                // mm, reticle-sized GPU die
+  const scale = R / 150;                     // 1 px per mm (300 mm wafer)
+  let defects = [];
+  function roll() {
+    const d = parseFloat($("#y-d").value), area = Math.PI * 150 * 150;
+    const n = Math.round(d * area); defects = [];
+    while (defects.length < n) { const x = (Math.random() * 2 - 1) * 150, y = (Math.random() * 2 - 1) * 150; if (x * x + y * y < 150 * 150) defects.push([x, y]); }
+    draw();
+  }
+  function draw() {
+    svg.innerHTML = "";
+    const d = parseFloat($("#y-d").value); $("#y-dv").textContent = d.toFixed(4) + " /mm²";
+    // left: GPU dies
+    el("circle", { cx: cx1, cy, r: R, class: "box" }, svg);
+    let total = 0, lost = 0;
+    for (let x = -150; x + dieW <= 150; x += dieW + 1) for (let y = -150; y + dieH <= 150; y += dieH + 1) {
+      const corners = [[x, y], [x + dieW, y], [x, y + dieH], [x + dieW, y + dieH]];
+      if (!corners.every(([a, b]) => a * a + b * b < 150 * 150)) continue;
+      total++;
+      const hit = defects.some(([a, b]) => a >= x && a <= x + dieW && b >= y && b <= y + dieH);
+      if (hit) lost++;
+      el("rect", { x: cx1 + x * scale, y: cy + y * scale, width: dieW * scale, height: dieH * scale, class: hit ? "red" : "grn", "stroke-width": .8 }, svg);
+    }
+    // right: wafer-scale square of tiny cores
+    el("circle", { cx: cx2, cy, r: R, class: "box" }, svg);
+    const half = 107.5; // 215 mm square
+    el("rect", { x: cx2 - half * scale, y: cy - half * scale, width: 2 * half * scale, height: 2 * half * scale, class: "grn", "stroke-width": 1 }, svg);
+    let hitsSq = 0;
+    defects.forEach(([a, b]) => {
+      const inSq = Math.abs(a) < half && Math.abs(b) < half; if (inSq) hitsSq++;
+      el("circle", { cx: cx1 + a * scale, cy: cy + b * scale, r: 2.2, fill: cssVar("--red") }, svg);
+      el("circle", { cx: cx2 + a * scale, cy: cy + b * scale, r: inSq ? 2.2 : 1.5, fill: cssVar("--red"), opacity: inSq ? 1 : .35 }, svg);
+    });
+    el("text", { x: cx1, y: 325, "text-anchor": "middle", "font-size": 13 }, svg).textContent = `GPU-sized dies: ${lost} of ${total} hit`;
+    el("text", { x: cx2, y: 325, "text-anchor": "middle", "font-size": 13 }, svg).textContent = `wafer-scale: ${hitsSq} cores lost`;
+    const deadGPU = lost * dieW * dieH, deadWSE = hitsSq * 0.05;
+    $("#y-out").textContent =
+      `defects on wafer: ${defects.length}\n` +
+      `GPU dies:     ${lost}/${total} dies hit → ${deadGPU.toLocaleString()} mm² discarded (${(100 * lost / total).toFixed(0)}% of dies)\n` +
+      `wafer-scale:  ${hitsSq} defects in the square → ${deadWSE.toFixed(1)} mm² of cores replaced by spares\n` +
+      `(real fabs bin partially defective GPU dies as cheaper SKUs, so the GPU number is a worst case)`;
+  }
+  $("#y-d").oninput = roll; $("#y-roll").onclick = roll; roll();
+})();
+</script>
+</body>
+</html>

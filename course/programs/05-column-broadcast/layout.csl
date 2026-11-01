@@ -1,0 +1,29 @@
+// 05-column-broadcast: the top PE of a column multicasts a vector x down the
+// column. Each router hands every wavelet to its own CE *and* forwards it
+// SOUTH in the same hop (tx = {RAMP, SOUTH}), so one send reaches R PEs.
+// Every PE then computes y = s * x with its own scale s.
+// Teaches: multicast routes, a single color shared by a whole column, fabin->mem ops.
+param R: i16;     // rows (PEs in the column)
+param M: i16;     // vector length
+
+const bcast: color = @get_color(0);
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = 1, .height = R });
+
+layout {
+  @set_rectangle(1, R);
+  for (@range(i16, R)) |y| {
+    @set_tile_code(0, y, "pe_program.csl", .{ .memcpy_params = memcpy.get_params(0),
+                                             .M = M, .is_root = (y == 0), .bcast = bcast });
+    if (y == 0) {             // root: CE -> router -> SOUTH
+      @set_color_config(0, y, bcast, .{ .routes = .{ .rx = .{RAMP},  .tx = .{SOUTH} } });
+    } else if (y == R - 1) {  // bottom: NORTH -> CE only
+      @set_color_config(0, y, bcast, .{ .routes = .{ .rx = .{NORTH}, .tx = .{RAMP} } });
+    } else {                  // middle: NORTH -> CE and onward SOUTH (multicast)
+      @set_color_config(0, y, bcast, .{ .routes = .{ .rx = .{NORTH}, .tx = .{RAMP, SOUTH} } });
+    }
+  }
+  @export_name("x", [*]f32, true);
+  @export_name("y", [*]f32, true);
+  @export_name("s", [*]f32, true);
+  @export_name("go", fn()void);
+}

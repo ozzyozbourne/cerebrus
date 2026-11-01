@@ -4,3 +4,5 @@ sim.log
 sim_stats.json
 simconfig.json
 simfab_traces/
+wio_flows_tmpdir.*/
+run.log

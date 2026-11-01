@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Memory Wall</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 1 · Part I · Why wafer-scale</div>
+<h1>The memory wall</h1>
+<p class="lede">Modern AI chips can do far more arithmetic than their memory can feed. Every architecture in this course — the Cerebras wafer, Tenstorrent's Tensix grid, NVIDIA's GPUs — is a different answer to that one problem. Start here.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Compute a chip's <em>ridge point</em> and say whether a kernel is compute-bound or bandwidth-bound.</li>
+<li>Explain why LLM decode at small batch is starved for bandwidth, while prefill is not.</li>
+<li>Recognise the "SRAM vs HBM" comparison trap in vendor marketing.</li>
+</ul>
+</div>
+
+<h2>Two numbers describe every accelerator</h2>
+<p>Strip an accelerator down and you get two numbers: how fast it can compute (peak FLOP/s) and how fast it can move data from where the data lives to where the math happens (bytes/s). The ratio between them is the <strong>ridge point</strong>:</p>
+<pre><code>ridge point  =  peak FLOP/s  ÷  memory bandwidth (bytes/s)      <span class="c">// units: FLOP per byte</span></code></pre>
+<p>A kernel has its own ratio, its <strong>arithmetic intensity</strong>: how many floating-point operations it performs for each byte it reads. If the kernel's intensity is below the ridge point, the arithmetic units sit idle waiting for memory — the kernel is <em>bandwidth-bound</em>. Above it, memory keeps up and the kernel is <em>compute-bound</em>. Plotting attainable performance against intensity gives the famous <strong>roofline</strong>: a slanted line (bandwidth × intensity) that meets a flat ceiling (peak compute) at the ridge.</p>
+
+<p>For an H100 SXM running dense BF16: <code>989 TFLOP/s ÷ 3.35 TB/s ≈ 295 FLOP/byte</code> <span class="tag vendor">Vendor inputs</span> <span class="tag derived">Derived</span>. A kernel needs to do almost 300 operations on every byte it fetches from HBM before the GPU's tensor cores are the bottleneck.</p>
+
+<div class="widget" id="roof">
+<h4>Interactive roofline</h4>
+<p class="hint">Drag the intensity slider. The dot shows what fraction of peak a kernel with that intensity can reach on the selected chip, using that chip's main working memory. Axes are log-scale.</p>
+<div class="controls">
+<label>Chip <select id="roof-chip"></select></label>
+<label>Kernel intensity <input type="range" id="roof-ai" min="-1" max="4" step="0.01" value="0"> <span id="roof-ai-v" class="mono"></span></label>
+<label>Preset <select id="roof-preset">
+  <option value="0">LLM decode, batch 1 (~1 FLOP/B)</option>
+  <option value="1.85">Decode, batch 64 (~70 FLOP/B)</option>
+  <option value="3.3">Prefill (~2000 FLOP/B)</option>
+  <option value="-0.6">Vector add (0.25 FLOP/B f32)</option>
+</select></label>
+</div>
+<svg id="roof-svg" viewBox="0 0 640 330" width="640" role="img" aria-label="Roofline chart"></svg>
+<div class="readout" id="roof-out"></div>
+</div>
+
+<h2>Why LLM decode lives on the slanted part</h2>
+<p>When a language model generates a token, every weight of the model is read once and used for roughly one multiply-add per sequence in the batch. At batch 1 that is <strong>about 1 FLOP per byte of weights</strong>. Batching raises intensity roughly in proportion to the batch size, yet a 70B model at batch 64 only reaches about 50–100 FLOP/byte — still well under the H100's ridge. Prefill (processing the prompt) reuses each weight across thousands of tokens, reaching thousands of FLOP/byte: compute-bound.</p>
+
+<figure>
+<svg viewBox="0 0 720 230" width="720" role="img" aria-label="Decode versus prefill data reuse">
+  <!-- decode -->
+  <text x="20" y="24" font-weight="700">Decode (1 new token)</text>
+  <rect x="20" y="40" width="150" height="120" rx="8" class="amb" stroke-width="1.5"/>
+  <text x="95" y="92" text-anchor="middle" font-weight="600">Weights W</text>
+  <text x="95" y="112" text-anchor="middle" class="muted" font-size="13">140 GB (70B, fp16)</text>
+  <path d="M175 100 H255" class="s-amb" stroke-width="3" marker-end="url(#ar1)"/>
+  <rect x="260" y="85" width="40" height="30" rx="5" class="blu" stroke-width="1.5"/>
+  <text x="280" y="105" text-anchor="middle" font-size="12">x</text>
+  <text x="20" y="190" font-size="14">Every byte of W is read once and used once.</text>
+  <text x="20" y="210" font-size="14" class="muted">≈ 1 FLOP / byte → bandwidth-bound</text>
+  <!-- prefill -->
+  <text x="390" y="24" font-weight="700">Prefill (2,000-token prompt)</text>
+  <rect x="390" y="40" width="150" height="120" rx="8" class="amb" stroke-width="1.5"/>
+  <text x="465" y="92" text-anchor="middle" font-weight="600">Weights W</text>
+  <text x="465" y="112" text-anchor="middle" class="muted" font-size="13">read once</text>
+  <path d="M545 100 H615" class="s-amb" stroke-width="3" marker-end="url(#ar1)"/>
+  <g>
+    <rect x="620" y="45" width="80" height="110" rx="5" class="blu" stroke-width="1.5"/>
+    <text x="660" y="96" text-anchor="middle" font-size="12">X</text>
+    <text x="660" y="114" text-anchor="middle" font-size="11" class="muted">2,000 tokens</text>
+  </g>
+  <text x="390" y="190" font-size="14">Each weight is reused for all 2,000 tokens.</text>
+  <text x="390" y="210" font-size="14" class="muted">≈ thousands of FLOP / byte → compute-bound</text>
+  <defs><marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-amb"/></marker></defs>
+</svg>
+<figcaption><b>Decode reads everything to do very little.</b> That is why tokens-per-second for a single user is set by memory bandwidth, not by FLOPs.</figcaption>
+</figure>
+
+<p>And the wall is getting taller. From H100 to Rubin, HBM bandwidth grows about 5.7× (3.35 → 19.2 TB/s) while low-precision FLOPs grow much faster, partly because the number format shrinks from BF16 to FP4 <span class="tag derived">Derived from vendor figures</span>. Each generation, a GPU has more arithmetic per byte it can fetch.</p>
+
+<h2>Three answers to the same wall</h2>
+<figure>
+<svg viewBox="0 0 760 300" width="760" role="img" aria-label="Distance from compute to memory in three architectures">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <!-- GPU -->
+  <text x="20" y="22" font-weight="700">GPU (H100)</text>
+  <rect x="20" y="36" width="70" height="40" rx="6" class="acc" stroke-width="1.5"/><text x="55" y="61" text-anchor="middle" font-size="13">SM math</text>
+  <rect x="105" y="36" width="80" height="40" rx="6" class="box"/><text x="145" y="55" text-anchor="middle" font-size="12">RF+L1/smem</text><text x="145" y="69" text-anchor="middle" font-size="11" class="muted">~512 KB/SM</text>
+  <rect x="200" y="36" width="70" height="40" rx="6" class="box"/><text x="235" y="55" text-anchor="middle" font-size="12">L2</text><text x="235" y="69" text-anchor="middle" font-size="11" class="muted">50 MB</text>
+  <line x1="290" y1="28" x2="290" y2="84" class="s-muted" stroke-dasharray="4 3"/><text x="294" y="96" font-size="10" class="muted">package edge</text>
+  <rect x="310" y="36" width="110" height="40" rx="6" class="amb" stroke-width="1.5"/><text x="365" y="55" text-anchor="middle" font-size="12">HBM3</text><text x="365" y="69" text-anchor="middle" font-size="11" class="muted">80 GB · 3.35 TB/s</text>
+  <path d="M415 56 H440" stroke="none"/>
+  <text x="440" y="52" font-size="13">Big capacity, medium bandwidth.</text>
+  <text x="440" y="70" font-size="13" class="muted">Hides latency with thousands of threads.</text>
+
+  <!-- Tenstorrent -->
+  <text x="20" y="130" font-weight="700">Tenstorrent (Blackhole p150)</text>
+  <rect x="20" y="144" width="70" height="40" rx="6" class="acc" stroke-width="1.5"/><text x="55" y="169" text-anchor="middle" font-size="13">Tensix</text>
+  <rect x="105" y="144" width="100" height="40" rx="6" class="grn" stroke-width="1.5"/><text x="155" y="163" text-anchor="middle" font-size="12">L1 SRAM</text><text x="155" y="177" text-anchor="middle" font-size="11" class="muted">1.4 MiB / core</text>
+  <line x1="225" y1="136" x2="225" y2="192" class="s-muted" stroke-dasharray="4 3"/>
+  <rect x="245" y="144" width="120" height="40" rx="6" class="amb" stroke-width="1.5"/><text x="305" y="163" text-anchor="middle" font-size="12">GDDR6</text><text x="305" y="177" text-anchor="middle" font-size="11" class="muted">32 GB · ~0.5 TB/s</text>
+  <text x="440" y="160" font-size="13">Large SRAM per core + cheap DRAM,</text>
+  <text x="440" y="178" font-size="13" class="muted">scale out with on-chip Ethernet.</text>
+
+  <!-- Cerebras -->
+  <text x="20" y="238" font-weight="700">Cerebras (WSE-3)</text>
+  <g>
+    <rect x="20" y="252" width="70" height="40" rx="6" class="acc" stroke-width="1.5"/><text x="55" y="277" text-anchor="middle" font-size="13">PE math</text>
+    <rect x="92" y="252" width="60" height="40" rx="6" class="grn" stroke-width="1.5"/><text x="122" y="271" text-anchor="middle" font-size="12">48 KB</text><text x="122" y="285" text-anchor="middle" font-size="11" class="muted">1 cycle</text>
+    <text x="165" y="270" font-size="13">× 900,000</text><text x="165" y="287" font-size="13" class="muted">= 44 GB, no DRAM</text>
+  </g>
+  <text x="440" y="268" font-size="13">Small capacity, enormous local bandwidth</text>
+  <text x="440" y="286" font-size="13" class="muted">(21 PB/s summed over all PEs) <tspan class="f-amb">[Vendor]</tspan></text>
+</svg>
+<figcaption><b>Where does the working set live?</b> The further memory sits from the math, the lower its bandwidth per FLOP. Cerebras's bet is to remove the hierarchy entirely: every byte is one cycle from the core that uses it.</figcaption>
+</figure>
+
+<div class="callout warn">
+<strong>The comparison trap</strong>
+Cerebras markets "7,000×" the memory bandwidth of an H100 <span class="tag vendor">Vendor</span>. That compares on-wafer SRAM (21 PB/s) to the GPU's <em>off-chip</em> HBM (3.35 TB/s). But 21 PB/s is the sum of 900,000 private 48 KB memories, each reachable only by its own core. The fair GPU counterpart is the GPU's aggregate register-file + shared-memory bandwidth, which is also tens to hundreds of TB/s <span class="tag derived">Derived</span>. The real difference is <em>capacity at that speed</em>: 44 GB on a wafer versus ~66 MB of registers and L1 on an H100.
+</div>
+
+<h2>What this course covers</h2>
+<p>Part II takes the wafer apart from the bottom up: the single processing element, the fabric that connects 900,000 of them, the task model that replaces the instruction stream, the descriptors that replace loads and stores, and the systems that turn wafers into clusters. Part III programs it — five original programs, each compiled and validated on the Cerebras SDK 2.10.1 simulator. Part IV holds the wafer up against Tenstorrent and NVIDIA.</p>
+
+<div class="callout">
+<strong>How to read the numbers</strong>
+Every figure carries a tag: <span class="tag vendor">Vendor</span> published by the chipmaker, <span class="tag indep">Indep</span> measured by a third party, <span class="tag analyst">Analyst</span> a third-party estimate, <span class="tag sdk">SDK 2.10.1</span> read directly from the installed Cerebras SDK, <span class="tag measured">Measured</span> from our own simulator runs, and <span class="tag derived">Derived</span> arithmetic done for this course. Many web figures were gathered from search extracts of primary documents; check them before quoting.
+</div>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>A kernel does 2 FLOPs per 4-byte float it reads. Is it bandwidth- or compute-bound on an H100?</summary><p>Intensity = 0.5 FLOP/byte, far below the ~295 ridge. It is bandwidth-bound and can reach at most 0.5 × 3.35 TB/s ≈ 1.7 TFLOP/s, under 0.2% of peak.</p></details>
+<details><summary>Why does batching help decode on a GPU?</summary><p>Each weight read from HBM is reused for every sequence in the batch, so FLOPs per byte rise roughly linearly with batch size. Throughput rises; per-user latency does not improve.</p></details>
+<details><summary>Why is "21 PB/s vs 3.35 TB/s" not apples to apples?</summary><p>It compares on-chip SRAM to off-chip DRAM. Each PE can only reach its own 48 KB at that speed; moving data between PEs uses the fabric (Chapter 4).</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  // [name, peak FLOP/s, bandwidth B/s, note]
+  const chips = [
+    ["NVIDIA H100 SXM · BF16 dense · HBM3", 989e12, 3.35e12, "Vendor"],
+    ["NVIDIA B200 · FP4 dense · HBM3e", 9e15, 8e12, "Vendor"],
+    ["Tenstorrent Blackhole p150 · BlockFP8 · GDDR6", 664e12, 0.512e12, "Vendor"],
+    ["Cerebras WSE-3 · FP16 dense (analyst est.) · on-wafer SRAM", 15.6e15, 21e15, "Analyst FLOPs, Vendor BW"],
+  ];
+  const sel = $("#roof-chip"), ai = $("#roof-ai"), svg = $("#roof-svg"), out = $("#roof-out");
+  chips.forEach((c, i) => sel.add(new Option(c[0], i)));
+  const W = 640, H = 330, L = 60, R = 20, T = 15, B = 45;
+  const xmin = -1, xmax = 4, ymin = 9, ymax = 17; // log10 FLOP/byte, log10 FLOP/s
+  const X = v => L + (v - xmin) / (xmax - xmin) * (W - L - R);
+  const Y = v => H - B - (v - ymin) / (ymax - ymin) * (H - T - B);
+  function fmt(f) { const u = [["P",1e15],["T",1e12],["G",1e9]]; for (const [s,d] of u) if (f >= d) return (f/d).toFixed(f/d<10?2:0)+" "+s+"FLOP/s"; return f.toFixed(0); }
+  function draw() {
+    svg.innerHTML = "";
+    const grid = el("g", {}, svg);
+    for (let x = xmin; x <= xmax; x++) {
+      el("line", { x1: X(x), x2: X(x), y1: T, y2: H - B, class: "line" }, grid);
+      el("text", { x: X(x), y: H - B + 16, "text-anchor": "middle", "font-size": 11, class: "muted" }, grid).textContent = "10^" + x;
+    }
+    for (let y = ymin; y <= ymax; y++) {
+      el("line", { x1: L, x2: W - R, y1: Y(y), y2: Y(y), class: "line" }, grid);
+      el("text", { x: L - 6, y: Y(y) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, grid).textContent = ["1G","10G","100G","1T","10T","100T","1P","10P","100P"][y - 9];
+    }
+    el("text", { x: (L + W - R) / 2, y: H - 8, "text-anchor": "middle", "font-size": 12 }, svg).textContent = "arithmetic intensity (FLOP / byte)";
+    const yl = el("text", { x: 14, y: (T + H - B) / 2, "text-anchor": "middle", "font-size": 12, transform: `rotate(-90 14 ${(T + H - B) / 2})` }, svg); yl.textContent = "attainable FLOP/s";
+    const colors = ["--blue", "--purple", "--green", "--accent"];
+    chips.forEach((c, i) => {
+      const [_, peak, bw] = c; const ridge = Math.log10(peak / bw);
+      const active = i == sel.value;
+      const pts = [];
+      for (let x = xmin; x <= xmax; x += 0.05) { pts.push([X(x), Y(Math.min(Math.log10(peak), Math.log10(bw) + x))]); }
+      el("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: cssVar(colors[i]),
+        "stroke-width": active ? 3 : 1.4, opacity: active ? 1 : .45 }, svg);
+      if (active && ridge >= xmin && ridge <= xmax) {
+        el("circle", { cx: X(ridge), cy: Y(Math.log10(peak)), r: 4, fill: cssVar(colors[i]) }, svg);
+        el("text", { x: X(ridge) + 6, y: Y(Math.log10(peak)) - 6, "font-size": 11 }, svg).textContent = "ridge " + (peak / bw).toFixed(peak / bw < 10 ? 2 : 0) + " FLOP/B";
+      }
+    });
+    const c = chips[sel.value], a = parseFloat(ai.value);
+    const att = Math.min(c[1], c[2] * Math.pow(10, a));
+    el("line", { x1: X(a), x2: X(a), y1: T, y2: H - B, stroke: cssVar("--red"), "stroke-dasharray": "4 3" }, svg);
+    el("circle", { cx: X(a), cy: Y(Math.log10(att)), r: 6, fill: cssVar("--red") }, svg);
+    $("#roof-ai-v").textContent = Math.pow(10, a).toPrecision(3) + " FLOP/B";
+    const bound = att < c[1] ? "BANDWIDTH-bound" : "COMPUTE-bound";
+    out.textContent = `${c[0]}\nridge point: ${(c[1] / c[2]).toPrecision(3)} FLOP/byte   (${c[3]})\nattainable: ${fmt(att)}  =  ${(100 * att / c[1]).toPrecision(3)}% of peak  →  ${bound}`;
+  }
+  sel.value = 0; sel.onchange = draw; ai.oninput = draw;
+  $("#roof-preset").onchange = e => { ai.value = e.target.value; draw(); };
+  draw();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>
+</body>
+</html>

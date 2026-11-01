@@ -1,0 +1,43 @@
+// 04-heat-stencil: explicit 1-D heat equation  u' = u + alpha * (u[i-1] - 2u[i] + u[i+1])
+// on a rod split across P PEs (n cells each). Every timestep each PE swaps its
+// edge cells with both neighbours (halo exchange), then updates its cells.
+// Teaches: bidirectional neighbour traffic, 4 colors, async-op completion
+// counting with local tasks, iterative task-driven control flow.
+param P: i16;
+param n: i16;
+
+// Eastward traffic uses E0/E1, westward W0/W1, alternating by column parity.
+const E0: color = @get_color(0);
+const E1: color = @get_color(1);
+const W0: color = @get_color(2);
+const W1: color = @get_color(3);
+
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = P, .height = 1 });
+
+layout {
+  @set_rectangle(P, 1);
+  for (@range(i16, P)) |x| {
+    const even = (x % 2 == 0);
+    const send_e = if (even) E0 else E1;   // I send my last cell EAST on this
+    const recv_w = if (even) E1 else E0;   // my west neighbour's send_e
+    const send_w = if (even) W0 else W1;   // I send my first cell WEST on this
+    const recv_e = if (even) W1 else W0;   // my east neighbour's send_w
+    const has_w = x > 0;
+    const has_e = x < P - 1;
+
+    @set_tile_code(x, 0, "pe_program.csl", .{
+      .memcpy_params = memcpy.get_params(x), .n = n, .has_w = has_w, .has_e = has_e,
+      .send_e = send_e, .recv_w = recv_w, .send_w = send_w, .recv_e = recv_e });
+
+    if (has_e) {
+      @set_color_config(x, 0, send_e, .{ .routes = .{ .rx = .{RAMP}, .tx = .{EAST} } });
+      @set_color_config(x, 0, recv_e, .{ .routes = .{ .rx = .{EAST}, .tx = .{RAMP} } });
+    }
+    if (has_w) {
+      @set_color_config(x, 0, send_w, .{ .routes = .{ .rx = .{RAMP}, .tx = .{WEST} } });
+      @set_color_config(x, 0, recv_w, .{ .routes = .{ .rx = .{WEST}, .tx = .{RAMP} } });
+    }
+  }
+  @export_name("u", [*]f32, true);
+  @export_name("run", fn(u32, f32)void);    // (timesteps, alpha)
+}

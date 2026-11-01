@@ -1,0 +1,34 @@
+// 03-row-reduce: P PEs in a row each hold a vector v[M]. The sum of all
+// vectors flows west -> east: every PE adds its own v to the stream as it
+// passes through (fabric-in + memory -> fabric-out in ONE DSD operation).
+// Teaches: colors, static routes (rx/tx), checkerboard color alternation.
+param P: i16;   // number of PEs in the row
+param M: i16;   // vector length per PE
+
+// Two colors alternate by column parity. A middle PE receives on one color
+// and sends on the other; with a single color its router could not tell
+// "incoming from WEST, deliver to me" from "outgoing from me, go EAST".
+const c0: color = @get_color(0);
+const c1: color = @get_color(1);
+
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = P, .height = 1 });
+
+layout {
+  @set_rectangle(P, 1);
+  for (@range(i16, P)) |x| {
+    const send_c = if (x % 2 == 0) c0 else c1;   // color this PE transmits on
+    const recv_c = if (x % 2 == 0) c1 else c0;   // color its west neighbour used
+    const role: i16 = if (x == 0) 0 else if (x == P - 1) 2 else 1; // first/middle/last
+
+    @set_tile_code(x, 0, "pe_program.csl", .{
+      .memcpy_params = memcpy.get_params(x), .M = M, .role = role,
+      .send_color = send_c, .recv_color = recv_c });
+
+    if (role != 2) // everyone but the last PE: CE -> RAMP -> router -> EAST
+      @set_color_config(x, 0, send_c, .{ .routes = .{ .rx = .{RAMP}, .tx = .{EAST} } });
+    if (role != 0) // everyone but the first PE: WEST -> router -> RAMP -> CE
+      @set_color_config(x, 0, recv_c, .{ .routes = .{ .rx = .{WEST}, .tx = .{RAMP} } });
+  }
+  @export_name("v", [*]f32, true);
+  @export_name("reduce", fn()void);
+}
