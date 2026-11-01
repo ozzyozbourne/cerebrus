@@ -49,27 +49,27 @@ Each task is like a callback on an event loop, or a short interrupt service rout
   <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
   <marker id="a5r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-red"/></marker></defs>
   <g font-size="13">
-  <rect x="10" y="80" width="100" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="60" y="106" text-anchor="middle" font-weight="600">fabric</text><text x="60" y="124" text-anchor="middle" font-size="11" class="muted">wavelet, color c</text>
-  <rect x="140" y="80" width="100" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="190" y="106" text-anchor="middle" font-weight="600">router</text><text x="190" y="124" text-anchor="middle" font-size="11" class="muted">route: c → RAMP</text>
-  <rect x="270" y="80" width="110" height="60" rx="8" class="grn" stroke-width="1.5"/><text x="325" y="104" text-anchor="middle" font-weight="600">input queue</text><text x="325" y="122" text-anchor="middle" font-size="11" class="muted">holds waiting wavelets</text>
-  <rect x="410" y="50" width="170" height="120" rx="8" class="amb" stroke-width="1.5"/><text x="495" y="72" text-anchor="middle" font-weight="600">task state</text>
+  <rect x="10" y="80" width="90" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="55" y="106" text-anchor="middle" font-weight="600">fabric</text><text x="55" y="124" text-anchor="middle" font-size="11" class="muted">wavelet, color c</text>
+  <rect x="130" y="80" width="100" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="180" y="106" text-anchor="middle" font-weight="600">router</text><text x="180" y="124" text-anchor="middle" font-size="11" class="muted">route: c → RAMP</text>
+  <rect x="280" y="80" width="110" height="60" rx="8" class="grn" stroke-width="1.5"/><text x="335" y="104" text-anchor="middle" font-weight="600">input queue</text><text x="335" y="122" text-anchor="middle" font-size="11" class="muted">holds waiting</text><text x="335" y="135" text-anchor="middle" font-size="11" class="muted">wavelets</text>
+  <rect x="420" y="50" width="180" height="120" rx="8" class="amb" stroke-width="1.5"/><text x="510" y="72" text-anchor="middle" font-weight="600">task state</text>
   <g font-size="11" class="mono">
-    <text x="426" y="94" class="muted">id</text><text x="478" y="94" text-anchor="middle" class="muted">act</text><text x="530" y="94" text-anchor="middle" class="muted">blk</text>
-    <text x="426" y="114">2</text><text x="478" y="114" text-anchor="middle">●</text><text x="530" y="114" text-anchor="middle">○</text>
-    <text x="426" y="134">10</text><text x="478" y="134" text-anchor="middle">○</text><text x="530" y="134" text-anchor="middle">○</text>
-    <text x="426" y="154">11</text><text x="478" y="154" text-anchor="middle">●</text><text x="530" y="154" text-anchor="middle">●</text>
+    <text x="434" y="94" class="muted">id</text><text x="484" y="94" text-anchor="middle" class="muted">act</text><text x="524" y="94" text-anchor="middle" class="muted">blk</text>
+    <text x="434" y="114">2</text><text x="484" y="114" text-anchor="middle">●</text><text x="524" y="114" text-anchor="middle">○</text>
+    <text x="434" y="134">10</text><text x="484" y="134" text-anchor="middle">○</text><text x="524" y="134" text-anchor="middle">○</text>
+    <text x="434" y="154">11</text><text x="484" y="154" text-anchor="middle">●</text><text x="524" y="154" text-anchor="middle">●</text>
   </g>
-  <text x="556" y="114" font-size="10" class="f-grn">runs</text><text x="556" y="154" font-size="10" class="f-red">waits</text>
-  <rect x="610" y="80" width="140" height="60" rx="8" class="acc" stroke-width="1.5"/><text x="680" y="104" text-anchor="middle" font-weight="600">picker → CE</text><text x="680" y="122" text-anchor="middle" font-size="11" class="muted">runs one task to completion</text>
-  <path d="M110 110 H136" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
-  <path d="M240 110 H266" class="s-blu" stroke-width="2" marker-end="url(#a5)"/><text x="253" y="100" text-anchor="middle" font-size="10" class="f-blu">RAMP</text>
-  <path d="M380 110 H406" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
-  <path d="M580 110 H606" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
-  <text x="190" y="160" text-anchor="middle" font-size="11" class="f-blu">WSE-2: task ID = color c</text>
-  <text x="310" y="160" text-anchor="middle" font-size="11" class="f-grn">WSE-3: task ID = queue q</text>
-  <path d="M470 170 V196 H362 V144" fill="none" class="s-red dash" stroke-width="1.5" marker-end="url(#a5r)"/>
-  <text x="480" y="192" font-size="11" class="f-red">blocked: wavelets stay in the queue (a fabric DSD may drain them)</text>
-  <text x="380" y="238" text-anchor="middle" font-size="13">Payload becomes the task's argument:  <tspan class="mono">task on_value(v: f32) void { ... }</tspan></text>
+  <text x="548" y="114" font-size="10" class="f-grn">runs</text><text x="548" y="134" font-size="10" class="muted">idle</text><text x="548" y="154" font-size="10" class="f-red">waits</text>
+  <rect x="630" y="80" width="120" height="60" rx="8" class="acc" stroke-width="1.5"/><text x="690" y="104" text-anchor="middle" font-weight="600">picker → CE</text><text x="690" y="122" text-anchor="middle" font-size="11" class="muted">runs one task</text><text x="690" y="135" text-anchor="middle" font-size="11" class="muted">to completion</text>
+  <path d="M100 110 H126" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
+  <path d="M230 110 H276" class="s-blu" stroke-width="2" marker-end="url(#a5)"/><text x="253" y="102" text-anchor="middle" font-size="10" class="f-blu">RAMP</text>
+  <path d="M390 110 H416" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
+  <path d="M600 110 H626" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
+  <text x="180" y="68" text-anchor="middle" font-size="11" class="f-blu">WSE-2: task ID = color c</text>
+  <text x="335" y="68" text-anchor="middle" font-size="11" class="f-grn">WSE-3: task ID = queue q</text>
+  <path d="M480 170 V196 H350 V144" fill="none" class="s-red dash" stroke-width="1.5" marker-end="url(#a5r)"/>
+  <text x="420" y="214" text-anchor="middle" font-size="11" class="f-red">blocked: wavelets stay in the queue (a fabric DSD may drain them)</text>
+  <text x="380" y="242" text-anchor="middle" font-size="13">Payload becomes the task's argument:  <tspan class="mono">task on_value(v: f32) void { ... }</tspan></text>
   <text x="380" y="260" text-anchor="middle" font-size="12" class="muted">IDs in the table: 2 = data task (input queue 2, as in program 02); 10, 11 = local tasks (as in Lab 3).</text>
   <text x="380" y="280" text-anchor="middle" font-size="12" class="muted">The table is a schematic of the per-task bits described below, not a documented register layout.</text>
   </g>
@@ -304,7 +304,7 @@ We rebuilt that version to check. It fails the same way on both chips: <code>sim
   <rect x="580" y="90" width="150" height="56" rx="10" class="grn dash" stroke-width="1.5"/><text x="655" y="112" text-anchor="middle" font-weight="600">update()</text><text x="655" y="128" text-anchor="middle" font-size="11" class="muted">fn: 3 vector ops,</text><text x="655" y="141" text-anchor="middle" font-size="10" class="muted">inside the last done task</text>
   <path d="M140 118 H186" class="s-acc" stroke-width="2" marker-end="url(#a6)"/>
   <path d="M330 118 H376" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="353" y="84" text-anchor="middle" font-size="10" class="muted">completions</text><text x="353" y="96" text-anchor="middle" font-size="10" class="muted">activate</text>
-  <path d="M530 118 H576" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="553" y="84" text-anchor="middle" font-size="11">pending</text><text x="553" y="97" text-anchor="middle" font-size="11">== 0</text>
+  <path d="M530 118 H576" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="553" y="138" text-anchor="middle" font-size="11">pending</text><text x="553" y="151" text-anchor="middle" font-size="11">== 0</text>
   <path d="M430 146 C430 186, 480 186, 480 150" fill="none" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="490" y="176" font-size="11">pending &gt; 0: back to picker</text>
   <path d="M655 146 V206 H260 V150" fill="none" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="400" y="222" text-anchor="middle" font-size="12">step &lt; T: next step</text>
   <path d="M655 90 V52" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="646" y="72" text-anchor="end" font-size="12">step == T → unblock_cmd_stream()</text>
@@ -595,7 +595,7 @@ function txt(svg, x, y, s, attrs = {}) { const t = el("text", Object.assign({ x,
       const [k, tip] = kind(arch, id), x = X0 + id * W;
       const r = el("rect", { x, y, width: W - 2, height: 24, rx: 2, class: K[k][0], "stroke-width": 1, opacity: k === "memsoft" ? 0.55 : 1 }, svg);
       const t = el("title", {}, r); t.textContent = `${arch.toUpperCase()} ID ${id}: ${tip}`;
-      if (id % 4 === 0 || id === 43 || id === 31) txt(svg, x + (W - 2) / 2, y + 36, id, { "text-anchor": "middle", "font-size": 9, class: "muted" });
+      if (id % 4 === 0 || id === 43) txt(svg, x + (W - 2) / 2, y + 36, id, { "text-anchor": "middle", "font-size": 9, class: "muted" });
     }
   };
   strip("wse2", 40, "WSE-2"); strip("wse3", 110, "WSE-3");
@@ -614,7 +614,7 @@ function txt(svg, x, y, s, attrs = {}) { const t = el("text", Object.assign({ x,
   const leg = [["blu", "data task (WSE-2: = color)"], ["amb", "local task"], ["red", "memcpy"], ["pur", "teardown 29"], ["box", "NOP 31"], ["grn", "control only"]];
   leg.forEach(([c, l], i) => { const x = 10 + (i % 3) * 250, y = 222 + Math.floor(i / 3) * 22;
     el("rect", { x, y, width: 14, height: 12, rx: 2, class: c, "stroke-width": 1 }, svg); txt(svg, x + 20, y + 10, l, { "font-size": 11 }); });
-  txt(svg, 10, 290, "Faded red on WSE-3 21–23: marked reserved in the topic-09 task map. Highlighted IDs: courses' own programs.", { "font-size": 10, class: "muted" });
+  txt(svg, 10, 290, "Faded red on WSE-3 21–23: marked reserved in the topic-09 task map. Outlined IDs: this course's own programs.", { "font-size": 10, class: "muted" });
 })();
 
 /* ---------- microthread collision explorer ---------- */

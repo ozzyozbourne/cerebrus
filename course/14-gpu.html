@@ -203,7 +203,7 @@ Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely 
 <label>stages <input type="range" id="t-s" min="1" max="6" value="4"> <span id="t-sv" class="mono"></span></label>
 <label>consumer threads <select id="t-th"><option>128</option><option selected>256</option></select></label>
 </div>
-<svg id="t-svg" viewBox="0 0 680 230" width="680" role="img" aria-label="Matrix tiles of A, B and C for one step"></svg>
+<svg id="t-svg" viewBox="0 0 680 244" width="680" role="img" aria-label="Matrix tiles of A, B and C for one step"></svg>
 <div class="readout" id="t-out" aria-live="polite"></div>
 </div>
 <p>Even a 256 × 256 tile reaches only 128 FLOP/B from global memory, below 295. GEMM still hits peak because neighbouring blocks re-read the same slabs from the 50 MB L2, not from HBM. The whole problem needs far less HBM traffic: for M = N = K = 8192 the minimum is 3 × 8192² × 2 B ≈ 403 MB for 1.1 TFLOP, about 2,700 FLOP/B <span class="tag derived">Derived</span>. The budget example 128 × 256 × 64 with 4 stages takes 192 KB of shared memory and 128 accumulator registers per thread across 256 threads: registers, shared memory and Tensor Cores are sized together. On the wafer, A and B tiles are placed in PE SRAM ahead of time and moved neighbour to neighbour by wavelets (Chapter 12): the GPU <em>brings data to compute</em>; the wafer <em>places compute next to data</em>.</p>
@@ -402,26 +402,25 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
   (function () {
     const h = $("#hier");
     T(h, 40, 22, "H100 SXM (chip-wide)", { "font-weight": 700, "font-size": 14 });
-    T(h, 330, 22, "capacity (bar ∝ log bytes)", { "font-size": 12, class: "muted" });
+    T(h, 340, 22, "capacity (bar ∝ log bytes)", { "font-size": 12, class: "muted" });
     T(h, 520, 22, "WSE-3, per PE (×~900,000)", { "font-weight": 700, "font-size": 14 });
-    const lv = [["registers", 33.8e6, "33 MiB (256 KB/SM)", "~1 cycle · fastest", "grn"],
-      ["L1 / shared memory", 33.8e6, "33 MiB (256 KB/SM)", "~20–30 cycles · ~31 TB/s shared-mem", "grn"],
+    const lv = [["registers", 33.8e6, "33 MiB", "256 KB/SM · ~1 cycle", "grn"],
+      ["L1 / shared memory", 33.8e6, "33 MiB", "256 KB/SM · ~20–30 cycles · ~31 TB/s", "grn"],
       ["L2 cache (2 × 25 MB)", 50e6, "50 MB", "~200–300 cycles · >5.5 TB/s (PCIe card)", "blu"],
       ["HBM3 (off-die)", 80e9, "80 GB", "~400–800 cycles · 3.35 TB/s", "amb"]];
     lv.forEach(([n, b, cap, d, c], i) => {
       const y = 34 + i * 70;
-      el("rect", { x: 40, y, width: 440, height: 58, rx: 8, class: c, "stroke-width": 1.3 }, h);
+      el("rect", { x: 40, y, width: 460, height: 58, rx: 8, class: c, "stroke-width": 1.3 }, h);
       T(h, 52, y + 22, n, { "font-weight": 700, "font-size": 14 });
       T(h, 52, y + 44, d, { "font-size": 12.5, class: "muted" });
-      const bw = (Math.log10(b) - 6) / 5 * 140;
-      el("rect", { x: 330, y: y + 30, width: bw, height: 12, rx: 3, class: "f-" + (c === "grn" ? "grn" : c === "blu" ? "blu" : "amb") }, h);
-      T(h, 330 + bw + 6, y + 41, cap, { "font-size": 12 });
+      const bw = (Math.log10(b) - 6) / 5 * 100;
+      el("rect", { x: 340, y: y + 30, width: bw, height: 12, rx: 3, class: "f-" + c }, h);
+      T(h, 340 + bw + 6, y + 41, cap, { "font-size": 12 });
     });
-    el("line", { x1: 22, y1: 40, x2: 22, y2: 300, class: "s-muted", "stroke-width": 1.5, "marker-end": "url(#arrH)" }, h);
-    const defs = el("defs", {}, h), m = el("marker", { id: "arrH", viewBox: "0 0 10 10", refX: 5, refY: 9, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs);
-    el("path", { d: "M0,0 L5,10 L10,0 z", class: "f-pur", style: "fill: var(--muted)" }, m);
+    el("line", { x1: 26, y1: 40, x2: 26, y2: 296, class: "s-muted", "stroke-width": 1.5 }, h);
+    el("path", { d: "M20,294 L26,306 L32,294 z", style: "fill: var(--muted)" }, h);
     T(h, 16, 170, "latency grows", { "font-size": 12, class: "muted", transform: "rotate(-90 16 170)", "text-anchor": "middle" });
-    const pe = [["registers + DSRs", "per PE", "box"], ["48 KB SRAM", "1 cycle · code + data · 44 GB wafer-wide", "grn"],
+    const pe = [["registers + DSRs", "per PE", "box"], ["48 KB SRAM", "1 cycle · code + data (44 GB total)", "grn"],
       ["neighbour PEs", "wavelets over the fabric, hop by hop", "blu"], ["off-wafer", "host I/O, MemoryX", "amb"]];
     pe.forEach(([n, d, c], i) => {
       const y = 34 + i * 70;
@@ -445,15 +444,15 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
       const sectors = new Map();
       addr.forEach(a => { for (let b = a; b < a + e; b += 4) { const s = Math.floor(b / 32); sectors.set(s, (sectors.get(s) || 0) + 4); } });
       const lines = [...new Set([...sectors.keys()].map(s => Math.floor(s / 4)))].sort((a, b) => a - b);
-      const perRow = 8, LW = 80, gap = 4, x0 = 4;
+      const big = lines.length <= 4, perRow = big ? 4 : 8, LW = big ? 160 : 80, SW = LW / 4, gap = big ? 8 : 4, x0 = 4;
       const pos = new Map(); lines.forEach((l, j) => pos.set(l, [x0 + (j % perRow) * (LW + gap), 150 + Math.floor(j / perRow) * 36]));
       const H = 150 + Math.ceil(lines.length / perRow) * 36 + 6;
       svg.setAttribute("viewBox", `0 0 680 ${Math.max(200, H)}`);
       T(svg, 4, 14, "warp lanes 0–31", { "font-size": 12, class: "muted" });
-      T(svg, 4, 140, `${lines.length} cache line${lines.length > 1 ? "s" : ""} of 128 B touched (4 sectors each)`, { "font-size": 12, class: "muted" });
+      T(svg, 676, 14, `${lines.length} cache line${lines.length > 1 ? "s" : ""} of 128 B touched (4 sectors each) ↓`, { "font-size": 12, class: "muted", "text-anchor": "end" });
       addr.forEach((a, i) => {
         const lx = 14 + i * 20.5 + 9, s = Math.floor(a / 32), l = Math.floor(s / 4), [px, py] = pos.get(l);
-        el("line", { x1: lx, y1: 44, x2: px + (s % 4) * 20 + 10, y2: py, class: "s-acc", "stroke-width": 1, opacity: .45 }, svg);
+        el("line", { x1: lx, y1: 44, x2: px + (s % 4) * SW + SW / 2, y2: py, class: "s-acc", "stroke-width": 1, opacity: .45 }, svg);
       });
       for (let i = 0; i < 32; i++) {
         el("rect", { x: 14 + i * 20.5, y: 22, width: 18, height: 22, rx: 3, class: "acc" }, svg);
@@ -463,8 +462,8 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
         const [px, py] = pos.get(l);
         for (let k = 0; k < 4; k++) {
           const s = l * 4 + k, used = sectors.get(s) || 0;
-          el("rect", { x: px + k * 20, y: py, width: 20, height: 26, class: used ? "amb" : "box", "stroke-width": 1 }, svg);
-          if (used) el("rect", { x: px + k * 20 + 1, y: py + 19, width: 18 * used / 32, height: 6, class: "f-acc" }, svg);
+          el("rect", { x: px + k * SW, y: py, width: SW, height: 26, class: used ? "amb" : "box", "stroke-width": 1 }, svg);
+          if (used) el("rect", { x: px + k * SW + 1, y: py + 19, width: (SW - 2) * used / 32, height: 6, class: "f-acc" }, svg);
         }
       });
       const S = sectors.size, useful = 32 * e, eff = useful / (32 * S);
@@ -560,7 +559,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
       el("line", { x1: 70, y1: ay, x2: 670, y2: ay, class: "s-muted" }, svg);
       for (let c = 0; c <= WIN; c += 200) {
         el("line", { x1: 70 + c * 0.6, y1: ay, x2: 70 + c * 0.6, y2: ay + 5, class: "s-muted" }, svg);
-        T(svg, 70 + c * 0.6, ay + 18, c, { "text-anchor": "middle", "font-size": 11, class: "muted" });
+        T(svg, 70 + c * 0.6, ay + 18, c, { "text-anchor": c === WIN ? "end" : "middle", "font-size": 11, class: "muted" });
       }
       T(svg, 670, ay + 32, "cycles (a 1,000-cycle window in steady state)", { "text-anchor": "end", "font-size": 11, class: "muted" });
       svg.setAttribute("viewBox", `0 0 680 ${ay + 38}`);
@@ -568,7 +567,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
         `warps needed: ⌈(kC+L)/kC⌉ = ⌈${B + L}/${B}⌉ = ${need}`;
       if (W >= need) msg += "   ✓ latency hidden";
       else if (need <= 16) msg += `   add ${need - W} more warp${need - W > 1 ? "s" : ""}`;
-      else msg += `\nneeds ${need} > 16, the most one H100 scheduler holds (64 per SM). Raise k (independent loads per warp, ILP)\nor prefetch into shared memory with async copies (cp.async, TMA).`;
+      else msg += `\nneeds ${need} > 16, the most one H100 scheduler holds (64 per SM).\nRaise k (ILP) or prefetch into shared memory with async copies (cp.async, TMA).`;
       $("#o-out").textContent = msg;
     }
     window.__occ = occ;
@@ -593,7 +592,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
       el("rect", { x: 500 + sc * BN, y: y0 + sc * BM, width: sc * BN, height: sc * BM, class: "grn", "stroke-width": 2 }, svg);
       T(svg, 222, y0 + sz / 2 + 6, "×", { "text-anchor": "middle", "font-size": 22 });
       T(svg, 457, y0 + sz / 2 + 6, "→", { "text-anchor": "middle", "font-size": 22 });
-      T(svg, 340, 222, "the K loop marches the slabs along K, one BK-wide step at a time", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+      T(svg, 340, 234, "the K loop marches the slabs along K, one BK-wide step at a time", { "text-anchor": "middle", "font-size": 12, class: "muted" });
       const smOK = smem <= 228 * 1024, rOK = acc <= 255;
       $("#t-out").textContent =
         `smem per stage: (${BM}+${BN})×${BK}×2 B = ${(stage / 1024).toFixed(0)} KB  × ${S} stages = ${(smem / 1024).toFixed(0)} KB  ${smOK ? "✓ fits in 228 KB" : "✗ exceeds 228 KB per SM"}\n` +
