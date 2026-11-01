@@ -5,19 +5,34 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Host I/O and memcpy</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+  .legend { font-size: 13.5px; color: var(--muted); margin: 8px 0 0; }
+  .legend .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin: 0 4px 0 10px; border: 1px solid var(--border); }
+  .sw.pur { background: var(--purple-soft); border-color: var(--purple); }
+  .sw.grn { background: var(--green-soft); border-color: var(--green); }
+  .sw.acc { background: var(--accent-soft); border-color: var(--accent); }
+  .sw.blu { background: var(--blue-soft); border-color: var(--blue); }
+  .sw.box { background: var(--surface-2); }
+  .controls .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .btn.small { padding: 4px 10px; font-size: 13px; }
+  .controls output { font: 13.5px var(--mono); min-width: 5ch; }
+  .widget svg { display: block; margin: 0 auto; height: auto; }
+</style>
 </head>
 <body>
 <main>
 <div class="kicker">Chapter 7 · Part II · The machine</div>
 <h1>Host I/O and memcpy</h1>
-<p class="lede">The wafer has enormous internal bandwidth and a comparatively narrow door to the outside world. Every program in this course uses the SDK's <code>memcpy</code> runtime to get data on and off the wafer and to call device functions from Python. Knowing how it works explains several rules — and one bug we hit.</p>
+<p class="lede">The wafer has enormous internal bandwidth and a comparatively narrow door to the outside world. Every program in this course uses the SDK's <code>memcpy</code> runtime to get data on and off the wafer and to call device functions from Python. Knowing how it works inside explains several rules, and one bug we hit.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
 <ul>
-<li>Explain the memcpy "halo" columns and why your rectangle needs <code>--fabric-offsets</code>.</li>
-<li>Choose between copy mode and streaming mode.</li>
-<li>Use the command stream correctly: every RPC must call <code>unblock_cmd_stream()</code>, and a streaming copy needs a barrier before you read results.</li>
+<li>Estimate how long a host transfer takes, and say when the fixed per-transfer overhead dominates.</li>
+<li>Name the columns memcpy adds around your rectangle (the <em>memcpy frame</em>) and compute the <code>--fabric-dims</code> and <code>--fabric-offsets</code> your program needs.</li>
+<li>Trace how a host-to-device copy reaches the right PE: a demux down a column, then counter filters along each row.</li>
+<li>Use the command stream correctly: every RPC must call <code>unblock_cmd_stream()</code> at the right moment, and commands run one at a time.</li>
+<li>Choose between copy mode and streaming mode, and know why streaming needs a barrier before you read results and must send streams in the order the device consumes them.</li>
 </ul>
 </div>
 
@@ -25,33 +40,114 @@
 <div class="stat-row">
   <div class="stat"><div class="v">100 GbE</div><div class="l">host ↔ system links <span class="tag sdk">SDK 2.10.1</span></div></div>
   <div class="stat"><div class="v">~7 Gb/s</div><div class="l">per I/O channel <span class="tag sdk">SDK 2.10.1</span></div></div>
-  <div class="stat"><div class="v">≤ 16</div><div class="l">channels (<code>--channels</code>)</div></div>
-  <div class="stat"><div class="v">~200 µs</div><div class="l">TCP overhead per transfer</div></div>
+  <div class="stat"><div class="v">≤ 16</div><div class="l">channels (<code>--channels</code>) <span class="tag sdk">SDK 2.10.1</span></div></div>
+  <div class="stat"><div class="v">~200 µs</div><div class="l">TCP overhead per transfer <span class="tag sdk">SDK 2.10.1</span></div></div>
 </div>
-<p>The SDK's bandwidth benchmark puts it plainly: "The maximum bandwidth of a single channel is around 7Gbps … the overhead of TCP is about 200 us" <span class="tag sdk">SDK 2.10.1</span>. Sixteen channels give roughly 14 GB/s, so filling 44 GB of SRAM through this path would take over three seconds <span class="tag derived">Derived</span> — while the SRAM itself can be read at 21 PB/s. Conclusion: data that matters must <em>stay</em> on the wafer (inference), or arrive through dedicated hardware (MemoryX in training, Chapter 8). In this course's labs, host transfers dominate total runtime — Lab 3 measures this.</p>
+<p>The SDK's bandwidth benchmark puts it plainly: "The host connects the device via 100Gbps ethernets … The maximum bandwidth of a single channel is around 7Gbps … the overhead of TCP is about 200 us, a non-negligible cost when the transaction is small" <span class="tag sdk">SDK 2.10.1, bandwidth-test</span>. Sixteen channels give <em>at most</em> about 14 GB/s, and only if channels scale linearly; that is more than one 100 GbE link carries (12.5 GB/s), so it assumes several links <span class="tag derived">Derived</span>. Filling 44 GB <span class="tag vendor">Vendor</span> of on-wafer SRAM this way would take over three seconds <span class="tag derived">Derived</span>, while the SRAM itself can be read at 21 PB/s <span class="tag vendor">Vendor</span>.</p>
+<p>Two regimes follow. A big transfer is <strong>bandwidth-bound</strong>. A small one is <strong>overhead-bound</strong>: at 7 Gb/s, 200 µs is the time to move about 175 KB, so a single-channel transfer smaller than that spends more time on overhead than on data <span class="tag derived">Derived</span>. Program 01's 256-byte array costs about 200 µs to copy, an effective 1.3 MB/s <span class="tag derived">Derived</span>. The practical rules: batch data into few large copies, and keep the data that matters <em>on</em> the wafer (inference), or bring it in through dedicated hardware (MemoryX in training, Chapter 8).</p>
 
-<h2>What <code>--memcpy</code> adds around your program</h2>
-<p>When you compile with <code>--memcpy</code>, <code>cslc</code> generates extra PE programs in columns to the west and east of your rectangle: command fan-out and host→device demultiplexing on the west, device→host multiplexing on the east. For our programs with <code>--channels 1</code> the compiler emitted 3 west and 2 east columns <span class="tag measured">Measured from out/</span>.</p>
+<div class="widget" id="tt">
+<h4>Transfer-time calculator</h4>
+<p class="hint">Model: time = commands × 200 µs + bytes ÷ (channels × 7 Gb/s). It is a simple model built from the SDK's two figures; real systems add more effects. Try the presets and watch the overhead share.</p>
+<div class="controls">
+  <label>size <input type="range" id="tt-size" min="0.6" max="10.65" step="0.01" value="2.41"> <output id="tt-size-o"></output></label>
+  <label>channels <input type="range" id="tt-ch" min="1" max="16" step="1" value="1"> <output id="tt-ch-o"></output></label>
+  <label>copies <input type="number" id="tt-n" min="1" max="1000" value="1" style="width:6em"></label>
+  <label><input type="checkbox" id="tt-agg"> nonblocking, fully aggregated (idealised: one overhead per batch)</label>
+</div>
+<div class="controls"><span class="presets">
+  <button class="btn secondary small" type="button" data-b="4">one f32</button>
+  <button class="btn secondary small" type="button" data-b="256">program 01 array (256 B)</button>
+  <button class="btn secondary small" type="button" data-b="65536">64 KB</button>
+  <button class="btn secondary small" type="button" data-b="36864000">48 KB × 750-PE row</button>
+  <button class="btn secondary small" type="button" data-b="44000000000">all 44 GB of SRAM</button>
+</span></div>
+<svg id="tt-svg" viewBox="0 0 680 250" width="680" role="img" aria-label="Bandwidth ladder and transfer time"></svg>
+<div class="readout" id="tt-out" aria-live="polite"></div>
+<p class="legend">Sources: SRAM 21 PB/s and 44 GB <span class="tag vendor">Vendor</span>; 7 Gb/s per channel, ≤ 16 channels, 200 µs <span class="tag sdk">SDK 2.10.1</span>; 100 GbE = 12.5 GB/s, the 16-channel ceiling and every computed time <span class="tag derived">Derived</span>. The aggregation option is an upper bound on what <code>nonblock=True</code> can save: the SDK says only that the runtime "can aggregate multiple nonblocking H2D/D2H commands implicitly" <span class="tag sdk">SDK 2.10.1</span>.</p>
+</div>
 
-<figure>
-<svg viewBox="0 0 760 300" width="760" role="img" aria-label="Fabric layout with memcpy halo columns">
-  <g id="halo"></g>
-  <text x="20" y="268" font-size="12" class="muted">8 × 3 fabric for program 01: a 1 × 1 rectangle at offset (4,1).</text><text x="20" y="288" font-size="12" class="muted">Purple = memcpy west (commands, H2D demux) · green = memcpy east (D2H mux) · orange = your PE.</text>
-</svg>
-<figcaption><b>Your rectangle sits inside a frame built by the runtime.</b> That is why every <code>commands.sh</code> in this course passes <code>--fabric-dims=…</code> a few columns wider than the program and <code>--fabric-offsets=4,1</code>. On a real CS-2 the user rectangle must be 7 columns narrower and 2 rows shorter than the 750 × 994 fabric <span class="tag sdk">SDK 2.10.1</span>. Exact column roles per <code>--channels</code> are not documented locally.</figcaption>
-</figure>
+<div class="callout warn">
+<strong>The simulator does not model this door</strong>
+The cycle-level simulator has no Ethernet or TCP, so none of the labs can measure the 7 Gb/s or the 200 µs. In simulation, memcpy still costs device cycles. Lab 3 (Chapter 12) separates them from the kernel by running 0 and 100 timesteps and subtracting; the experiment box below measures them directly.
+</div>
 
-<p>memcpy also claims a fixed set of on-chip resources on every PE <span class="tag sdk">SDK 2.10.1</span>:</p>
+<h2>The memcpy frame: what <code>--memcpy</code> adds</h2>
+<p>When you compile with <code>--memcpy</code>, <code>cslc</code> places extra PE programs in columns around your rectangle. We call them the <strong>memcpy frame</strong>. (Do not confuse it with the <em>halo exchange</em> of Chapter 12, where stencil neighbours swap edge cells; the SDK's own layout comments also call the outermost ring "halo".) The roles come from the library's layout files <span class="tag sdk">SDK 2.10.1, runtime/layout_west_demux_cmdfan_multi.csl, layout_east_mux_multi.csl</span>:</p>
+<ul>
+<li><strong>West</strong>, outside in: one <em>halo</em> column, then a <em>demux adaptor</em> (where the I/O link enters and which reconfigures the demux for each command), a <em>demux</em> (splits one host stream into per-row streams), and a <em>command fan</em> (forwards commands and data east into each row).</li>
+<li><strong>East</strong>: a <em>mux</em> (merges per-row results into one stream), a <em>mux adaptor</em> (where the link leaves, back to the host), and one halo column.</li>
+<li><strong>North and south</strong>: one halo row each.</li>
+</ul>
+<p>So data from the host enters on the west, host-to-device (<strong>H2D</strong>), and results leave on the east, device-to-host (<strong>D2H</strong>). The arithmetic follows: west = 1 halo + 3 memcpy = 4 columns, so your (0,0) is fabric (4,1); east = 2 memcpy + 1 halo = 3; in total the fabric must be at least 7 columns wider and 2 rows taller than your rectangle <span class="tag sdk">SDK 2.10.1</span>. The bandwidth benchmark computes exactly this: <code>core_offset_x = 1 + 3 + width_west_buf</code>, <code>min_width = core_offset_x + width + 2 + 1 + width_east_buf</code>, <code>min_height = 1 + height + 1</code> <span class="tag sdk">SDK 2.10.1, bandwidth-test/run.py</span>. Compiling program 01 produced 3 west and 2 east frame programs (<code>out/west/bin/*.elf</code>, <code>out/east/bin/*.elf</code>) <span class="tag measured">Measured</span>, which matches.</p>
+
+<div class="widget" id="fd">
+<h4>Fabric-dims calculator</h4>
+<p class="hint">Set your rectangle and optional buffer columns. The grid and the <code>cslc</code> flags update. Column roles follow the library's 4 × 3 example; where the east adaptor sits in other sizes is schematic.</p>
+<div class="controls">
+  <label>width W <input type="number" id="fd-w" min="1" max="12" value="1" style="width:4.5em"></label>
+  <label>height H <input type="number" id="fd-h" min="1" max="6" value="1" style="width:4.5em"></label>
+  <label>west buffer <input type="number" id="fd-bw" min="0" max="3" value="0" style="width:4em"></label>
+  <label>east buffer <input type="number" id="fd-be" min="0" max="3" value="0" style="width:4em"></label>
+  <label><input type="checkbox" id="fd-cs2"> real CS-2 limits</label>
+</div>
+<div class="controls"><span class="presets">
+  <button class="btn secondary small" type="button" data-wh="1,1">program 01 / 02 (1 × 1)</button>
+  <button class="btn secondary small" type="button" data-wh="8,1">program 03 / 04 (P = 8)</button>
+  <button class="btn secondary small" type="button" data-wh="1,6">program 05 (R = 6)</button>
+  <button class="btn secondary small" type="button" data-wh="5,5">bandwidth-test (5 × 5)</button>
+</span></div>
+<svg id="fd-svg" viewBox="0 0 680 260" width="680" role="img" aria-label="Fabric layout with the memcpy frame"></svg>
+<div class="readout" id="fd-out" aria-live="polite"></div>
+<p class="legend"><span class="sw box"></span>halo <span class="sw pur"></span>memcpy west (adaptor, demux, command fan) <span class="sw blu"></span>optional buffer <span class="sw acc"></span>your rectangle <span class="sw grn"></span>memcpy east (mux, adaptor) · "nop" cells are idle frame PEs in rows the link does not enter.</p>
+</div>
+
+<p>Every <code>commands.sh</code> in this course applies the rule: <code>--fabric-dims=$((P+7)),3 --fabric-offsets=4,1</code> for a row of P PEs, <code>8,$((R+2))</code> for a column of R. On a real CS-2, <code>--fabric-dims</code> must be <code>750,994</code>, so the rectangle can be at most 743 × 992 <span class="tag sdk">SDK 2.10.1, single-tile-matvec README</span>. Two refinements:</p>
+<ul>
+<li><strong>Channels.</strong> Each channel is one I/O link with its own demux that serves a band of rows. For bandwidth-test at 5 rows, <code>--channels=4</code> produced 4 demuxes over bands of 2, 1, 1 and 1 rows (<code>out/west/out.json</code>), and 11 west ELFs instead of 8. The column count did not change <span class="tag measured">Measured</span>.</li>
+<li><strong>Buffer columns.</strong> <code>--width-west-buf</code> and <code>--width-east-buf</code> insert FIFO columns so the link keeps flowing while your PEs are busy. Each buffer PE holds about 46 KB, and a copy needs about pe_length × width × 4 ÷ 46 KB columns <span class="tag sdk">SDK 2.10.1</span>. For example, 1000 f32 per PE across 100 PEs is 400 KB, about 9 columns <span class="tag derived">Derived</span>. Buffers shift your offset east by the same amount.</li>
+</ul>
+
+<h3>What memcpy reserves on every PE</h3>
+<p>The frame is not the only cost. memcpy also runs code <em>on your PEs</em>, so it claims resources there <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span>:</p>
 <div class="table-wrap"><table>
 <tr><th>Resource</th><th>Reserved by memcpy</th><th>Consequence for you</th></tr>
-<tr><td>Colors</td><td>21 D2H data, 22 command stream, 23 H2D data, 20 context switch</td><td>use colors 0–19</td></tr>
-<tr><td>Local tasks</td><td>24, 27, 28, 30 (29 = teardown, 31 = NOP)</td><td>use e.g. 9–23 for your local tasks</td></tr>
-<tr><td>Control tasks</td><td>33–37, 40</td><td>pick other IDs for sentinels</td></tr>
-<tr><td>Queues</td><td>input/output queue 0 (and 1 on WSE-3)</td><td>start your queues at 2 — as all our programs do</td></tr>
+<tr><td>Colors</td><td>20 context switch, 21 D2H data, 22 command stream, 23 H2D data</td><td>use colors 0–19; each streaming H2D/D2H channel also takes one of these (program 02 gives color 0 to its stream)</td></tr>
+<tr><td>Local tasks</td><td>21 (D2H data), 24 (main after context switch), 27 (unblock commands), 28 (exit), 30 (send control); 29 = teardown, 31 = NOP. The SDK's topic-09 map also marks 21–23 reserved on WSE-3.</td><td>use 8–20 on WSE-3 (local IDs start at 8) and 0–20 on WSE-2, where IDs 0–23 are also the data-task IDs of the colors, so also avoid the IDs of colors you receive on. Never bind task 29. The course uses 9–13.</td></tr>
+<tr><td>Control tasks</td><td>33–37 (push params, H2D, D2H, RPC, ignore), 40 (context switch)</td><td>pick other IDs in [0, 64) for sentinels</td></tr>
+<tr><td>Queues</td><td>input/output queue 0: memcpy data, moved by microthread 0. On WSE-3 also input/output queue 1: the command color 22 binds there.</td><td>start your queues at 2, as all our programs do</td></tr>
 </table></div>
+<p class="legend">Context switch, teardown and NOP are internal memcpy mechanisms; you only need to avoid their IDs. The WSE-3 queue bindings are from <code>memcpy/wse3/memcpy.csl</code> ("cmd color (C22) needs to bind an input queue 1 for wse3") <span class="tag sdk">SDK 2.10.1</span>. Some header comments in that file list the colors in a different order; <code>sys_params.csl</code>, which defines them, is the authority.</p>
 
-<h2>Six calls on the host</h2>
-<div class="filename">course/programs/01-saxpy/run.py</div>
+<h2>How a copy reaches its PE</h2>
+<p>A copy-mode <code>memcpy_h2d</code> to a w × h rectangle travels in two stages <span class="tag sdk">SDK 2.10.1, runtime/demux.csl, memcpy/wse3/memcpyh2d.csl</span>:</p>
+<ol>
+<li><strong>Down the column.</strong> The link's stream enters the demux adaptor and is broadcast north to south through the demux column. Each demux PE has a <em>counter filter</em>: a hardware counter that ticks on every wavelet and lets one through only when it reads 0. With h receiving rows, row y keeps wavelets y, y + h, y + 2h, … and turns them east into its row.</li>
+<li><strong>Along the row.</strong> The command fan sends the row's wavelets east on color 23 to every PE in the row. Each PE has its own counter filter with <code>limit = width − 1</code> and <code>init_count = (limit + 1 − pid) % (limit + 1)</code>, so PE <code>pid</code> keeps every w-th wavelet, starting with wavelet <code>pid</code>. memcpy's task on that PE writes it into your exported array.</li>
+</ol>
+<p>The library's own example: with 4 PEs and 4 elements each, the wire carries <code>x0 x4 x8 x12 x1 x5 …</code>, and PE 0 keeps x0, x1, x2, x3. Element j of every PE travels before element j + 1 of any PE. Step through it below.</p>
+
+<div class="widget" id="cf">
+<h4>Counter-filter step-through</h4>
+<p class="hint">Each step sends one wavelet. The highlighted demux PE and row PE are the ones whose counters read 0; every other PE in the active row forwards the wavelet and ticks. The host order decides which array element sits at each wire position.</p>
+<div class="controls">
+  <label>w <input type="number" id="cf-w" min="1" max="4" value="4" style="width:4em"></label>
+  <label>h <input type="number" id="cf-h" min="1" max="3" value="1" style="width:4em"></label>
+  <label>elements per PE <input type="number" id="cf-l" min="1" max="4" value="4" style="width:4em"></label>
+  <label>order <select id="cf-ord"><option value="row">ROW_MAJOR</option><option value="col">COL_MAJOR</option></select></label>
+  <button class="btn" id="cf-step" type="button">Step</button>
+  <button class="btn secondary" id="cf-play" type="button">Play</button>
+  <button class="btn secondary" id="cf-reset" type="button">Reset</button>
+</div>
+<svg id="cf-svg" viewBox="0 0 680 340" width="680" role="img" aria-label="Counter filters routing wavelets to PEs"></svg>
+<div class="readout" id="cf-out" aria-live="polite"></div>
+<p class="legend">The filter settings and the one-row example are from the library comments <span class="tag sdk">SDK 2.10.1</span>. Combining the two stages into one wire order for h &gt; 1 rows, and the host-index mapping, are <span class="tag derived">Derived</span>; the widget models one channel. ROW_MAJOR means the host array is <code>A[h][w][l]</code> in C order, so each PE's block is contiguous. COL_MAJOR means <code>A[l][w][h]</code>, so element j of every PE is contiguous; the SDK builds it with loops l, w, h (bandwidth-test's <code>hwl_2_oned_colmajor</code>) or <code>B.T.ravel()</code> (row-col-broadcast) <span class="tag sdk">SDK 2.10.1</span>. Notice that in COL_MAJOR the wire order equals the host order <span class="tag derived">Derived</span>.</p>
+</div>
+
+<p>Two consequences. First, <strong>the whole row takes part</strong>. If any PE in a row is in the copy region, every PE in that row sets its filter and forwards the data, so even a 1-PE copy occupies its row. Rows with no active PE skip the command at once <span class="tag sdk">SDK 2.10.1, memcpy/wse3/memcpy.csl</span>. Second, <strong>a copy completes on each PE only when its data is in memory</strong>. An active PE frees the command stream only after its write into your array finishes; a forwarding PE waits for the teardown wavelet that marks the end of the data <span class="tag sdk">SDK 2.10.1</span>. That is why copy mode cannot race, as we will see.</p>
+
+<h2>The host side in eight lines</h2>
+<div class="filename">course/programs/01-saxpy/run.py (excerpt, comments added)</div>
 <pre><code><span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder
 
 rt = SdkRuntime(args.name, cmaddr=args.cmaddr)     <span class="c"># cmaddr=None → simulator</span>
@@ -61,108 +157,413 @@ kw = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, d
 rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)            <span class="c"># (x0, y0, width, height, elements per PE)</span>
 rt.memcpy_h2d(ys, y, 0, 0, 1, 1, N, **kw)
 rt.launch(<span class="s">'saxpy'</span>, a, nonblock=<span class="k">False</span>)                <span class="c"># RPC with an f32 argument</span>
+out = np.zeros(N, dtype=np.float32)
 rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)
 rt.stop()</code></pre>
-<p>The four integers name a rectangle of PEs (x, y, width, height) and the last is the element count <em>per PE</em>. Splitting data across PEs is the host's job: for an array going to a row of P PEs, element block <code>k</code> lands on PE <code>k</code> (programs 03 and 04 lay out their arrays this way).</p>
+<p>The four integers name a rectangle of PEs (x, y, width, height), relative to your rectangle, and the last is the element count <em>per PE</em>. Splitting data across PEs is the host's job: with ROW_MAJOR, for an array going to a row of P PEs, block <code>k</code> lands on PE <code>k</code> (programs 03 and 04 lay out their arrays this way).</p>
+<div class="table-wrap"><table>
+<tr><th>Call</th><th>What it does</th></tr>
+<tr><td><code>SdkRuntime(name, cmaddr)</code></td><td>Opens the compiled <code>out/</code> directory. <code>cmaddr</code> is the CS system's address; <code>None</code> runs the simulator.</td></tr>
+<tr><td><code>get_id(name)</code></td><td>Looks up a symbol or function exported in <code>layout.csl</code>.</td></tr>
+<tr><td><code>load()</code> / <code>run()</code></td><td>Loads the ELFs (yours and the frame's) and starts the PEs.</td></tr>
+<tr><td><code>memcpy_h2d</code> / <code>memcpy_d2h</code></td><td>One copy command. Copy mode names a symbol; streaming mode names a color (below).</td></tr>
+<tr><td><code>launch(fn, args…)</code></td><td>An <strong>RPC</strong> (remote procedure call): runs exported device function <code>fn</code> on every PE of the rectangle. The next command runs only after the device calls <code>unblock_cmd_stream()</code>.</td></tr>
+<tr><td><code>stop()</code></td><td>Tears down the run.</td></tr>
+</table></div>
+<p>The keyword arguments are the command stream's knobs. <code>order</code> picks the host layout above. <code>MEMCPY_32BIT</code> moves 32-bit words. <code>MEMCPY_16BIT</code> exists too, but the host array is still 32-bit per element and the SDK tutorials strip the upper half afterwards with <code>sdk_utils.memcpy_view</code> <span class="tag sdk">SDK 2.10.1, topic-01</span>. Every wavelet is 32 bits, so 16-bit data does not halve transfer time <span class="tag derived">Derived</span>. <code>nonblock=True</code> makes the call return a <code>Task</code> at once (wait with <code>rt.task_wait(t)</code> or poll <code>rt.is_task_done(t)</code>) <span class="tag sdk">SDK 2.10.1, SdkRuntime</span>. That lets the runtime batch commands to save TCP overhead, but it never reorders them: they still run one at a time on the device. Other calls exist, among them <code>call(name, u32_array)</code> (an RPC with raw arguments, used by bandwidth-test), <code>memcpy_h2d_rowbcast</code>/<code>colbcast</code> and <code>memcpy_h2d_stride</code>.</p>
 
 <h2>The command stream</h2>
-<p>Every host call becomes a command wavelet on color 22, decoded by memcpy's control tasks on the device. Commands are <strong>serialized</strong>. While an RPC runs, the stream is blocked; the device function must call <code>sys_mod.unblock_cmd_stream()</code> — directly or from a completion task — before the next command can run. "The user must call unblock_cmd_stream() at the end of a RPC" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. Forget it on even one PE and the host hangs on its next call.</p>
+<p>Every host call becomes a short command on color 22. The command fan broadcasts it into each row, and memcpy's control tasks on every PE decode it. A copy command carries the color or symbol, the region (px, py, w, h), the address, the elements per PE, a 16-bit flag and a copy type (dense, row broadcast, column broadcast, strided) <span class="tag sdk">SDK 2.10.1, sys_params.csl</span>. An RPC carries a word count, the arguments and the function ID, all as 32-bit words <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>.</p>
+<p>Commands are <strong>serialized per PE</strong>: a PE blocks color 22 while it handles a command and decodes the next one only after it is unblocked. For copies memcpy unblocks itself. For an RPC, your function must call <code>sys_mod.unblock_cmd_stream()</code>, directly or from a completion task: "The user must call unblock_cmd_stream() at the end of a RPC" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. If even one PE forgets, the next command never completes there. In the simulator, <code>cs_python</code> then aborts after about 4 s with "received length (0 bytes) is not expected … could be a kernel stall" rather than hanging forever <span class="tag measured">Measured (Chapter 10 review)</span>.</p>
+
+<div class="widget" id="rpc">
+<h4>Where does <code>unblock_cmd_stream()</code> go?</h4>
+<p class="hint">The host sends <code>launch('f')</code> then <code>memcpy_d2h(y)</code>. Pick how <code>f</code> is written. The middle lane shows the PE's command stream: red while blocked, green while open. Timings are schematic.</p>
+<div class="controls" role="radiogroup">
+  <label><input type="radio" name="rpc" value="a" checked> f computes, then unblocks</label>
+  <label><input type="radio" name="rpc" value="b"> f starts an async send, unblocks at once</label>
+  <label><input type="radio" name="rpc" value="c"> unblock in the send's completion task</label>
+  <label><input type="radio" name="rpc" value="d"> one PE never unblocks</label>
+</div>
+<svg id="rpc-svg" viewBox="0 0 680 220" width="680" role="img" aria-label="RPC unblock placement"></svg>
+<div class="readout" id="rpc-out" aria-live="polite"></div>
+</div>
 
 <h2>Copy mode vs streaming mode</h2>
 <div class="grid2">
 <div class="callout">
 <strong>Copy mode (<code>streaming=False</code>)</strong>
-The host names an exported array; memcpy writes or reads it on a rectangle of PEs. Device code is not involved beyond exporting the symbol. Simple and safe. Programs 01, 03, 04, 05.
+The host names an exported array. memcpy's own device tasks, running on your PE's CE and using colors 21–23 and queue 0, write or read it. The command does not complete on a PE until its data is in memory, so the next command always sees the data. Your code only exports the symbol, but it must leave the CE free for memcpy to run. Programs 01, 03, 04 and 05.
 </div>
 <div class="callout key">
 <strong>Streaming mode (<code>streaming=True</code>)</strong>
-The host passes a color ID instead of a symbol; each element arrives as a wavelet that your data task (or fabric DSD) must consume. No <code>launch</code> needed — arrival starts the computation. Program 02.
+The host passes a color ID instead of a symbol. Each element arrives as a wavelet on that color, and your data task (or a fabric DSD) must consume it. No launch is needed to <em>start</em>: arrival starts the computation (gemv-09) <span class="tag sdk">SDK 2.10.1</span>. memcpy's job ends when the wavelets are handed to your queue. Processing them is your task's job, and memcpy cannot know when that is done. Program 02, which therefore still launches a <code>wait_done</code> barrier before reading results (below).
 </div>
 </div>
 
+<div class="table-wrap"><table>
+<tr><th>Use copy mode when…</th><th>Use streaming mode when…</th></tr>
+<tr><td>the data must sit in SRAM before compute starts (most kernels)</td><td>each element can be consumed on arrival (reductions, pipelines)</td></tr>
+<tr><td>the input fits in the PE's memory</td><td>the input is larger than memory, or you want to avoid buffering it</td></tr>
+<tr><td>you want the simple, race-free path</td><td>you accept the obligations: a data task or fabric DSD per color, a barrier before reading, and sending streams in the order the device consumes them</td></tr>
+</table></div>
+
+<p><strong>Where the streaming color comes from.</strong> You pick it at compile time, and it flows through three files. Copy and streaming share one host call; the color field decides which (IDs below 24 mean streaming) <span class="tag sdk">SDK 2.10.1, memcpyh2d.csl</span>. memcpy accepts up to 4 streaming H2D and 4 streaming D2H colors (<code>MEMCPYH2D_1…4</code>, <code>MEMCPYD2H_1…4</code>) <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. memcpy routes the color from the frame to your PEs, so you must not write routing for it: "The routing of the color MEMCPYH2D_DATA_1 must not be defined" <span class="tag sdk">SDK 2.10.1, topic-03</span>. It comes out of your 0–19 budget. On the PE, memcpy's microthread moves each wavelet from color 23 through queue 0 into your color, where your data task picks it up from your own input queue.</p>
+<div class="filename">course/programs/02-wavelet-tasks (excerpts from four files)</div>
+<pre><code><span class="c"># commands.sh: choose the color</span>
+cslc ... --params=MEMCPYH2D_DATA_1_ID:0 --memcpy --channels 1
+<span class="c">// layout.csl: hand it to memcpy</span>
+<span class="k">const</span> memcpy = <span class="b">@import_module</span>(<span class="s">"&lt;memcpy/get_params&gt;"</span>, .{ .width = 1, .height = 1, .MEMCPYH2D_1 = MEMCPYH2D_DATA_1_ID });
+<span class="c">// pe_program.csl: receive on it through input queue 2</span>
+<span class="k">const</span> h2d_color: <span class="n">color</span> = <span class="b">@get_color</span>(<span class="b">@bitcast</span>(<span class="n">u16</span>, sys_mod.MEMCPYH2D_1));
+<span class="c"># run.py: read the ID back from out/out.json, pass it instead of a symbol</span>
+rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, ...)</code></pre>
+
 <div class="widget" id="cmd">
 <h4>Command-stream timeline: the bug we found in program 02</h4>
-<p class="hint">Program 02 streams 100 values into a PE; a data task accumulates sum and sum of squares; then the host copies the statistics back. Toggle the barrier and press Play. Bar lengths are schematic; the values read are the real measured ones.</p>
+<p class="hint">Program 02 streams 100 values into a PE; a data task accumulates the sum and the sum of squares; then the host copies the statistics back. Toggle the barrier and press Play. Bar lengths are schematic; the values read are the measured ones.</p>
 <div class="controls">
 <label><input type="checkbox" id="c-bar"> add <code>launch('wait_done')</code> barrier before reading</label>
 <button class="btn" id="c-play" type="button">Play</button>
 </div>
 <svg id="c-svg" viewBox="0 0 680 220" width="680" role="img" aria-label="Command stream timeline"></svg>
-<div class="readout" id="c-out"></div>
+<div class="readout" id="c-out" aria-live="polite"></div>
 </div>
 
 <div class="callout bug">
 <strong>What actually happened</strong>
-Without the barrier the host read <code>sum = 30.818</code>; the correct total was <code>26.138</code>. The value we got is exactly the running sum after 95 of the 100 values <span class="tag measured">Measured</span>. A streaming <code>memcpy_h2d</code> completes when the host has <em>injected</em> its wavelets, not when the device has <em>processed</em> them, so the following D2H copy raced the last few data tasks. The fix is an RPC that leaves the command stream blocked until the last data task runs:
-<pre><code><span class="k">fn</span> wait_done() <span class="n">void</span> {
+<p>Without the barrier the host read <code>sum = 30.818176</code>; the correct total was <code>26.137941</code>. The value we got is exactly the float32 running sum after 95 of the 100 values. The <code>count</code> read by the next copy was already 100. At N = 500 the same experiment read the running sum after 495 values: again 5 short <span class="tag measured">Measured</span>. With the barrier, both N = 100 and N = 500 pass <span class="tag measured">Measured</span>.</p>
+<p>The evidence shows that a streaming <code>memcpy_h2d</code> completes once memcpy has handed the last wavelet onward, not when your data tasks have processed it, so the next D2H copy raced the last few data tasks <span class="tag derived">Derived</span>. The library's own comment fits: "When UT0 is done, all data in IQ0 is drained, but OQ0 may not be empty" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. Why about 5? On WSE-3, output queue 0 holds 2 wavelets and input queue 2, which program 02 uses, holds 4 <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. Up to 6 values can therefore still be waiting when the copy reports done, which is consistent with the 5 we measured, though not a proof <span class="tag derived">Derived</span>.</p>
+<p>The fix is an RPC that leaves the command stream blocked until the last data task runs. Both halves of the handshake:</p>
+<div class="filename">course/programs/02-wavelet-tasks/pe_program.csl (excerpt)</div>
+<pre><code><span class="k">task</span> on_value(v: <span class="n">f32</span>) <span class="n">void</span> {
+  ...                                       <span class="c">// update stats, count[0] += 1</span>
+  <span class="k">if</span> (count[0] == <span class="b">@as</span>(<span class="n">u32</span>, N) <span class="k">and</span> host_waiting) sys_mod.unblock_cmd_stream();
+}
+<span class="k">fn</span> wait_done() <span class="n">void</span> {
   <span class="k">if</span> (count[0] == <span class="b">@as</span>(<span class="n">u32</span>, N)) { sys_mod.unblock_cmd_stream(); }  <span class="c">// already done</span>
   <span class="k">else</span> { host_waiting = <span class="k">true</span>; }                                   <span class="c">// on_value() unblocks later</span>
 }</code></pre>
+<p>There is no race between the check and the flag. Tasks on a PE run to completion one at a time (Chapter 5), so <code>on_value</code> cannot run in the middle of <code>wait_done</code>.</p>
 </div>
 
+<div class="table-wrap"><table>
+<tr><th>WSE-3 queue</th><th>Input depth</th><th>Output depth</th></tr>
+<tr><td>0, 1</td><td>6 wavelets</td><td>2 wavelets</td></tr>
+<tr><td>2, 3</td><td>4</td><td>6</td></tr>
+<tr><td>4–7 (output 4–5)</td><td>2</td><td>2</td></tr>
+</table></div>
+<p class="legend">Queue depths from the comments in <code>memcpy/wse3/memcpy.csl</code> <span class="tag sdk">SDK 2.10.1</span>. These small buffers are why back-pressure (Chapter 5) reaches the host link so quickly.</p>
+
 <h3>Ordering matters too</h3>
-<p>Because commands are serialized, streams must be sent in the order the device expects. The SDK's gemv-09 tutorial warns: "If the b values were streamed in before x, the program would hang" <span class="tag sdk">SDK 2.10.1</span>. For bulk inputs that every PE in a row or column needs, <code>memcpy_h2d_rowbcast</code>/<code>colbcast</code> send one copy and let the fabric replicate it, saving host bandwidth (host→device only).</p>
+<p>Because commands are serialized, streams must be sent in the order the device consumes them. The SDK's gemv-09 tutorial warns: "If the b values were streamed in before x, the program would hang" <span class="tag sdk">SDK 2.10.1</span>. The mechanism is back-pressure plus serialization <span class="tag derived">Derived</span>. The device's tasks wait for all of x before they consume b, so b's wavelets are not consumed. They fill the few-wavelet queues and back up through the frame to the link (Chapter 5's back-pressure). The b command therefore never completes, and because commands are serialized, the x command is never sent. Each side waits for the other. The program-02 race and this hang are one model: a streaming copy finishes when the device has <em>accepted</em> the last wavelet, not before the device has room and not after your task has run.</p>
+<p>For inputs that every PE in a row or column needs, <code>memcpy_h2d_rowbcast</code> and <code>colbcast</code> let the host send one column (or row) of data instead of a replicated tensor. In the SDK's example a column of 4 values goes to a 3 × 4 region as 4 elements instead of 12, saving host bandwidth 3× (host-to-device only) <span class="tag sdk">SDK 2.10.1, row-col-broadcast</span>. The command carries the broadcast type, and memcpy on the device does the rest.</p>
+
+<div class="callout ok">
+<strong>Experiment: memcpy in the simulator</strong>
+<p>We ran the SDK's bandwidth-test benchmark (WSE-3, 5 × 5 PEs, <code>--fabric-dims=12,7 --fabric-offsets=4,1</code>, one copy). It times copies on the device <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>Direction</th><th>Channels</th><th>Elements per PE</th><th>Wavelets</th><th>Cycles</th><th>Cycles per wavelet</th></tr>
+<tr><td>H2D</td><td>1</td><td>5</td><td>125</td><td>1,473</td><td>11.8</td></tr>
+<tr><td>H2D</td><td>1</td><td>1000</td><td>25,000</td><td>24,947</td><td>1.0</td></tr>
+<tr><td>H2D</td><td>4</td><td>1000</td><td>25,000</td><td>9,938</td><td>0.40</td></tr>
+<tr><td>D2H</td><td>1</td><td>1000</td><td>25,000</td><td>199,327</td><td>8.0</td></tr>
+<tr><td>D2H</td><td>4</td><td>1000</td><td>25,000</td><td>199,101</td><td>8.0</td></tr>
+</table></div>
+<p>Lessons. Small copies are dominated by fixed cost even in the simulator. More channels sped H2D up 2.5×. D2H was 8× slower per wavelet and did not scale with channels here; D2H sends a data-and-control pair per wavelet through a switch (<code>memcpy.csl</code>), which may explain part of it, but that is a hypothesis <span class="tag derived">Derived</span>. Compare with hardware: 7 Gb/s ÷ 32 bits ÷ 850 MHz ≈ 0.26 wavelets per cycle per channel <span class="tag derived">Derived</span>, so the simulator's 1 wavelet per cycle is about 4× faster than a real channel, and it charges nothing for TCP. To reproduce: copy <code>benchmarks/bandwidth-test</code>, run <code>commands_wse3.sh</code>, then recompile with <code>pe_length:1000</code> and <code>--channels=4</code> and pass <code>-k=1000 --channels=4</code> (add <code>--d2h</code>) to <code>run.py</code>.</p>
+</div>
 
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>Your RPC starts an async send and returns. Where should <code>unblock_cmd_stream()</code> go?</summary><p>In the task activated when the send completes (as in programs 03–05), not at the end of the RPC — otherwise the host could issue a D2H copy before the data has moved.</p></details>
-<details><summary>Why does every course program use queues ≥ 2 and colors ≤ 4?</summary><p>memcpy owns queues 0–1 on WSE-3 and colors 20–23. Low colors and queues from 2 up are free.</p></details>
-<details><summary>Why can't you treat the wafer like a GPU and stream weights in for each request?</summary><p>The SDK host path is ~7 Gb/s per channel, about 14 GB/s at most — orders of magnitude below on-wafer bandwidth. Data must stay resident or come through MemoryX.</p></details>
+<details><summary>Your RPC starts an async send and returns. Where should <code>unblock_cmd_stream()</code> go?</summary><p>In the completion task the send activates (as in programs 03–05). Unblocking at the end of the RPC would let the next command run, whether a D2H copy or another <code>launch</code> reusing the same queue, while the send is still in flight.</p></details>
+<details><summary>Your program-03 variant has P = 10 PEs in one row. What <code>--fabric-dims</code> and <code>--fabric-offsets</code> do you pass, and why?</summary><p><code>17,3</code> and <code>4,1</code>. The frame adds 7 columns (west: 1 halo + demux adaptor + demux + command fan; east: mux + mux adaptor + 1 halo) and 2 halo rows. Your (0,0) sits after the four west columns and the top halo row.</p></details>
+<details><summary>A copy sends 4 elements to each of 4 PEs in one row. Which wire positions does PE 2 keep?</summary><p>Positions 2, 6, 10 and 14. Its counter filter starts at (4 − 2) % 4 = 2, reaches 0 on the third wavelet and every fourth after that. In ROW_MAJOR those wavelets carry host elements 8, 9, 10 and 11.</p></details>
+<details><summary>Why does a copy-mode <code>memcpy_h2d</code> followed by <code>launch</code> never race, when a streaming one can?</summary><p>In copy mode each PE frees the command stream only after memcpy's own task has written the data into memory. In streaming mode memcpy's part ends when it hands the wavelets to your queue; your data task finishes the job later, so you need a barrier.</p></details>
+<details><summary>You stream b, then x, but the device consumes all of x first. What happens and why?</summary><p>Deadlock. b's wavelets are not consumed, back-pressure stops the b command from completing, and because commands are serialized x is never sent.</p></details>
+<details><summary>Why does every course program use queues ≥ 2 and colors below 20 (in practice 0–3)?</summary><p>memcpy owns colors 20–23 on both architectures, and input/output queue 0 (data) plus, on WSE-3, queue 1 (the command stream). Everything below those colors and from queue 2 up is free; the course simply starts at color 0 and queue 2.</p></details>
+<details><summary>Program 01 copies 64 floats to the device. Roughly how long does that take on a real system, and what would you change for a big workload?</summary><p>About 200 µs, almost all of it TCP overhead; the 256 bytes themselves take under a microsecond at 7 Gb/s. Batch data into few large copies (or nonblocking calls the runtime can aggregate), and keep data resident on the wafer.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
 <script>
 (function () {
-  // halo diagram 8 x 3
-  const g = $("#halo"), S = 64, OX = 110, OY = 40;
-  for (let y = 0; y < 3; y++) for (let x = 0; x < 8; x++) {
-    let cls = "box", lab = "";
-    if (x >= 1 && x <= 3 && y === 1) { cls = "pur"; lab = "west"; }
-    if (x === 4 && y === 1) { cls = "acc"; lab = "you"; }
-    if (x >= 5 && x <= 6 && y === 1) { cls = "grn"; lab = "east"; }
-    el("rect", { x: OX + x * (S + 6), y: OY + y * (S + 6), width: S, height: S, rx: 6, class: cls, "stroke-width": cls === "acc" ? 2.5 : 1.2 }, g);
-    el("text", { x: OX + x * (S + 6) + S / 2, y: OY + y * (S + 6) + S / 2 + 4, "text-anchor": "middle", "font-size": 11, class: lab ? "" : "muted" }, g).textContent = lab || `${x},${y}`;
-  }
-  el("text", { x: OX - 10, y: OY + 1.5 * (S + 6), "text-anchor": "end", "font-size": 12 }, g).textContent = "host I/O ←";
-  el("text", { x: OX + 4 * (S + 6) + S / 2, y: OY - 10, "text-anchor": "middle", "font-size": 12, class: "f-acc" }, g).textContent = "offset (4,1)";
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const T = (parent, x, y, s, attrs = {}) => { const t = el("text", Object.assign({ x, y, "font-size": 12 }, attrs), parent); t.textContent = s; return t; };
+  const clampInt = (inp, lo, hi) => { let v = parseInt(inp.value, 10); if (!isFinite(v)) v = lo; v = Math.max(lo, Math.min(hi, v)); inp.value = v; return v; };
 
-  // command stream timeline
-  const svg = $("#c-svg"), out = $("#c-out");
-  // exact data from program 02 (seed 1): partial sums at 95 and 100 values
-  function play() {
-    const barrier = $("#c-bar").checked;
-    svg.innerHTML = "";
-    const lanes = [["host commands", 40], ["device data tasks", 110], ["value read", 180]];
-    lanes.forEach(([n, y]) => el("text", { x: 10, y: y + 5, "font-size": 12 }, svg).textContent = n);
-    const X = t => 150 + t * 5;
-    const cmds = [["memcpy_h2d stream ×100", 0, 40, "--blue"]];
-    if (barrier) cmds.push(["launch wait_done", 40, 54, "--purple"]);
-    const readAt = barrier ? 54 : 40;
-    cmds.push(["memcpy_d2h stats", readAt, readAt + 14, "--green"]);
-    let i = 0;
-    const tasksEnd = 54; // data tasks finish ~ 14 time units after injection ends
-    const anim = setInterval(() => {
-      i += 1; svg.querySelectorAll(".dyn").forEach(e => e.remove());
-      const t = Math.min(i, 75);
-      cmds.forEach(([n, a, b, c]) => { if (t < a) return;
-        el("rect", { x: X(a), y: 25, width: Math.max(0, X(Math.min(b, t)) - X(a)), height: 28, rx: 4, fill: cssVar(c), opacity: .8, class: "dyn" }, svg);
-        if (t >= b - 4) el("text", { x: X(a) + 4, y: 44, "font-size": 11, fill: "#fff", class: "dyn" }, svg).textContent = n; });
-      const done = Math.min(100, Math.max(0, Math.round((Math.min(t, tasksEnd) - 2) * 100 / (tasksEnd - 2))));
-      el("rect", { x: X(2), y: 95, width: Math.max(0, X(Math.min(t, tasksEnd)) - X(2)), height: 28, rx: 4, fill: cssVar("--amber"), opacity: .7, class: "dyn" }, svg);
-      el("text", { x: X(2) + 4, y: 114, "font-size": 11, class: "dyn" }, svg).textContent = `on_value() × ${done}`;
-      if (t >= readAt) {
-        const seen = barrier ? 100 : 95;
-        el("line", { x1: X(readAt), x2: X(readAt), y1: 20, y2: 200, stroke: cssVar("--red"), "stroke-dasharray": "4 3", class: "dyn" }, svg);
-        el("text", { x: X(readAt) + 6, y: 186, "font-size": 12, class: "dyn " + (barrier ? "f-grn" : "f-red"), "font-weight": 700 }, svg).textContent =
-          barrier ? "reads sum after 100 values = 26.138 ✓" : "reads sum after 95 values = 30.818 ✕";
+  /* ---------- 1. transfer-time calculator ---------- */
+  (function () {
+    const svg = $("#tt-svg"), out = $("#tt-out"), size = $("#tt-size"), ch = $("#tt-ch"), nIn = $("#tt-n"), agg = $("#tt-agg");
+    const CH_BPS = 7e9 / 8, OVH = 200e-6, SRAM = 21e15;
+    const fmtB = b => b >= 1e9 ? (b / 1e9).toPrecision(3) + " GB" : b >= 1e6 ? (b / 1e6).toPrecision(3) + " MB" : b >= 1e3 ? (b / 1e3).toPrecision(3) + " KB" : Math.round(b) + " B";
+    const fmtT = s => s >= 1 ? s.toPrecision(3) + " s" : s >= 1e-3 ? (s * 1e3).toPrecision(3) + " ms" : s >= 1e-6 ? (s * 1e6).toPrecision(3) + " µs" : (s * 1e9).toPrecision(3) + " ns";
+    const fmtR = r => r >= 1e15 ? (r / 1e15).toPrecision(3) + " PB/s" : r >= 1e12 ? (r / 1e12).toPrecision(3) + " TB/s" : r >= 1e9 ? (r / 1e9).toPrecision(3) + " GB/s" : r >= 1e6 ? (r / 1e6).toPrecision(3) + " MB/s" : (r / 1e3).toPrecision(3) + " KB/s";
+    const X0 = 230, X1 = 660, L0 = 5, L1 = 17;
+    const X = r => X0 + (Math.log10(Math.max(r, 10 ** L0)) - L0) * (X1 - X0) / (L1 - L0);
+    function draw() {
+      const bytes = 10 ** parseFloat(size.value), c = +ch.value, n = clampInt(nIn, 1, 1000);
+      $("#tt-size-o").textContent = fmtB(bytes); $("#tt-ch-o").textContent = c;
+      const cmds = agg.checked ? 1 : n, wire = n * bytes / (c * CH_BPS), ovh = cmds * OVH, t = wire + ovh, eff = n * bytes / t;
+      svg.innerHTML = "";
+      T(svg, 10, 18, "Bandwidth (log scale)", { "font-weight": 700 });
+      const bars = [
+        ["on-wafer SRAM, aggregate", SRAM, "amb"],
+        ["one 100 GbE link", 12.5e9, "box"],
+        ["16 channels × 7 Gb/s (ceiling)", 16 * CH_BPS, "box"],
+        [`your ${c} channel${c > 1 ? "s" : ""} × 7 Gb/s`, c * CH_BPS, "blu"],
+        ["effective, this transfer", eff, "acc"],
+      ];
+      bars.forEach(([lab, r, cls], i) => {
+        const y = 32 + i * 26;
+        T(svg, 10, y + 14, lab, { "font-size": 12 });
+        el("rect", { x: X0, y, width: Math.max(2, X(r) - X0), height: 18, rx: 3, class: cls }, svg);
+        T(svg, Math.min(X(r) + 6, X1 - 70), y + 14, fmtR(r), { "font-size": 11.5, class: "mono" });
+      });
+      [6, 9, 12, 15].forEach((e, i) => {
+        const x = X0 + (e - L0) * (X1 - X0) / (L1 - L0);
+        el("line", { x1: x, x2: x, y1: 28, y2: 162, class: "line", "stroke-dasharray": "2 3" }, svg);
+        T(svg, x, 174, ["1 MB/s", "1 GB/s", "1 TB/s", "1 PB/s"][i], { "text-anchor": "middle", "font-size": 11, class: "muted" });
+      });
+      // stacked time bar
+      const yb = 196, W = X1 - X0, fo = ovh / t;
+      T(svg, 10, yb + 14, "time: overhead vs wire", { "font-size": 12 });
+      el("rect", { x: X0, y: yb, width: W * fo, height: 20, class: "red" }, svg);
+      el("rect", { x: X0 + W * fo, y: yb, width: W * (1 - fo), height: 20, class: "grn" }, svg);
+      T(svg, X0, yb + 36, `TCP overhead ${(fo * 100).toFixed(fo > 0.999 || fo < 0.001 ? 2 : 1)}%`, { "font-size": 11.5, class: "f-red" });
+      T(svg, X1, yb + 36, `wire time ${((1 - fo) * 100).toFixed(1)}%`, { "font-size": 11.5, class: "f-grn", "text-anchor": "end" });
+      out.textContent = `${n} cop${n > 1 ? "ies" : "y"} of ${fmtB(bytes)} on ${c} channel${c > 1 ? "s" : ""}${agg.checked ? ", aggregated" : ""}\n` +
+        `time ≈ ${cmds} × 200 µs + ${fmtT(wire)} wire = ${fmtT(t)}  (effective ${fmtR(eff)})\n` +
+        `on-wafer SRAM bandwidth would move the same bytes in ${fmtT(n * bytes / SRAM)}` +
+        (bytes < 175e3 * c ? `\nbelow ~${fmtB(175e3 * c)} per copy, overhead exceeds wire time` : "");
+      svg.setAttribute("aria-label", out.textContent.replace(/\n/g, ". "));
+    }
+    [size, ch, nIn, agg].forEach(e => e.addEventListener("input", draw));
+    document.querySelectorAll("#tt [data-b]").forEach(b => b.addEventListener("click", () => { size.value = Math.log10(+b.dataset.b).toFixed(2); draw(); }));
+    draw();
+  })();
+
+  /* ---------- 2. fabric-dims calculator ---------- */
+  (function () {
+    const svg = $("#fd-svg"), out = $("#fd-out"), iw = $("#fd-w"), ih = $("#fd-h"), ibw = $("#fd-bw"), ibe = $("#fd-be"), cs2 = $("#fd-cs2");
+    function draw() {
+      const W = clampInt(iw, 1, 12), H = clampInt(ih, 1, 6), bw = clampInt(ibw, 0, 3), be = clampInt(ibe, 0, 3);
+      const ox = 4 + bw, C = ox + W + be + 3, R = H + 2;
+      const S = Math.max(22, Math.min(54, Math.floor(560 / C))), G = 3, ML = 70, MT = 34;
+      const vw = Math.max(680, ML + C * (S + G) + 90), vh = MT + R * (S + G) + 50;
+      svg.setAttribute("viewBox", `0 0 ${vw} ${vh}`); svg.setAttribute("width", vw);
+      svg.innerHTML = "";
+      const role = (x, y) => {
+        if (y === 0 || y === R - 1 || x === 0 || x === C - 1) return ["box", "h"];
+        if (x === 1) return ["pur", y === 1 ? "adapt" : "nop"];
+        if (x === 2) return ["pur", "demux"];
+        if (x === 3) return ["pur", "cmd"];
+        if (x < ox) return ["blu", "buf"];
+        if (x < ox + W) return ["acc", `${x - ox},${y - 1}`];
+        if (x < ox + W + be) return ["blu", "buf"];
+        if (x === ox + W + be) return ["grn", "mux"];
+        return ["grn", H === 1 ? "adapt" : y === 1 ? "td" : y === H ? "adapt" : "nop"];
+      };
+      const fs = S >= 44 ? 11 : S >= 32 ? 9.5 : 0;
+      for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) {
+        const [cls, lab] = role(x, y), px = ML + x * (S + G), py = MT + y * (S + G);
+        el("rect", { x: px, y: py, width: S, height: S, rx: 4, class: cls, "stroke-width": cls === "acc" ? 2 : 1 }, svg);
+        if (fs && (lab !== "h" || S >= 32)) T(svg, px + S / 2, py + S / 2 + 4, lab, { "text-anchor": "middle", "font-size": fs, class: cls === "box" ? "muted" : "" });
       }
-      if (i >= 75) clearInterval(anim);
-    }, 40);
-    out.textContent = barrier
-      ? "With the barrier: wait_done() leaves the command stream blocked until the 100th data task calls unblock_cmd_stream(). The D2H copy cannot start early.\nResult: count=100, sum=26.137941, matches numpy → SUCCESS (validated at N=100 and N=500)."
-      : "Without the barrier: the streaming H2D command completes once its wavelets are injected. The D2H copy starts while the last data tasks are still queued.\nResult: count read later shows 100, but sum = 30.818176 (the partial sum after 95 values) → assertion failed.";
-  }
-  $("#c-play").onclick = play; $("#c-bar").onchange = play; play();
+      // column tick labels
+      for (let x = 0; x < C; x++) if (S >= 30 || x % 2 === 0) T(svg, ML + x * (S + G) + S / 2, MT - 8, x, { "text-anchor": "middle", "font-size": 10, class: "muted mono" });
+      // arrows
+      const yIn = MT + 1 * (S + G) + S / 2, yOut = MT + H * (S + G) + S / 2, xR = ML + C * (S + G);
+      el("line", { x1: 8, x2: ML + S + G - 2, y1: yIn, y2: yIn, class: "s-pur", "stroke-width": 2 }, svg);
+      el("path", { d: `M${ML + S + G - 2},${yIn} l-7,-4 v8 z`, class: "f-pur" }, svg);
+      T(svg, 6, yIn - 8, "H2D in", { "font-size": 11, class: "f-pur" });
+      el("line", { x1: xR - S - G + 2, x2: xR + 60, y1: yOut, y2: yOut, class: "s-grn", "stroke-width": 2 }, svg);
+      el("path", { d: `M${xR + 60},${yOut} l-7,-4 v8 z`, class: "f-grn" }, svg);
+      T(svg, xR + 4, yOut - 8, "D2H out", { "font-size": 11, class: "f-grn" });
+      // offset marker
+      const oxPx = ML + ox * (S + G);
+      T(svg, oxPx, vh - 28, `offset (${ox},1) = 1 halo + 3 memcpy${bw ? ` + ${bw} buffer` : ""}`, { "font-size": 12, class: "f-acc" });
+      T(svg, ML, vh - 10, `width ${C} = ${ox} west + ${W} you + ${be ? be + " buffer + " : ""}3 east  ·  height ${R} = 1 + ${H} + 1`, { "font-size": 12, class: "muted" });
+      let txt = `cslc ... --fabric-dims=${C},${R} --fabric-offsets=${ox},1 --memcpy --channels 1` + (bw || be ? ` --width-west-buf=${bw} --width-east-buf=${be}` : "") +
+        `\n(these are minimums: a larger fabric also works)`;
+      if (cs2.checked) txt += `\nReal CS-2: --fabric-dims must be 750,994, so your rectangle can be at most ${750 - 7 - bw - be} × 992${bw || be ? " with these buffers" : ""}.`;
+      out.textContent = txt;
+      svg.setAttribute("aria-label", `Fabric ${C} by ${R} with a ${W} by ${H} rectangle at offset ${ox},1`);
+    }
+    [iw, ih, ibw, ibe, cs2].forEach(e => e.addEventListener("input", draw));
+    document.querySelectorAll("#fd [data-wh]").forEach(b => b.addEventListener("click", () => { const [w, h] = b.dataset.wh.split(","); iw.value = w; ih.value = h; ibw.value = 0; ibe.value = 0; draw(); }));
+    draw();
+  })();
+
+  /* ---------- 3. counter-filter step-through ---------- */
+  (function () {
+    const svg = $("#cf-svg"), out = $("#cf-out"), iw = $("#cf-w"), ih = $("#cf-h"), il = $("#cf-l"), ord = $("#cf-ord");
+    const PAL = ["blu", "grn", "pur", "amb", "acc", "red"];
+    let k = 0, timer = null;
+    const P = () => ({ w: clampInt(iw, 1, 4), h: clampInt(ih, 1, 3), l: clampInt(il, 1, 4), col: ord.value === "col" });
+    const dest = (kk, p) => { const y = kk % p.h, m = Math.floor(kk / p.h); return { y, m, x: m % p.w, j: Math.floor(m / p.w) }; };
+    const hostIdx = (y, x, j, p) => p.col ? (j * p.w + x) * p.h + y : (y * p.w + x) * p.l + j;
+    function stop() { if (timer) { clearInterval(timer); timer = null; } $("#cf-play").textContent = "Play"; }
+    function draw() {
+      const p = P(), N = p.w * p.h * p.l;
+      if (k > N) k = N;
+      svg.innerHTML = "";
+      const cw = Math.min(26, Math.floor(600 / N)), x0 = 70, showIdx = cw >= 17;
+      // host array
+      T(svg, 10, 16, `host array (${p.col ? "COL_MAJOR: A[l][w][h]" : "ROW_MAJOR: A[h][w][l]"}), coloured by destination PE`, { "font-size": 12, "font-weight": 700 });
+      const hostOwner = new Array(N);
+      for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) for (let j = 0; j < p.l; j++) hostOwner[hostIdx(y, x, j, p)] = y * p.w + x;
+      const delivered = new Set();
+      for (let q = 0; q < k; q++) { const d = dest(q, p); delivered.add(hostIdx(d.y, d.x, d.j, p)); }
+      for (let i = 0; i < N; i++) {
+        el("rect", { x: x0 + i * cw, y: 24, width: cw - 2, height: 20, rx: 3, class: PAL[hostOwner[i] % 6], opacity: delivered.has(i) ? 0.35 : 1 }, svg);
+        if (showIdx) T(svg, x0 + i * cw + (cw - 2) / 2, 38, i, { "text-anchor": "middle", "font-size": 10, class: "mono" });
+      }
+      T(svg, 10, 38, "index", { "font-size": 11, class: "muted" });
+      // wire order
+      T(svg, 10, 70, "wire order: wavelet k carries host element …", { "font-size": 12, "font-weight": 700 });
+      for (let q = 0; q < N; q++) {
+        const d = dest(q, p), hi = hostIdx(d.y, d.x, d.j, p);
+        el("rect", { x: x0 + q * cw, y: 78, width: cw - 2, height: 20, rx: 3, class: PAL[(d.y * p.w + d.x) % 6], opacity: q < k ? 0.35 : 1, "stroke-width": q === k ? 3 : 1 }, svg);
+        if (showIdx) T(svg, x0 + q * cw + (cw - 2) / 2, 92, hi, { "text-anchor": "middle", "font-size": 10, class: "mono" });
+      }
+      T(svg, 10, 92, "k →", { "font-size": 11, class: "muted" });
+      // grid: demux column + rows
+      const cur = k < N ? dest(k, p) : null;
+      const rowY = y => 128 + y * 66, PW = 128, PX = x => 150 + x * (PW + 8);
+      T(svg, 10, 120, "demux", { "font-size": 11, class: "muted" });
+      // row wavelets received so far
+      for (let y = 0; y < p.h; y++) {
+        let mSoFar = 0; for (let q = 0; q < k; q++) if (q % p.h === y) mSoFar++;
+        const dActive = cur && cur.y === y;
+        const dCnt = ((p.h - y) % p.h + k) % p.h;
+        el("rect", { x: 10, y: rowY(y), width: 110, height: 54, rx: 5, class: "pur", "stroke-width": dActive ? 3 : 1 }, svg);
+        T(svg, 18, rowY(y) + 18, `demux row ${y}`, { "font-size": 11.5 });
+        T(svg, 18, rowY(y) + 38, k < N ? `counter ${dCnt}${dCnt === 0 ? " → keep" : ""}` : "done", { "font-size": 11.5, class: "mono" + (dActive ? " f-pur" : "") });
+        el("line", { x1: 120, x2: 148, y1: rowY(y) + 27, y2: rowY(y) + 27, class: "s-muted", "stroke-width": 1.5 }, svg);
+        for (let x = 0; x < p.w; x++) {
+          const active = dActive && cur.x === x, rowCnt = ((p.w - x) % p.w + mSoFar) % p.w;
+          el("rect", { x: PX(x), y: rowY(y), width: PW, height: 54, rx: 5, class: PAL[(y * p.w + x) % 6], "stroke-width": active ? 3 : 1 }, svg);
+          T(svg, PX(x) + 6, rowY(y) + 15, `PE(${x},${y})`, { "font-size": 11.5, "font-weight": 600 });
+          if (k < N) T(svg, PX(x) + PW - 6, rowY(y) + 15, `cnt ${rowCnt}`, { "font-size": 11, "text-anchor": "end", class: "mono" + (dActive && rowCnt === 0 ? " f-red" : "") });
+          const sw = (PW - 12) / p.l;
+          for (let j = 0; j < p.l; j++) {
+            const hi = hostIdx(y, x, j, p), got = delivered.has(hi);
+            const slot = { x: PX(x) + 6 + j * sw, y: rowY(y) + 24, width: sw - 3, height: 24, rx: 3 };
+            if (got) slot.class = "box"; else { slot.fill = cssVar("--surface"); slot.stroke = cssVar("--border"); }
+            el("rect", slot, svg);
+            if (got) T(svg, PX(x) + 6 + j * sw + (sw - 3) / 2, rowY(y) + 40, `x${hi}`, { "text-anchor": "middle", "font-size": 10.5, class: "mono" });
+          }
+        }
+      }
+      if (cur) {
+        const hi = hostIdx(cur.y, cur.x, cur.j, p);
+        out.textContent = `Next: wavelet k=${k} carries host element x${hi}.\n` +
+          `Demux: k mod h = ${k} mod ${p.h} = ${cur.y} → row ${cur.y} keeps it (its counter reads 0).\n` +
+          `Row ${cur.y}: it is that row's wavelet m=${cur.m}; m mod w = ${cur.x} → PE(${cur.x},${cur.y}) keeps it as its element ${cur.j}; the other PEs in the row forward it and tick.`;
+      } else out.textContent = `All ${N} wavelets delivered. Each PE holds its ${p.l} element${p.l > 1 ? "s" : ""} in order.` + (p.col ? " In COL_MAJOR the wire order equals the host order." : " In ROW_MAJOR each PE's block was contiguous on the host but interleaved on the wire.");
+      $("#cf-step").disabled = k >= N;
+    }
+    function reset() { stop(); k = 0; draw(); }
+    $("#cf-step").onclick = () => { stop(); k++; draw(); };
+    $("#cf-reset").onclick = reset;
+    $("#cf-play").onclick = () => {
+      if (timer) { stop(); return; }
+      const p = P(), N = p.w * p.h * p.l;
+      if (k >= N) k = 0;
+      if (reduceMotion) { k = N; draw(); return; }
+      $("#cf-play").textContent = "Pause";
+      timer = setInterval(() => { k++; draw(); if (k >= N) stop(); }, 450);
+    };
+    [iw, ih, il, ord].forEach(e => e.addEventListener("input", reset));
+    reset();
+  })();
+
+  /* ---------- 4. RPC unblock placement ---------- */
+  (function () {
+    const svg = $("#rpc-svg"), out = $("#rpc-out");
+    const X = t => 160 + t * 10;
+    const CASES = {
+      a: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y)", 20, 28, "grn"]], pe: [["f() body", 2, 18, "acc"], ["D2H tasks", 21, 27, "grn"]], blocked: [[2, 18], [21, 27]], gate: 18,
+        txt: "Correct. f does its work and calls unblock_cmd_stream() at the end. The PE decodes the D2H only after that, so it reads the finished y." },
+      b: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y)", 8, 16, "red"]], pe: [["f()", 2, 6, "acc"], ["async send in flight", 6, 30, "amb"], ["D2H tasks", 9, 15, "red"]], blocked: [[2, 6], [9, 15]], gate: 6,
+        txt: "Wrong. f unblocks as soon as it has started the send. The D2H (or another launch reusing the same queue) runs while the send is still in flight, and reads unfinished data." },
+      c: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y)", 34, 42, "grn"]], pe: [["f()", 2, 6, "acc"], ["async send in flight", 6, 30, "amb"], ["done task", 30, 33, "pur"], ["D2H", 35, 41, "grn"]], blocked: [[2, 33], [35, 41]], gate: 33,
+        txt: "Correct. f starts the send and returns without unblocking. The send's completion task calls unblock_cmd_stream(). Programs 03–05 do this." },
+      d: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y) … never completes", 8, 48, "red"]], pe: [["f()", 2, 6, "acc"]], blocked: [[2, 48]], gate: null,
+        txt: "Stall. On one PE f never calls unblock_cmd_stream(), so that PE never decodes the next command and the copy never completes. In the simulator cs_python aborts after about 4 s with \"could be a kernel stall\" (measured in the Chapter 10 review)." },
+    };
+    function draw() {
+      const c = CASES[document.querySelector('input[name="rpc"]:checked').value];
+      svg.innerHTML = "";
+      T(svg, 10, 44, "host commands"); T(svg, 10, 110, "command stream"); T(svg, 10, 124, "(color 22, one PE)", { "font-size": 10.5, class: "muted" }); T(svg, 10, 176, "PE work");
+      const bar = (lab, a, b, cls, y, above) => {
+        el("rect", { x: X(a), y, width: X(b) - X(a), height: 22, rx: 4, class: cls }, svg);
+        T(svg, X(a) + 3, above ? y - 5 : y + 15, lab, { "font-size": 11 });
+      };
+      c.host.forEach(([l, a, b, cls], i) => bar(l, a, b, cls, 36, true));
+      el("rect", { x: X(0), y: 98, width: X(48) - X(0), height: 16, rx: 3, class: "grn" }, svg);
+      c.blocked.forEach(([a, b]) => el("rect", { x: X(a), y: 98, width: X(b) - X(a), height: 16, rx: 3, class: "red" }, svg));
+      T(svg, X(48), 92, "red = blocked, green = open", { "font-size": 10.5, class: "muted", "text-anchor": "end" });
+      let lift = false;
+      c.pe.forEach(([l, a, b, cls]) => { bar(l, a, b, cls, 160, lift); lift = !lift && (b - a) < 10; });
+      if (c.gate !== null) {
+        el("line", { x1: X(c.gate), x2: X(c.gate), y1: 92, y2: 196, class: "s-grn", "stroke-width": 2, "stroke-dasharray": "4 3" }, svg);
+        T(svg, X(c.gate) + 4, 212, "unblock_cmd_stream()", { "font-size": 11, class: "f-grn mono" });
+      } else T(svg, X(8), 212, "no unblock: the next command waits forever", { "font-size": 11, class: "f-red" });
+      out.textContent = c.txt; svg.setAttribute("aria-label", c.txt);
+    }
+    document.querySelectorAll('input[name="rpc"]').forEach(r => r.addEventListener("change", draw));
+    draw();
+  })();
+
+  /* ---------- 5. program-02 race timeline ---------- */
+  (function () {
+    const svg = $("#c-svg"), out = $("#c-out");
+    const X = t => 150 + t * 11;
+    const INJ = 40, TASKS0 = 2, TASKS_END = 42, TEND = 48; // 95% of tasks done at t = INJ
+    let raf = null;
+    function frame(t, barrier) {
+      svg.innerHTML = "";
+      T(svg, 10, 48, "host commands"); T(svg, 10, 118, "device data tasks"); T(svg, 10, 196, "value read");
+      const readAt = barrier ? TASKS_END : INJ;
+      const cmds = [["H2D stream ×100", 0, INJ, "blu", 28]];
+      if (barrier) cmds.push(["wait_done()", INJ, TASKS_END, "pur", 28]);
+      cmds.push(["D2H stats", readAt, readAt + 4, "grn", barrier ? 80 : 28]);
+      cmds.forEach(([n, a, b, cls, ly]) => {
+        if (t < a) return;
+        el("rect", { x: X(a), y: 36, width: Math.max(0, X(Math.min(b, t)) - X(a)), height: 26, rx: 4, class: cls }, svg);
+        T(svg, X(a) + 3, ly, n, { "font-size": 11.5 });
+      });
+      const te = Math.min(t, TASKS_END);
+      if (te > TASKS0) {
+        el("rect", { x: X(TASKS0), y: 104, width: X(te) - X(TASKS0), height: 26, rx: 4, class: "amb" }, svg);
+        if (!barrier && te > INJ) el("rect", { x: X(INJ), y: 104, width: X(te) - X(INJ), height: 26, rx: 0, class: "box" }, svg);
+      }
+      const done = Math.max(0, Math.min(100, Math.round((te - TASKS0) * 100 / (TASKS_END - TASKS0))));
+      T(svg, X(TASKS0) + 3, 98, `on_value() × ${done}`, { "font-size": 11.5 });
+      if (t >= readAt) {
+        el("line", { x1: X(readAt), x2: X(readAt), y1: 30, y2: 200, class: barrier ? "s-grn" : "s-red", "stroke-width": 2, "stroke-dasharray": "4 3" }, svg);
+        T(svg, X(readAt) - 6, 150, `D2H snapshot: on_value() × ${barrier ? 100 : 95}`, { "font-size": 11.5, "text-anchor": "end", class: "mono" });
+        if (!barrier && te > INJ) T(svg, X(INJ) + 4, 166, "5 tasks too late", { "font-size": 11, class: "muted" });
+        T(svg, X(readAt) - 6, 196, barrier ? "reads sum after 100 values = 26.138 ✓" : "reads sum after 95 values = 30.818 ✕",
+          { "font-size": 12.5, "font-weight": 700, "text-anchor": "end", class: barrier ? "f-grn" : "f-red" });
+      }
+    }
+    function play() {
+      if (raf) cancelAnimationFrame(raf);
+      const barrier = $("#c-bar").checked;
+      out.textContent = barrier
+        ? "With the barrier: wait_done() leaves the command stream blocked until the 100th data task calls unblock_cmd_stream(). The D2H copy cannot start early.\nResult: count = 100, sum = 26.137941, matches numpy → SUCCESS (also passes at N = 500)."
+        : "Without the barrier: the streaming H2D completes once memcpy has handed its wavelets on. The D2H copy starts while the last data tasks are still queued.\nResult: sum = 30.818176 (the running sum after 95 values); the count read by the next copy is already 100 → assertion fails.";
+      svg.setAttribute("aria-label", "Command stream timeline. " + out.textContent.replace(/\n/g, " "));
+      if (reduceMotion) { frame(TEND, barrier); return; }
+      const start = performance.now(), DUR = 2600;
+      const tick = now => { const t = Math.min(TEND, (now - start) / DUR * TEND); frame(t, barrier); raf = t < TEND ? requestAnimationFrame(tick) : null; };
+      raf = requestAnimationFrame(tick);
+    }
+    $("#c-play").onclick = play; $("#c-bar").onchange = play;
+    frame(TEND, $("#c-bar").checked); play();
+  })();
 })();
 </script>
 </body>
