@@ -13,3 +13,5 @@ Fixers: apply any item that touches your chapter.
 10. **Clock in sanity checks (ch03, ch04).** Replace "~1 GHz" with WSE-2 1.1 GHz [Vendor, HC22] and the SDK's 850 MHz. Ch02 now shows a per-PE budget at both clocks.
 11. **Queue collision measured (ch12, ch15).** Fails on both chips: FATAL at cycle 2,123 (WSE-3) / 2,125 (WSE-2), "trying to term ut_instr[3], but it's not ours". Giving the receives `.ut_id` 4/5 fixes it on WSE-3. One shared completion task also hangs, on both chips (measured by the ch05 fixer).
 12. **Task IDs (ch07, ch09, ch10–12).** Recommend user local task IDs 8–20. Control task IDs are [0,64). Data tasks on WSE-3 must bind to input queues. Do not bind your own task to 29.
+13. **Memory budget (ch09, ch10, ch12).** The fixed overhead of a minimal program is ~4.6 KB on WSE-3 (3.2 KB code + 1 KB task table) and ~3.1 KB on WSE-2. About 44 KB is usable for user arrays on WSE-3, not ~46 KB. Source: reviews/ch03-depth.md.
+14. **Per-PE speed (ch06, ch10–12).** f32 multiply-accumulate runs at ~1 element/cycle on both chips. f16 runs at ~3.2/cycle on WSE-3 and ~2.0 on WSE-2 (simulator). Source: reviews/ch03-depth.md.
