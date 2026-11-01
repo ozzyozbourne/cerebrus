@@ -461,7 +461,7 @@ Weight streaming and multi-wafer inference are run by Cerebras's machine-learnin
       const cls = c === kc ? "blu" : r === rr && c === oc ? "grn" : r === rr ? "acc" : "box";
       el("rect", { x: gx + c * s, y: gy + r * s, width: s - 6, height: s - 6, rx: 4, class: cls, "stroke-width": 1.2 }, svg);
     }
-    txt(svg, gx + C * s - 6, 19, "H (features) across the wafer →", { "text-anchor": "end", "font-size": 12.5 });
+    txt(svg, gx + C * s - 6, 19, "H (features) across →", { "text-anchor": "end", "font-size": 12.5 });
     txt(svg, gx - 12, gy + R * s / 2, "B·S ↓", { "text-anchor": "end", "font-size": 12.5 });
     txt(svg, gx - 12, gy + R * s / 2 + 16, "(tokens)", { "text-anchor": "end", "font-size": 11.5, class: "muted" });
     // weight packet entering
