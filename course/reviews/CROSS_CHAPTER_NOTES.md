@@ -1,0 +1,11 @@
+# Cross-chapter corrections (coordinator)
+Fixers: apply any item that touches your chapter.
+
+1. **Microthread hang (ch03, ch05, ch12).** A rebuild of Lab 3 with input queues 2/3 fails on BOTH WSE-2 and WSE-3. sim.log shows a fatal error at about cycle 2,125: "trying to term ut_instr[3], but it's not ours". The host hangs. Two microthreads collide (2 and 3). Per topic-15, queue ID = microthread ID is the WSE-2 rule; on WSE-3 it is the default when no `.ut_id` is given. Do not claim "stalled forever at cycle 1,894" (not reproducible). Source: reviews/ch12-accuracy.md.
+2. **Clock (ch01, ch02, ch03, ch15).** Hot Chips 2022 (Sean Lie) gives the WSE-2 clock as 1.1 GHz and 30 mW peak per core [Vendor]. No WSE-3 clock is published. The SDK benchmarks assume 850 MHz. Source: reviews/ch08-depth.md; deck in /home/user/cerebras-sdk/tmp/ch08depth/.
+3. **CS-6 wording (ch08, ch15).** Wafer-scale SRAM plus 3D-stacked DRAM, not "3D wafer-scale SRAM".
+4. **Lab 3 timing (ch12, ch15).** Slopes from 100 vs 200 steps give per-step costs of 100 / 130 / 250 cycles for n = 4 / 16 / 64, which fits 90 + 2.5·n. Also WSE-2 126 vs WSE-3 130, P=2 101, P=16 ~130.6. The 0-step baseline is noisy. Source: reviews/ch12-accuracy.md.
+5. **Lab 2 timing (ch11, ch15).** Total cycles are host memcpy only: an empty reduce() gives identical totals. TSC-measured kernel times: 58 / 73 / 101 / 158 cycles for P = 2 / 4 / 8 / 16 (M=32, WSE-3), about M + 7P. Source: reviews/ch11-accuracy.md.
+6. **Cerebras decode is not memory-bandwidth bound (ch01, ch08, ch15).** The bandwidth ceiling on 4 × CS-3 is far above the measured ~2,100–2,314 tok/s. The limit is pipeline latency and communication. Sources: reviews/ch01-depth.md, reviews/ch08-depth.md, reviews/ch15-depth.md.
+7. **Removing unblock_cmd_stream (ch07, ch09, ch10).** In the simulator this does not hang forever: after ~4 s cs_python aborts with "received length (0 bytes) is not expected … could be a kernel stall". Source: reviews/ch10-pedagogy.md and reviews/ch10-accuracy.md.
+8. **Halo columns (ch02, ch07, ch09).** 1 halo + 3 memcpy columns on the west (hence offset 4), 2 memcpy + 1 halo on the east, so the fabric is 7 columns wider and 2 rows taller. Source: reviews/ch07-depth.md.
