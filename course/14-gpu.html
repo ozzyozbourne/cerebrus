@@ -5,146 +5,688 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NVIDIA GPUs, the Incumbent</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+/* chapter-local styles */
+.tag.unv { background: var(--red-soft); color: var(--red); }
+dl.gloss { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0 0; font-size: 14.5px; }
+dl.gloss dt { font-weight: 700; }
+dl.gloss dd { margin: 0; }
+@media (max-width: 680px) { dl.gloss { grid-template-columns: 1fr; } dl.gloss dd { margin-bottom: 6px; } }
+.sm-blk { cursor: pointer; }
+.sm-blk:focus { outline: none; }
+.sm-blk:focus rect, .sm-blk:hover rect { stroke-width: 2.5; }
+.dim { opacity: .28; }
+.small { font-size: 14px; color: var(--muted); }
+.mini td, .mini th { font-size: 14px; }
+</style>
 </head>
 <body>
 <main>
 <div class="kicker">Chapter 14 · Part IV · Comparison</div>
 <h1>NVIDIA GPUs, the incumbent</h1>
-<p class="lede">A GPU solves the memory wall the opposite way from the wafer. It keeps a big, relatively slow memory (HBM) and hides its latency with caches and with tens of thousands of threads that take turns. Understanding that design is the clearest way to see what is unusual about Cerebras.</p>
+<p class="lede">A GPU solves the memory wall the opposite way from the wafer. It keeps a big memory with high bandwidth but high latency (HBM) and hides that latency with caches and with hundreds of thousands of threads that take turns: up to ~270,000 resident on an H100 <span class="tag derived">Derived</span>. Understanding that design is the clearest way to see what is unusual about Cerebras.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
 <ul>
-<li>Describe an SM, the memory hierarchy, and the H100 → B200 → Rubin progression.</li>
-<li>Explain SIMT, warps, coalescing and occupancy, and why occupancy hides latency.</li>
-<li>Translate SAXPY between CUDA and CSL and name what each programmer must think about.</li>
+<li>Draw an H100 SM (four sub-partitions, warp schedulers, Tensor Cores) and derive the 989 TF headline from it.</li>
+<li>Explain SIMT, warp divergence, coalescing in 32-byte sectors, what limits occupancy, and why occupancy alone often cannot hide HBM latency.</li>
+<li>Explain how tiling lets a matmul climb above the HBM roofline, and how modern Hopper kernels become producer/consumer pipelines.</li>
+<li>Translate SAXPY between CUDA and CSL, and estimate a GPU's decode speed per user from bytes moved per token.</li>
+<li>Say which parallelism runs over NVLink and which over InfiniBand, and why.</li>
 </ul>
 </div>
 
 <h2>Three generations</h2>
 <div class="table-wrap"><table>
 <tr><th></th><th>H100 SXM (2022)</th><th>B200 (2024–25)</th><th>Rubin (2026)</th></tr>
-<tr><td>Dies</td><td>1 reticle-size die, 132 SMs</td><td>2 dies joined by a 10 TB/s link</td><td>—</td></tr>
-<tr><td>Memory</td><td>80 GB HBM3, 3.35 TB/s</td><td>192 GB HBM3e (~180 usable), ~8 TB/s</td><td>288 GB HBM4, 19.2 TB/s (launch spec 22)</td></tr>
-<tr><td>Low-precision peak</td><td>~989 TF BF16 dense</td><td>~9 PF FP4 dense (18 sparse)</td><td>50 PF NVFP4 inference</td></tr>
-<tr><td>NVLink per GPU</td><td>900 GB/s</td><td>1.8 TB/s</td><td>3 TB/s (launch spec 3.6)</td></tr>
-<tr><td>Scale-up domain</td><td>8-GPU HGX</td><td>NVL72, ~130 TB/s</td><td>NVL72, ~216 TB/s (launch spec 260)</td></tr>
+<tr><td>Dies</td><td>1 reticle-size die, 132 SMs</td><td>2 reticle-size dies joined by a 10 TB/s link</td><td>2 reticle-size compute dies + I/O dies (so "NVL144" counting dies = NVL72 counting packages)</td></tr>
+<tr><td>Memory</td><td>80 GB HBM3, 3.35 TB/s</td><td>192 GB HBM3e (~180 usable <span class="tag analyst">Analyst</span>), ~8 TB/s</td><td>288 GB HBM4, 19.2 TB/s (announced 22)</td></tr>
+<tr><td>Headline low-precision peak</td><td><b>BF16 dense</b> ~989 TF</td><td><b>FP4 dense</b> ~9 PF (18 sparse)</td><td><b>NVFP4</b> 50 PF inference / 35 PF training (inference figure relies on Transformer Engine compression)</td></tr>
+<tr><td>Same precision: BF16 dense</td><td>~989 TF</td><td>~2.25 PF <span class="tag derived">Derived</span> from 9 PF FP4, assuming 2× per halving of bits; not checked against a datasheet</td><td>not published in our sources</td></tr>
+<tr><td>NVLink per GPU</td><td>900 GB/s (NVLink 4)</td><td>1.8 TB/s (NVLink 5)</td><td>3 TB/s (NVLink 6; announced 3.6)</td></tr>
+<tr><td>Scale-up domain</td><td>8-GPU HGX board</td><td>NVL72 rack, ~130 TB/s</td><td>NVL72 rack, ~216 TB/s (announced 260)</td></tr>
 </table></div>
-<p style="font-size:14px;color:var(--muted)">All <span class="tag vendor">Vendor</span>, many via secondary sources. Chips and Cheese measured ~3.8 TB/s aggregate L2 read bandwidth on H100 <span class="tag indep">Indep</span>.</p>
+<p class="small">All <span class="tag vendor">Vendor</span>, many via secondary sources, except where tagged. Bandwidths for NVLink are bidirectional.</p>
+
+<p>Read the table as three moves. <strong>More silicon:</strong> one die cannot exceed the lithography reticle (Chapter 2), so B200 and Rubin glue two near-reticle dies together. The wafer is the extreme answer to the same limit. <strong>Lower precision:</strong> most of the jump from 989 TF to 50 PF is format, not silicon. Each halving of bits roughly doubles Tensor Core throughput. <strong>More bandwidth, but slower:</strong> HBM grows ~5.7× from H100 to Rubin <span class="tag derived">Derived</span>, far less than the FLOPs, so FLOPs per byte keeps rising and the memory wall gets worse each generation (Chapter 1). NVLink grows so the rack can behave like one large GPU.</p>
+
+<div class="callout">
+<strong>Why the FLOPs jump: number formats</strong>
+BF16 is 16 bits. FP8 is 8 bits; Hopper's Transformer Engine picks FP8 scale factors per tensor. NVFP4 (Blackwell) is a 4-bit float (E2M1) stored in blocks of 16 values that share an FP8 (E4M3) scale, plus one FP32 scale per tensor: about 4.5 bits per value <span class="tag vendor">Vendor, NVIDIA NVFP4 blog via reprint</span>. Always check format and sparsity before comparing peaks: H100's "1,979 TF" is BF16 <em>with 2:4 sparsity</em> (2 of every 4 weights zero) and also its <em>dense FP8</em> peak. Cerebras's 125 PF is likewise a sparse FP16 figure (Chapter 2).
+</div>
+
 <div class="callout warn">
 <strong>Specs are targets</strong>
-NVIDIA's Rubin page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink, down from 22 and 3.6 at launch; NVIDIA says the new figures "reflect what the system sustains at quality, volume production". Tenstorrent's firmware de-rating (Chapter 13) is the same story. Treat launch numbers from every vendor as provisional.
+NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per GPU, down from the 22 and 3.6 it showed at announcement (an even earlier target was 13 TB/s) <span class="tag vendor">Vendor, via secondary reporting, autumn 2026</span>. One report quotes NVIDIA as saying the new figures "reflect what the system sustains at quality, volume production"; others say the change was made without explanation. Tenstorrent's firmware de-rating of already-shipped Blackhole cards (Chapter 13) is a cousin of the same story. Treat announced numbers from every vendor as provisional.
 </div>
+
+<div class="callout ok">
+<strong>Terms used in this chapter</strong>
+<dl class="gloss">
+<dt>SM</dt><dd>Streaming Multiprocessor, the GPU's core. H100 SXM has 132.</dd>
+<dt>HBM</dt><dd>High Bandwidth Memory: stacks of DRAM dies on the package beside the GPU die. High bandwidth, but hundreds of cycles of latency.</dd>
+<dt>SXM</dt><dd>NVIDIA's socketed module form factor, as opposed to a PCIe card (the PCIe H100 has 114 SMs and HBM2e).</dd>
+<dt>Tensor Core</dt><dd>A matrix-multiply-accumulate unit inside the SM. Almost all AI FLOPs come from these.</dd>
+<dt>SIMT</dt><dd>Single Instruction, Multiple Threads: you write scalar code for one thread; hardware groups 32 threads into a warp that issues as one SIMD instruction.</dd>
+<dt>NVLink / NVSwitch</dt><dd>NVIDIA's GPU-to-GPU link, and the switch chip that connects many GPUs at NVLink speed.</dd>
+<dt>HGX / NVL72</dt><dd>An 8-GPU board / a 72-GPU rack, each one NVLink domain.</dd>
+<dt>Scale-up / scale-out</dt><dd>Scale-up: GPUs that share a fast, memory-semantic NVLink domain. Scale-out: an ordinary network (InfiniBand or Ethernet) between such domains.</dd>
+<dt>TP / PP / DP</dt><dd>Tensor parallelism splits each weight matrix across GPUs; pipeline parallelism splits the layers (like Chapter 8's layers-across-wafers); data parallelism copies the model and splits the batch.</dd>
+</dl>
+</div>
+
+<h2>Inside an SM</h2>
+<p>An SM is four nearly independent <strong>sub-partitions</strong> sharing one block of SRAM. Each sub-partition has its own warp scheduler, a quarter of the register file, 32 FP32 lanes and one Tensor Core. Tap a block for what it does.</p>
+<figure>
+<svg id="sm" viewBox="0 0 760 500" width="760" role="img" aria-labelledby="sm-t sm-d">
+<title id="sm-t">One H100 streaming multiprocessor</title>
+<desc id="sm-d">Four sub-partitions, each with a warp scheduler, a 64 KB register file slice, 32 FP32 lanes, INT32 and FP64 lanes, one Tensor Core and load/store units; below them a shared 256 KB L1 / shared memory, the TMA unit and texture units.</desc>
+</svg>
+<div class="controls"><button type="button" class="btn secondary" id="sm-warp">Highlight what one warp uses</button></div>
+<div class="readout" id="sm-out" aria-live="polite">Tap or hover a block.</div>
+<figcaption><b>One H100 SM; the chip has 132.</b> Four sub-partitions, one warp scheduler and one Tensor Core each, 128 FP32 lanes and 65,536 32-bit registers (256 KB) per SM, 256 KB L1/shared memory (up to 228 KB shared), at most 64 warps = 2,048 threads and 32 blocks per SM <span class="tag vendor">Vendor, Hopper whitepaper and CUDA CC 9.0 limits, via secondary sources</span>. INT32/FP64 lane counts, LD/ST, SFU, texture and instruction-cache details are drawn from the whitepaper layout but were not re-checked this session <span class="tag unv">Unverified</span>.</figcaption>
+</figure>
+
+<h3>Where the 989 TF comes from</h3>
+<p>Each Hopper Tensor Core does 512 dense BF16 fused multiply-adds per clock, so an SM does 4 × 512 = 2,048 FMAs = 4,096 FLOP per clock <span class="tag vendor">Vendor via secondary</span>. Then:</p>
+<pre><code>132 SMs × 4,096 FLOP/clk × 1.83 GHz ≈ 989 TFLOP/s   (dense BF16)</code></pre>
+<p>That matches the datasheet <span class="tag derived">Derived</span>. The 128 FP32 lanes per SM give only about 67 TF FP32 <span class="tag vendor">Vendor</span> <span class="tag unv">not re-checked</span>, about 15× less <span class="tag derived">Derived</span>. The useful sentence: <em>the FLOPs live in the Tensor Cores; everything else in the SM exists to keep them fed.</em> A Hopper Tensor Core instruction (<code>wgmma</code>) is issued by a <em>warpgroup</em> of 4 warps, reads one operand from shared memory and accumulates a tile in registers <span class="tag unv">Unverified, PTX ISA</span>.</p>
+
+<div class="table-wrap"><table class="mini">
+<tr><th></th><th>H100 SM</th><th>WSE-3 PE (Ch. 3)</th><th>Blackhole Tensix (Ch. 13)</th></tr>
+<tr><td>Units per chip</td><td>132</td><td>~900,000</td><td>120</td></tr>
+<tr><td>Local memory</td><td>256 KB registers + 256 KB L1/shared</td><td>48 KB SRAM for code + data</td><td>~1.43 MiB SRAM (1,464 KiB)</td></tr>
+<tr><td>Math engine</td><td>4 Tensor Cores + 128 FP32 lanes</td><td>8-way FP16 SIMD datapath</td><td>matrix FPU + 32-lane SFPU</td></tr>
+<tr><td>Work in flight</td><td>≤ 64 warps (2,048 threads)</td><td>tasks + ≤ 8 async ops (microthreads)</td><td>3 kernels on 5 small RISC-V cores</td></tr>
+<tr><td>Latency hiding</td><td>oversubscription (many warps)</td><td>dataflow: work starts when data arrives</td><td>double-buffered circular buffers</td></tr>
+</table></div>
+<p class="small">All <span class="tag vendor">Vendor</span>. Per clock, one SM's 2,048 BF16 FMAs equal 256 PEs at 8 FP16 FMAs each, and a WSE-3 has ~6,800 PEs for every SM on an H100 <span class="tag derived">Derived, ignoring clock speeds</span>: few fat cores versus many thin ones.</p>
 
 <h2>The memory hierarchy</h2>
 <figure>
-<svg viewBox="0 0 760 300" width="760" role="img" aria-label="GPU memory hierarchy">
-  <g id="hier"></g>
+<svg viewBox="0 0 760 330" width="760" role="img" aria-labelledby="hier-t hier-d">
+<title id="hier-t">GPU and wafer memory hierarchies side by side</title>
+<desc id="hier-d">H100: registers 33 MiB chip-wide at about 1 cycle; L1 and shared memory 33 MiB at roughly 20 to 30 cycles; L2 50 MB at 200 to 300 cycles; HBM3 80 GB at roughly 400 to 800 cycles and 3.35 TB/s. WSE-3 PE: registers, 48 KB SRAM at 1 cycle, neighbours over the fabric, host and MemoryX off-wafer.</desc>
+<g id="hier"></g>
 </svg>
-<figcaption><b>H100: wide at the top, narrow at the bottom.</b> Per SM: 256 KB register file and 256 KB of combined L1/shared memory (up to 228 KB shared). Shared across the chip: 50 MB L2. Off-package: 80 GB HBM3 <span class="tag vendor">Vendor, Hopper whitepaper</span>. Total register + L1 ≈ 66 MB — compare with 44 GB of SRAM on a WSE-3.</figcaption>
+<figcaption><b>Fast storage is tiny; big storage is far away.</b> Capacities are chip-wide: 132 × 256 KB = 33 MiB each for registers and L1/shared, so register + L1 ≈ 66 MiB <span class="tag derived">Derived</span>, more than the 50 MB L2. Sizes and HBM bandwidth <span class="tag vendor">Vendor, Hopper whitepaper</span>. L2 latency 200–300 cycles and the 2 × 25 MB L2 split come from RRZE gpu-benches, and >5.5 TB/s L2 read bandwidth from Chips and Cheese, both on an H100 <em>PCIe</em> card <span class="tag indep">Indep</span>. L1 and HBM cycle ranges are rough figures from secondary cheat sheets <span class="tag unv">Unverified</span>. WSE-3: 44 GB of SRAM at 21 PB/s aggregate <span class="tag vendor">Vendor</span>.</figcaption>
 </figure>
+<p><strong>Shared memory</strong> is a scratchpad the programmer manages explicitly, like a PE's SRAM. <strong>L1</strong> is a hardware cache carved from the same 256 KB, which a PE does not have (Chapter 3). The fair GPU counterpart to the wafer's 21 PB/s is not HBM but aggregate register + shared-memory bandwidth. Shared memory has 32 banks of 4 bytes, about 128 B/clk per SM, giving 132 × 128 B × 1.83 GHz ≈ 31 TB/s <span class="tag derived">Derived</span> <span class="tag unv">bank width unverified</span>, with registers several times faster again. The real difference is <em>capacity at that speed</em>: ~66 MiB on an H100 versus 44 GB on a wafer.</p>
 
-<h2>SIMT: one program, many threads</h2>
-<p>A CUDA kernel runs as a <strong>grid of thread blocks</strong>. Each block is assigned to one SM and can share that SM's shared memory. Threads execute in <strong>warps of 32</strong> in lockstep; if threads in a warp take different branches, the warp runs both paths with lanes masked off, so a fully divergent warp runs at 1/32 of peak. Two rules dominate performance:</p>
-<ul>
-<li><strong>Coalescing:</strong> thread <em>i</em> should read element <em>i</em>, so a warp's 32 loads merge into a few wide memory transactions.</li>
-<li><strong>Occupancy:</strong> keep enough warps resident that when one stalls on memory (hundreds of cycles), another is ready to run.</li>
-</ul>
+<h2>SIMT: grids, blocks and warps</h2>
+<p>A CUDA kernel runs as a <strong>grid of thread blocks</strong>. Each block is assigned to one SM and gets a slice of that SM's shared memory. Its threads are issued in <strong>warps of 32</strong>, and the SM spreads its warps over the four schedulers. Warps normally run in lockstep. Since Volta each thread has its own program counter, which changes forward-progress guarantees but not the cost below.</p>
+<p><strong>Divergence:</strong> if threads in one warp take different branches, the warp runs both paths one after the other with the inactive lanes masked.</p>
+<div class="table-wrap"><table class="mini">
+<tr><th>Branch condition</th><th>Passes</th><th>Lane efficiency</th></tr>
+<tr><td><code>if (lane &lt; 16) A(); else B();</code></td><td>2 (A then B)</td><td>50%</td></tr>
+<tr><td><code>if (threadIdx.x / 32 == 0)</code>: same answer for the whole warp</td><td>1</td><td>100%</td></tr>
+<tr><td><code>switch (lane)</code> with 32 cases</td><td>32</td><td>1/32</td></tr>
+</table></div>
+<p class="small">Derived from the masking rule <span class="tag derived">Derived</span>. On the wafer every PE has its own instruction stream, so neighbouring PEs can take different branches for free; the lockstep cost exists only inside one PE's SIMD vector operation.</p>
+<p>Two rules dominate GPU performance: <strong>coalescing</strong> (how a warp's loads become memory transactions) and <strong>occupancy</strong> (how many warps are resident to cover latency).</p>
 
-<div class="widget" id="occ">
-<h4>Latency hiding by occupancy</h4>
-<p class="hint">Each warp computes for C cycles, then waits L cycles for memory. The SM's scheduler issues from any ready warp. How many warps does it take to keep the math busy?</p>
+<h3>Coalescing: count the sectors</h3>
+<p>Global memory moves in <strong>32-byte sectors</strong>, four to a 128-byte cache line <span class="tag vendor">Vendor, NVIDIA developer blog via search</span>. A warp's 32 loads are merged into as few sectors as possible. When thread <em>i</em> reads element <em>i</em> of a float array, 32 × 4 B = 128 B = 4 sectors and every fetched byte is used.</p>
+<div class="widget" id="coal">
+<h4>Coalescing visualizer</h4>
+<p class="hint">Top: the 32 lanes of one warp. Bottom: each 128-byte line touched, split into four 32-byte sectors. Shaded sectors are fetched; the orange strip is the part actually used.</p>
 <div class="controls">
-<label>resident warps <input type="range" id="o-w" min="1" max="16" value="4"> <span id="o-wv" class="mono"></span></label>
-<label>compute C <input type="range" id="o-c" min="2" max="40" value="10"> <span id="o-cv" class="mono"></span></label>
-<label>memory latency L <input type="range" id="o-l" min="20" max="400" step="10" value="100"> <span id="o-lv" class="mono"></span></label>
+<label>access <select id="c-pat">
+<option value="unit">x[i]</option>
+<option value="off">x[i+1] (misaligned)</option>
+<option value="s2">x[2*i]</option>
+<option value="s4">x[4*i]</option>
+<option value="s32">x[32*i] (a matrix column)</option>
+<option value="rand">x[perm[i]] (random gather)</option>
+</select></label>
+<label>element <select id="c-e"><option value="4">4 B (float)</option><option value="8">8 B (double)</option></select></label>
+<button type="button" class="btn secondary" id="c-shuf">reshuffle random</button>
 </div>
-<svg id="o-svg" viewBox="0 0 680 260" width="680" role="img" aria-label="Warp scheduling timeline"></svg>
-<div class="readout" id="o-out"></div>
+<svg id="c-svg" viewBox="0 0 680 300" width="680" role="img" aria-label="Lanes of a warp mapped to memory sectors"></svg>
+<div class="readout" id="c-out" aria-live="polite"></div>
 </div>
-<p>The wafer needs none of this: a PE's memory answers in one cycle, so there is nothing to hide. That is why a Cerebras PE runs a handful of tasks and 8 microthreads, while an H100 SM keeps up to 2,048 threads in flight.</p>
+<p>Stride 2 fetches 8 sectors for 4 sectors' worth of data, so effective bandwidth halves. Reading a column of a row-major float matrix puts every lane in its own sector: 32 sectors for 128 useful bytes, 12.5%. On a PE, a strided DSD costs nothing extra, because SRAM is single-cycle and accessed per element (Chapter 6).</p>
+
+<h3>Occupancy: what fits on one SM</h3>
+<p>All resident threads share the SM's 65,536 registers and 228 KB of shared memory, so the more each thread or block asks for, the fewer warps fit. At 32 registers per thread, 65,536 / 32 = 2,048 threads fit (full occupancy). At 64 it is 1,024 (50%), at 128 it is 512 (25%), and at 255 only about 8 warps <span class="tag derived">Derived</span>. A block that uses 100 KB of shared memory allows only 2 blocks per SM. The same squeeze exists on a PE, where code, data and buffers compete for 48 KB, but the PE gets single-cycle memory in return.</p>
+<div class="widget" id="ocal">
+<h4>Occupancy calculator (H100, one SM)</h4>
+<p class="hint">Each row is one of the four warp schedulers, with its 16 warp slots. Blocks fill the SM until the first resource runs out; the limiting resource is red. Ignores register-allocation granularity, so real values can be slightly lower.</p>
+<div class="controls">
+<label>threads / block <input type="range" id="q-t" min="32" max="1024" step="32" value="256"> <span id="q-tv" class="mono"></span></label>
+<label>registers / thread <input type="range" id="q-r" min="16" max="255" value="64"> <span id="q-rv" class="mono"></span></label>
+<label>shared mem / block <input type="range" id="q-s" min="0" max="228" step="4" value="16"> <span id="q-sv" class="mono"></span></label>
+<button type="button" class="btn secondary" id="q-send">use in latency widget ↓</button>
+</div>
+<svg id="q-svg" viewBox="0 0 680 270" width="680" role="img" aria-label="Warp slots per scheduler and resource limits"></svg>
+<div class="readout" id="q-out" aria-live="polite"></div>
+</div>
+
+<h3>Latency hiding by occupancy</h3>
+<p>Model one scheduler. Each warp computes for C cycles, then waits L cycles for memory. While it waits, the scheduler issues from any other ready warp. One warp is busy C out of every C + L cycles, so W warps keep the scheduler busy a fraction <code>min(1, W·C/(C+L))</code> of the time, and you need <code>⌈(C+L)/C⌉</code> warps to hide the wait. If a warp issues k independent loads before it needs the first result (instruction-level parallelism, ILP), it can compute k·C cycles per wait, and C becomes k·C in both formulas.</p>
+<div class="widget" id="occ">
+<h4>Latency hiding on one warp scheduler (of 4 per SM)</h4>
+<p class="hint">Orange: computing. Amber: waiting on HBM. Grey: ready but waiting for the issue slot. Bottom row: is the scheduler issuing (green) or idle (red)? Try C = 10, L = 100 and find the W where the bottom row turns solid (11). The slider stops at 16, the most one H100 scheduler can hold.</p>
+<div class="controls">
+<label>resident warps W <input type="range" id="o-w" min="1" max="16" value="6"> <span id="o-wv" class="mono"></span></label>
+<label>compute C <input type="range" id="o-c" min="2" max="40" value="20"> <span id="o-cv" class="mono"></span></label>
+<label>memory latency L <input type="range" id="o-l" min="20" max="800" step="20" value="100"> <span id="o-lv" class="mono"></span></label>
+<label>loads in flight per warp k <input type="range" id="o-k" min="1" max="4" value="1"> <span id="o-kv" class="mono"></span></label>
+</div>
+<svg id="o-svg" viewBox="0 0 680 280" width="680" role="img" aria-label="Warp scheduling timeline, last 1000 cycles of steady state"></svg>
+<div class="readout" id="o-out" aria-live="polite"></div>
+</div>
+
+<div class="callout key">
+<strong>Little's law: occupancy alone often cannot saturate HBM</strong>
+Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely illustrative: 3.35 TB/s × 500 ns ≈ 1.7 MB in flight chip-wide, ≈ 12.7 KB per SM <span class="tag derived">Derived</span>. A coalesced 4-byte warp load moves 128 B, so each SM needs ~100 outstanding warp loads, more than its 64 resident warps. With 16-byte vector loads (512 B per warp instruction) it needs ~25. So real kernels keep <em>bytes</em> in flight, not just warps: ILP, vector loads, and asynchronous copies into shared memory (<code>cp.async</code>, TMA).
+</div>
+
+<p>The wafer needs much less of this. A PE's own memory answers in one cycle, so local loads need no hiding. Latency still exists on the fabric, where wavelets from neighbours take many cycles to arrive, but the wafer hides it differently.</p>
+<div class="table-wrap"><table class="mini">
+<tr><th></th><th>Main latency source</th><th>How it is hidden</th><th>What the programmer controls</th></tr>
+<tr><td>GPU</td><td>HBM and L2, hundreds of cycles</td><td>oversubscription: many warps waiting, plus ILP and async copies</td><td>block size, registers and shared memory per thread (occupancy), tiling</td></tr>
+<tr><td>Wafer</td><td>fabric hops between PEs</td><td>dataflow: a task runs when its data arrives (Ch. 5); up to 8 async DSD ops, one per microthread, overlap send, receive and compute</td><td>layout, colors, routes, which task each wavelet activates</td></tr>
+</table></div>
+<p>Microthreads are slots for concurrent asynchronous vector operations, not threads of control, so "8 microthreads" and "2,048 threads" are different kinds of thing. A PE also has a few dozen task IDs (Chapter 5).</p>
+
+<h2>Tiling a matmul: climbing the roofline</h2>
+<p>SAXPY does 2 FLOP per 12 bytes and is HBM-bound on every machine. So how does a GEMM ever reach the flat part of the roofline (ridge ≈ 295 FLOP/B on H100, Chapter 1)? By <strong>reuse</strong>. Each thread block owns a BM × BN tile of C. It marches along K, loading a BM × BK slab of A and a BK × BN slab of B into shared memory, and every loaded element is used BN or BM times. The accumulator tile stays in registers (on Blackwell, in a separate tensor memory).</p>
+<div class="widget" id="tile">
+<h4>Tile calculator (BF16 inputs, FP32 accumulator)</h4>
+<p class="hint">Intensity of one tile step is 2·BM·BN·BK FLOP over (BM+BN)·BK·2 bytes = BM·BN/(BM+BN) FLOP/B. The picture shows one step on 1024 × 1024 matrices.</p>
+<div class="controls">
+<label>BM <select id="t-m"><option>64</option><option selected>128</option><option>256</option></select></label>
+<label>BN <select id="t-n"><option>64</option><option>128</option><option selected>256</option></select></label>
+<label>BK <select id="t-k"><option>32</option><option selected>64</option><option>128</option></select></label>
+<label>stages <input type="range" id="t-s" min="1" max="6" value="4"> <span id="t-sv" class="mono"></span></label>
+<label>consumer threads <select id="t-th"><option>128</option><option selected>256</option></select></label>
+</div>
+<svg id="t-svg" viewBox="0 0 680 230" width="680" role="img" aria-label="Matrix tiles of A, B and C for one step"></svg>
+<div class="readout" id="t-out" aria-live="polite"></div>
+</div>
+<p>Even a 256 × 256 tile reaches only 128 FLOP/B from global memory, below 295. GEMM still hits peak because neighbouring blocks re-read the same slabs from the 50 MB L2, not from HBM. The whole problem needs far less HBM traffic: for M = N = K = 8192 the minimum is 3 × 8192² × 2 B ≈ 403 MB for 1.1 TFLOP, about 2,700 FLOP/B <span class="tag derived">Derived</span>. The budget example 128 × 256 × 64 with 4 stages takes 192 KB of shared memory and 128 accumulator registers per thread across 256 threads: registers, shared memory and Tensor Cores are sized together. On the wafer, A and B tiles are placed in PE SRAM ahead of time and moved neighbour to neighbour by wavelets (Chapter 12): the GPU <em>brings data to compute</em>; the wafer <em>places compute next to data</em>.</p>
+
+<h2>Hopper: a kernel becomes a pipeline</h2>
+<p>"Many identical threads" describes 2012-era CUDA. A state-of-the-art Hopper GEMM or FlashAttention-3 kernel is explicitly spatial inside the SM. One warpgroup only moves data; the others only compute; they hand off through a ring of shared-memory buffers.</p>
+<figure>
+<svg id="pipe" viewBox="0 0 760 250" width="760" role="img" aria-labelledby="pipe-t pipe-d">
+<title id="pipe-t">Warp-specialised Hopper GEMM</title>
+<desc id="pipe-d">A producer warpgroup issues TMA copies from global memory into a ring of four shared-memory stages, each guarded by full and empty barriers; two consumer warpgroups wait on full, run wgmma Tensor Core instructions, and release the stage by arriving on empty.</desc>
+</svg>
+<figcaption><b>Producer / consumer inside one SM.</b> The producer waits until stage <i>s</i> is <code>empty</code>, then issues one TMA bulk copy; the TMA engine generates every address and signals <code>full[s]</code> when the bytes land. A consumer waits on <code>full[s]</code>, runs <code>wgmma</code>, then arrives on <code>empty[s]</code>. In CUTLASS's "ping-pong" variant the producer drops to 40 registers and the consumers rise to 232 (<code>setmaxnreg</code>) <span class="tag unv">Unverified background: Hopper whitepaper, PyTorch CUTLASS ping-pong blog, PTX ISA</span>.</figcaption>
+</figure>
+<p>Related Hopper features: <strong>TMA</strong> (Tensor Memory Accelerator) copies 1D–5D tiles between global and shared memory from a descriptor built on the host. <strong>Thread-block clusters</strong> group blocks on neighbouring SMs, which can read each other's shared memory (<strong>distributed shared memory</strong>), and TMA can multicast one tile into several SMs <span class="tag unv">Unverified background</span>. Blackwell moves the accumulator out of registers into a per-SM <strong>tensor memory</strong> (reported as 256 KB) and lets a single thread issue the MMA <span class="tag unv">Unverified background, Colfax tutorials</span>. The trend: each generation moves more of the kernel into asynchronous, explicitly scheduled engines. This rhymes with Tenstorrent's reader / compute / writer kernels and circular buffers (Chapter 13) and with CSL's async DSDs and task activation (Chapters 5–6). That analogy is this course's own, not a vendor claim.</p>
 
 <h2>SAXPY, twice</h2>
 <div class="grid2">
 <div>
 <div class="filename">CUDA</div>
 <pre><code><span class="k">__global__</span> <span class="n">void</span> saxpy(<span class="n">int</span> n, <span class="n">float</span> a,
-                      <span class="n">const float</span> *x, <span class="n">float</span> *y) {
-  <span class="n">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
-  <span class="k">if</span> (i &lt; n) y[i] = a * x[i] + y[i];
+    <span class="n">const float</span> *x, <span class="n">float</span> *y) {
+  <span class="c">// this thread's global index</span>
+  <span class="n">int</span> i = blockIdx.x * blockDim.x
+        + threadIdx.x;
+  <span class="k">if</span> (i &lt; n)            <span class="c">// last block is partial</span>
+    y[i] = a * x[i] + y[i];
 }
-<span class="c">// host: cudaMemcpy x, y to HBM</span>
+<span class="c">// host: cudaMemcpy x, y into HBM</span>
+<span class="c">// grid of ⌈n/256⌉ blocks, 256 threads each</span>
 saxpy&lt;&lt;&lt;(n + 255) / 256, 256&gt;&gt;&gt;(n, a, x, y);
 <span class="c">// cudaMemcpy y back</span></code></pre>
 <ul style="font-size:14.5px">
-<li>One thread per element; the hardware schedules them.</li>
+<li>One thread per element; the hardware schedules the warps.</li>
 <li>Data lives in one shared address space (HBM).</li>
 <li>Think about: coalescing, block size, occupancy.</li>
 </ul>
 </div>
 <div>
-<div class="filename">CSL (program 01)</div>
-<pre><code><span class="k">var</span> x: [N]<span class="n">f32</span>;  <span class="k">var</span> y: [N]<span class="n">f32</span>;
+<div class="filename">CSL (program 01, pe_program.csl)</div>
+<pre><code><span class="c">// N = this PE's slice length</span>
+<span class="k">var</span> x: [N]<span class="n">f32</span>;  <span class="k">var</span> y: [N]<span class="n">f32</span>;
 <span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>,
-  .{ .tensor_access = |i|{N} -> x[i] });
+  .{ .tensor_access = |i|{N} -&gt; x[i] });
 <span class="k">const</span> y_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>,
-  .{ .tensor_access = |i|{N} -> y[i] });
+  .{ .tensor_access = |i|{N} -&gt; y[i] });
 <span class="k">fn</span> saxpy(a: <span class="n">f32</span>) <span class="n">void</span> {
   <span class="b">@fmacs</span>(y_dsd, y_dsd, x_dsd, a);
   sys_mod.unblock_cmd_stream();
 }</code></pre>
+<div class="filename">host side (run.py)</div>
+<pre><code><span class="c"># (x0, y0, width, height, elems per PE)</span>
+rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)
+rt.memcpy_h2d(ys, y, 0, 0, 1, 1, N, **kw)
+rt.launch(<span class="s">'saxpy'</span>, a, nonblock=False)
+rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 <ul style="font-size:14.5px">
 <li>One instruction per PE over its local slice.</li>
-<li>Each PE owns private memory; no shared address space.</li>
+<li>Each PE owns private memory; the host splits x and y into N-element slices, one per PE of the rectangle (program 01 uses a 1 × 1 rectangle).</li>
+<li><code>unblock_cmd_stream</code> hands control back to the host's command stream (Chapter 7).</li>
 <li>Think about: layout, which PE holds what, colors, tasks.</li>
 </ul>
 </div>
 </div>
-<p>For SAXPY the GPU version is simpler. The difference grows with communication: on a GPU, threads in different blocks share data through HBM and kernel boundaries; on the wafer, PEs share data only by sending wavelets on colors you routed (Labs 2 and 3). Tenstorrent sits between: explicit NoC transfers, but large per-core memory and DRAM behind it.</p>
+<div class="table-wrap"><table class="mini">
+<tr><th>CUDA</th><th>CSL on the wafer</th></tr>
+<tr><td>thread, <code>blockIdx</code> / <code>threadIdx</code></td><td>PE coordinates and the slice offset the host layout gives each PE</td></tr>
+<tr><td>thread block, shared memory</td><td>no equivalent: every PE is on its own</td></tr>
+<tr><td><code>y[i]</code> in 80 GB of HBM</td><td><code>y</code> in the PE's 48 KB SRAM</td></tr>
+<tr><td><code>cudaMemcpy</code></td><td><code>memcpy_h2d</code> / <code>memcpy_d2h</code> to a PE rectangle</td></tr>
+<tr><td><code>&lt;&lt;&lt;grid, block&gt;&gt;&gt;</code> launch</td><td>layout.csl <code>@set_rectangle</code> + host-called function (<code>rt.launch</code>)</td></tr>
+<tr><td>warps scheduled by hardware</td><td><code>@fmacs</code> over a DSD: one instruction loops in hardware</td></tr>
+</table></div>
+<p><strong>Worked example:</strong> n = 1,000,000 gives ⌈n/256⌉ = 3,907 blocks; the last one has 64 active threads and 192 masked by the guard. If 8 such blocks fit per SM (2,048 threads), one "wave" holds 132 × 8 = 1,056 blocks, so the grid runs in about 3.7 waves <span class="tag derived">Derived</span>. On the roofline SAXPY sits at 2 FLOP / 12 B ≈ 0.17 FLOP/B, so an H100 attains at most ~0.56 TF/s, 0.06% of the BF16 peak. For n = 10⁸ the kernel moves 1.2 GB and takes at least 1.2 GB ÷ 3.35 TB/s ≈ 0.36 ms <span class="tag derived">Derived</span>, plus a few microseconds of launch overhead. Lab 1's single-PE SAXPY took 7,740 simulated cycles, almost all of it host I/O <span class="tag measured">Measured, simulator</span>.</p>
+<p>For SAXPY the GPU version is simpler. The difference grows with communication. On a GPU, threads in different blocks share data mainly through L2/HBM: atomics, or a <strong>kernel boundary</strong>. A kernel ends only when all its blocks finish, so the next kernel can safely read what they wrote, which makes the boundary a global barrier. Within a Hopper thread-block cluster they can also use distributed shared memory. On the wafer, PEs share data only by sending wavelets on colors you routed (Labs 2 and 3). Tenstorrent sits between: explicit NoC transfers, but large per-core memory with DRAM behind it.</p>
+
+<h2>One token, step by step</h2>
+<p>Decode is where the comparison with Cerebras bites (Chapters 1, 8 and 15). For one layer of a Llama-style model a GPU runs roughly: RMSNorm → fused QKV GEMM → RoPE + append to the KV cache → decode attention over the cache → output GEMM → [TP all-reduce] → residual + RMSNorm → gate/up GEMM → SiLU × mul → down GEMM → [TP all-reduce] → residual. That is 10–14 kernels per layer, around a thousand per token for 80 layers, so serving stacks fuse kernels and replay them with CUDA graphs to avoid launch overhead <span class="tag unv">Unverified background</span>.</p>
+<p>Llama-3.1-70B has 80 layers, 8 KV heads of dimension 128 and d<sub>model</sub> 8192 <span class="tag vendor">Vendor, model config.json via search</span>. Its BF16 weights are ~140 GB, and its KV cache costs 2 × 80 × 8 × 128 × 2 B = 320 KiB per token <span class="tag derived">Derived</span>. At batch 1 every step reads all the weights, so step time ≥ bytes ÷ bandwidth:</p>
+<div class="widget" id="dec">
+<h4>Decode speed from bytes moved (Llama-3.1-70B)</h4>
+<p class="hint">Per step, each GPU reads its share of the weights once (shared by the whole batch) plus its share of every sequence's KV cache. This is a lower bound on step time: it ignores compute, all-reduces, kernel launches and activation memory.</p>
+<div class="controls">
+<label>GPU <select id="d-g"><option value="h">H100 (80 GB, 3.35 TB/s)</option><option value="b" selected>B200 (~180 GB usable, ~8 TB/s)</option><option value="r">Rubin (288 GB, 19.2 TB/s)</option></select></label>
+<label>weights <select id="d-p"><option value="2">BF16</option><option value="1">FP8</option><option value="0.5625">NVFP4 (~4.5 bits)</option></select></label>
+<label>KV cache <select id="d-kv"><option value="2">BF16</option><option value="1">FP8</option></select></label>
+<label>TP degree <select id="d-tp"><option>1</option><option>2</option><option>4</option><option>8</option></select></label>
+<label>batch <input type="range" id="d-b" min="0" max="8" value="0"> <span id="d-bv" class="mono"></span></label>
+<label>context <input type="range" id="d-c" min="9" max="17" value="12"> <span id="d-cv" class="mono"></span></label>
+</div>
+<svg id="d-svg" viewBox="0 0 680 120" width="680" role="img" aria-label="Bytes per GPU per step against HBM capacity"></svg>
+<div class="readout" id="d-out" aria-live="polite"></div>
+</div>
+<p>One B200 at batch 1 needs ≥ 140 GB ÷ 8 TB/s ≈ 17.5 ms per token, at most ~57 tokens/s per user, and only ~40 GB is left for KV cache. Eight H100s with TP = 8 read 17.5 GB each, ≥ 5.2 ms, ~190 tokens/s at best before all-reduces and overheads <span class="tag derived">Derived</span>. Batching raises <em>aggregate</em> throughput nearly for free, because the weight bytes are shared, but not per-user speed. Each sequence reads only its own KV cache, so attention stays near 1 FLOP/B at any batch: at batch 64 and 4,096 tokens of context the cache adds ~86 GB per step on top of the weights <span class="tag derived">Derived</span>. That is why grouped-query attention, FP8 KV caches and paged KV memory (vLLM's PagedAttention) exist. Four CS-3 wafers keep the weights in SRAM and pipeline layers across them (Chapter 8), which is how Cerebras reaches 2,314 tokens/s per user on Llama 3.3-70B <span class="tag indep">Indep, Artificial Analysis via interview</span>. GPUs win back on cost per token at large batch.</p>
 
 <h2>Scaling out</h2>
-<p>Beyond one GPU, NVIDIA combines a proprietary scale-up fabric (NVLink/NVSwitch, 72 GPUs at ~130–216 TB/s in an NVL72 rack) with a separate InfiniBand or Ethernet scale-out network, and splits models with tensor, pipeline and data parallelism. A GB200 NVL72 rack holds ~13.4 TB of HBM3e at 576 TB/s aggregate <span class="tag vendor">Vendor via secondary</span>. Its strength is capacity: a 70B FP16 model fits on one B200; on Cerebras it needs four wafers (Chapter 8).</p>
+<figure>
+<svg id="topo" viewBox="0 0 760 290" width="760" role="img" aria-labelledby="topo-t topo-d">
+<title id="topo-t">HGX H100 and NVL72 topologies</title>
+<desc id="topo-d">Left: an HGX H100 board with 8 GPUs, each linked to 4 NVSwitch chips at 900 GB/s, and one 400 Gb/s network card per GPU to an InfiniBand or Ethernet fabric. Right: an NVL72 rack with 72 GPUs connected through NVSwitch trays into one NVLink domain of about 130 TB/s, with racks linked by the scale-out network.</desc>
+</svg>
+<figcaption><b>Two networks.</b> HGX H100: each GPU has 18 NVLink 4 links to the board's 4 NVSwitch chips (900 GB/s bidirectional) and one 400 Gb/s ConnectX-7 NIC <span class="tag vendor">Vendor, DGX H100 descriptions via secondary</span>. NVL72: 72 GPUs at 1.8 TB/s each ≈ 130 TB/s <span class="tag vendor">Vendor</span>. The 18 compute trays × 4 GPUs and 9 NVSwitch trays layout is <span class="tag unv">Unverified background</span>.</figcaption>
+</figure>
+<p>Beyond one GPU, NVIDIA combines the proprietary scale-up fabric (NVLink/NVSwitch: ~130 TB/s across a GB200 NVL72 rack and ~216 TB/s on Rubin <span class="tag vendor">Vendor</span>) with a separate InfiniBand or Ethernet scale-out network. Per GPU and per direction, NVLink 4 gives 450 GB/s and a 400 Gb/s NIC gives 50 GB/s, a 9× gap <span class="tag derived">Derived</span>. That gap decides where each kind of parallelism goes:</p>
+<div class="table-wrap"><table class="mini">
+<tr><th></th><th>What is split</th><th>What is communicated, how often</th><th>Fabric</th></tr>
+<tr><td>Tensor (TP)</td><td>each weight matrix, by rows/columns</td><td>2 all-reduces of activations per layer forward (4 with backward)</td><td>inside the NVLink domain</td></tr>
+<tr><td>Pipeline (PP)</td><td>layers</td><td>boundary activations only; idle "bubble" ≈ (p−1)/m of the time for p stages and m microbatches</td><td>across nodes</td></tr>
+<tr><td>Data (DP / FSDP)</td><td>the batch; model copied or sharded</td><td>gradients once per step</td><td>across everything</td></tr>
+</table></div>
+<p class="small">Communication patterns from Megatron-LM (Shoeybi et al. 2019; Narayanan et al. 2021) <span class="tag unv">Unverified background</span>.</p>
+<p><strong>Worked example</strong> <span class="tag derived">Derived</span>: train a 70B model with TP = 8 on one HGX H100, one microbatch of 4,096 tokens. Each all-reduce carries 4,096 × 8,192 × 2 B ≈ 67 MB; a ring all-reduce takes ≈ 2 × 7/8 × 67 MB ÷ 450 GB/s ≈ 0.26 ms, and 80 layers × 4 of them ≈ 83 ms. The compute is 6 × 70·10⁹ × 4,096 ≈ 1.7 PFLOP, ≈ 0.43 s on 8 × 989 TF at an assumed 50% utilisation. Communication is ~19% of compute over NVLink, but over 50 GB/s InfiniBand the same all-reduces would take ~0.75 s, longer than the compute. That is why TP never leaves the NVLink domain, and why NVL72 (72 GPUs in one domain) matters.</p>
+<p>A GB200 NVL72 rack holds ~13.4 TB of HBM3e at 576 TB/s aggregate <span class="tag vendor">Vendor via secondary</span>. Its strength is capacity: a 70B FP16 model (~140 GB) fits on one B200 with ~40 GB left for KV cache <span class="tag derived">Derived</span>; on Cerebras it needs four wafers (Chapter 8).</p>
 
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>A warp's threads read x[2*i]. What happens to bandwidth?</summary><p>The accesses are strided, so a warp touches twice as many memory segments as needed; effective bandwidth roughly halves.</p></details>
-<details><summary>Memory latency is 400 cycles and each warp computes 20 cycles between loads. How many warps hide it?</summary><p>About (C + L) / C = 420 / 20 = 21 warps per scheduler.</p></details>
-<details><summary>Why does the H100's 1,979 TF figure need care?</summary><p>It assumes 2:4 structured sparsity. Dense BF16 is ~989 TF — the same trap as Cerebras's sparse 125 PF.</p></details>
+<details><summary>A warp's threads read x[2*i] from a float array. What happens to bandwidth?</summary><p>The warp spans 256 B = 8 sectors but uses only 128 B of them, so 50% of fetched bytes are wasted and effective bandwidth roughly halves (unless the other half is reused later from cache). Try it in the coalescing visualizer.</p></details>
+<details><summary>Memory latency is 400 cycles and each warp computes 20 cycles between loads. How many warps hide it on one scheduler, and can an H100 do that?</summary><p>(C + L) / C = 420 / 20 = 21 warps per scheduler. An H100 scheduler holds at most 16 (64 per SM), so occupancy alone tops out near 16 × 20 / 420 ≈ 76%. To go further each warp must keep more loads in flight (ILP: with k = 2, ⌈420/40⌉ = 11 warps suffice) or prefetch into shared memory with async copies.</p></details>
+<details><summary>A kernel uses 128 registers per thread. How many threads fit on an SM, and what does that do to latency hiding?</summary><p>65,536 / 128 = 512 threads = 16 warps, only 4 per scheduler: 25% occupancy. With C = 20 and L = 400 that hides about a fifth of the wait, so the kernel needs ILP or a smaller register footprint.</p></details>
+<details><summary>A warp runs <code>if (lane &lt; 16) A(); else B();</code>. What does it cost?</summary><p>Both paths run one after the other, each with half the lanes masked: the time of A plus B at 50% lane efficiency. The same branch across different PEs on the wafer costs nothing, because each PE has its own instruction stream.</p></details>
+<details><summary>Why does a GEMM reach peak on an H100 when a single 256 × 256 tile only gives 128 FLOP/B?</summary><p>Neighbouring blocks re-read the same A and B slabs from the 50 MB L2, so HBM traffic is much lower than per-tile traffic. Over the whole 8192³ problem the minimum HBM traffic gives ~2,700 FLOP/B, far above the ~295 ridge.</p></details>
+<details><summary>Translate: which CSL concept plays the role of blockIdx/threadIdx, and which CUDA concepts have no wafer equivalent?</summary><p>A PE's coordinates and the slice the host's memcpy gives it (set by the layout's rectangle). Thread blocks, shared memory between threads and a global HBM address space have no equivalent: each PE owns its 48 KB and talks to others only by wavelets.</p></details>
+<details><summary>Why does a 70B model fit on one B200 yet decode slower per user than on four wafers?</summary><p>The 140 GB of weights fit in ~180 GB of HBM, but every token must read all of them: ≥ 140 GB ÷ 8 TB/s ≈ 17.5 ms, at most ~57 tokens/s per user. On four wafers the weights stay in SRAM, so per-user speed is set by the pipeline, not by HBM. Batching helps the GPU's aggregate throughput and cost, not per-user speed.</p></details>
+<details><summary>What does an NVL72 rack give that nine 8-GPU HGX boxes on InfiniBand do not?</summary><p>One NVLink domain of 72 GPUs at 1.8 TB/s each (~130 TB/s), so tensor parallelism and expert all-to-alls can span all 72. Across HGX boxes the per-GPU link drops roughly 9× to InfiniBand, which is too slow for per-layer all-reduces.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
 <script>
 (function () {
-  const h = $("#hier");
-  const levels = [["registers", "256 KB / SM · ~1 cycle", 680, "--green"], ["L1 / shared memory", "256 KB / SM · tens of cycles", 560, "--green"],
-    ["L2 cache", "50 MB / chip · ~3.8 TB/s measured", 400, "--blue"], ["HBM3 (off-die)", "80 GB · 3.35 TB/s · hundreds of cycles", 260, "--amber"]];
-  levels.forEach(([n, d, w, c], i) => { const y = 20 + i * 66, x = 380 - w / 2;
-    el("rect", { x, y, width: w, height: 52, rx: 8, fill: cssVar(c), opacity: .22, stroke: cssVar(c), "stroke-width": 1.5 }, h);
-    el("text", { x: 380, y: y + 23, "text-anchor": "middle", "font-weight": 700 }, h).textContent = n;
-    el("text", { x: 380, y: y + 41, "text-anchor": "middle", "font-size": 12, class: "muted" }, h).textContent = d; });
-  el("text", { x: 20, y: 40, "font-size": 12, class: "muted" }, h).textContent = "fast, small";
-  el("text", { x: 20, y: 250, "font-size": 12, class: "muted" }, h).textContent = "slow, big";
+  const T = (p, x, y, s, a = {}) => { const e = el("text", Object.assign({ x, y }, a), p); e.textContent = s; return e; };
+  const fmtB = b => b >= 1e9 ? (b / 1e9).toFixed(b >= 1e11 ? 0 : 1) + " GB" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : (b / 1e3).toFixed(0) + " KB";
 
-  function occ() {
-    const W = +$("#o-w").value, C = +$("#o-c").value, L = +$("#o-l").value;
-    $("#o-wv").textContent = W; $("#o-cv").textContent = C; $("#o-lv").textContent = L;
-    const T = 600, ready = new Array(W).fill(0), busy = []; let t = 0, issued = 0;
-    while (t < T) {
-      let w = -1, best = Infinity; for (let k = 0; k < W; k++) if (ready[k] <= t && ready[k] < best) { best = ready[k]; w = k; }
-      if (w < 0) { t = Math.min(...ready); continue; }
-      busy.push([w, t, Math.min(t + C, T)]); issued += Math.min(C, T - t); t += C; ready[w] = t + L;
+  /* ---------- SM anatomy ---------- */
+  (function () {
+    const svg = $("#sm"), out = $("#sm-out");
+    const U = " [unverified background]";
+    const info = {
+      icache: "Instruction caches: an L1 instruction cache per SM, and a small L0 per sub-partition." + U,
+      sched: "Warp scheduler + dispatch: holds up to 16 warps; each cycle it picks one ready warp and issues one instruction for all 32 of its threads. Four per SM.",
+      rf: "Register file slice: 64 KB = 16,384 32-bit registers, shared by the warps this scheduler holds. More registers per thread means fewer warps fit (see the occupancy calculator).",
+      fp32: "32 FP32 lanes: one warp's FP32 instruction per cycle. 128 per SM, about 67 TF FP32 chip-wide, about 15× less than the Tensor Cores.",
+      int: "16 INT32 + 16 FP64 lanes: integer/address arithmetic and double precision." + U,
+      tc: "Tensor Core: a matrix-multiply-accumulate unit, 512 dense BF16 FMAs per clock. 4 per SM × 132 SMs × 1.83 GHz ≈ 989 TF. The FLOPs live here.",
+      ldst: "Load/store units turn a warp's addresses into memory requests (coalescing happens here); SFUs compute exp, sin, rsqrt." + U,
+      l1: "256 KB SRAM shared by the whole SM, split between a hardware-managed L1 data cache and programmer-managed shared memory (up to 228 KB). Shared memory is the closest thing to a PE's SRAM.",
+      tma: "Tensor Memory Accelerator (Hopper): copies whole 1D–5D tiles between global and shared memory from one instruction, so no threads are spent on address arithmetic.",
+      tex: "Texture units: graphics heritage, rarely central to AI kernels." + U,
+    };
+    const blk = (key, q, x, y, w, h, cls, label, fs = 12) => {
+      const g = el("g", { class: "sm-blk", tabindex: 0, "data-k": key, "data-q": q }, svg);
+      el("rect", { x, y, width: w, height: h, rx: 5, class: cls, "stroke-width": 1.2 }, g);
+      if (label) T(g, x + w / 2, y + h / 2 + fs * 0.36, label, { "text-anchor": "middle", "font-size": fs });
+      const show = () => { out.textContent = info[key]; };
+      g.addEventListener("mouseenter", show); g.addEventListener("focus", show); g.addEventListener("click", show);
+      return g;
+    };
+    el("rect", { x: 8, y: 8, width: 744, height: 484, rx: 12, class: "box" }, svg);
+    T(svg, 24, 34, "One H100 SM", { "font-weight": 700, "font-size": 15 });
+    T(svg, 140, 34, "×132 on H100 SXM", { "font-size": 12, class: "muted" });
+    blk("icache", -1, 24, 44, 712, 24, "box", "L1 instruction cache");
+    for (let q = 0; q < 4; q++) {
+      const qx = 24 + (q % 2) * 367, qy = 78 + Math.floor(q / 2) * 152, w = 345;
+      const g0 = el("rect", { x: qx, y: qy, width: w, height: 144, rx: 8, fill: "none", class: "s-muted", "stroke-dasharray": "4 3", "data-q": q }, svg);
+      T(svg, qx + 8, qy + 14, `sub-partition ${q}`, { "font-size": 11, class: "muted", "data-q": q });
+      blk("sched", q, qx + 8, qy + 20, w - 16, 22, "acc", "L0 I-cache · warp scheduler + dispatch · ≤16 warps");
+      blk("rf", q, qx + 8, qy + 47, w - 16, 20, "grn", "register file 64 KB (16,384 × 32-bit)");
+      const lanes = el("g", { class: "sm-blk", tabindex: 0, "data-k": "fp32", "data-q": q }, svg);
+      el("rect", { x: qx + 8, y: qy + 72, width: 170, height: 46, rx: 5, class: "box" }, lanes);
+      for (let i = 0; i < 32; i++) el("rect", { x: qx + 13 + (i % 16) * 10.2, y: qy + 76 + Math.floor(i / 16) * 11, width: 8, height: 8, rx: 1.5, class: "blu" }, lanes);
+      T(lanes, qx + 93, qy + 113, "32 FP32 lanes", { "text-anchor": "middle", "font-size": 11 });
+      ["mouseenter", "focus", "click"].forEach(ev => lanes.addEventListener(ev, () => { out.textContent = info.fp32; }));
+      blk("int", q, qx + 184, qy + 72, 72, 21, "box", "16 INT32", 11);
+      blk("int", q, qx + 184, qy + 97, 72, 21, "box", "16 FP64", 11);
+      blk("tc", q, qx + 262, qy + 72, 75, 46, "pur", "Tensor Core", 12);
+      blk("ldst", q, qx + 8, qy + 123, w - 16, 16, "box", "LD/ST · SFU", 11);
     }
-    const svg = $("#o-svg"); svg.innerHTML = "";
-    const X = v => 70 + v * 590 / T, rows = Math.min(W, 16), rh = Math.min(13, 200 / rows);
-    for (let k = 0; k < rows; k++) el("text", { x: 60, y: 20 + k * rh + rh - 2, "text-anchor": "end", "font-size": 9, class: "muted" }, svg).textContent = `warp ${k}`;
-    busy.forEach(([w, a, b]) => { if (w < rows) el("rect", { x: X(a), y: 20 + w * rh, width: Math.max(1, X(b) - X(a)), height: rh - 2, fill: cssVar("--accent") }, svg); });
-    busy.forEach(([w, a, b]) => el("rect", { x: X(a), y: 230, width: Math.max(1, X(b) - X(a)), height: 14, fill: cssVar("--green") }, svg));
-    el("text", { x: 60, y: 241, "text-anchor": "end", "font-size": 10 }, svg).textContent = "SM busy";
-    const util = issued / T, need = Math.ceil((C + L) / C);
-    $("#o-out").textContent = `math-unit utilisation ≈ ${(100 * util).toFixed(0)}%   (model: min(1, W·C/(C+L)) = ${(100 * Math.min(1, W * C / (C + L))).toFixed(0)}%)\n` +
-      `warps needed to hide latency: ⌈(C+L)/C⌉ = ${need}` + (W >= need ? "  ✓ latency hidden" : `  — add ${need - W} more warps`);
-  }
-  ["#o-w", "#o-c", "#o-l"].forEach(s => $(s).oninput = occ); occ();
+    blk("l1", -1, 24, 388, 560, 36, "grn", "256 KB L1 data cache / shared memory (≤ 228 KB shared)", 13);
+    blk("tma", -1, 592, 388, 70, 36, "amb", "TMA", 13);
+    blk("tex", -1, 670, 388, 66, 36, "box", "Tex", 12);
+    T(svg, 24, 448, "Per SM: ≤ 64 warps · 2,048 threads · 32 blocks · 65,536 registers · 4 Tensor Cores · 128 FP32 lanes", { "font-size": 12.5 });
+    T(svg, 24, 472, "For scale, one Cerebras PE: 1 core · 48 KB SRAM · 8-way FP16 SIMD · 8 microthreads (Chapter 3)", { "font-size": 12.5, class: "muted" });
+    let on = false;
+    $("#sm-warp").onclick = () => {
+      on = !on;
+      svg.querySelectorAll("[data-q]").forEach(n => {
+        const q = +n.getAttribute("data-q"), k = n.getAttribute("data-k");
+        const keep = q === 0 && (k === null || ["sched", "rf", "fp32", "tc", "ldst"].includes(k));
+        n.classList.toggle("dim", on && !keep && k !== "l1");
+      });
+      svg.querySelectorAll('[data-k="l1"],[data-k="tma"],[data-k="tex"],[data-k="icache"]').forEach(n => n.classList.toggle("dim", on && n.getAttribute("data-k") !== "l1"));
+      $("#sm-warp").textContent = on ? "Show the whole SM" : "Highlight what one warp uses";
+      out.textContent = on ? "One warp lives on one sub-partition: its scheduler issues it, its registers sit in that 64 KB slice, its FP32 instructions use those 32 lanes, its MMAs that Tensor Core, and its shared-memory tile sits in the SM-wide L1/shared block." : "Tap or hover a block.";
+    };
+  })();
+
+  /* ---------- memory hierarchy ---------- */
+  (function () {
+    const h = $("#hier");
+    T(h, 40, 22, "H100 SXM (chip-wide)", { "font-weight": 700, "font-size": 14 });
+    T(h, 330, 22, "capacity (bar ∝ log bytes)", { "font-size": 12, class: "muted" });
+    T(h, 520, 22, "WSE-3, per PE (×~900,000)", { "font-weight": 700, "font-size": 14 });
+    const lv = [["registers", 33.8e6, "33 MiB (256 KB/SM)", "~1 cycle · fastest", "grn"],
+      ["L1 / shared memory", 33.8e6, "33 MiB (256 KB/SM)", "~20–30 cycles · ~31 TB/s shared-mem", "grn"],
+      ["L2 cache (2 × 25 MB)", 50e6, "50 MB", "~200–300 cycles · >5.5 TB/s (PCIe card)", "blu"],
+      ["HBM3 (off-die)", 80e9, "80 GB", "~400–800 cycles · 3.35 TB/s", "amb"]];
+    lv.forEach(([n, b, cap, d, c], i) => {
+      const y = 34 + i * 70;
+      el("rect", { x: 40, y, width: 440, height: 58, rx: 8, class: c, "stroke-width": 1.3 }, h);
+      T(h, 52, y + 22, n, { "font-weight": 700, "font-size": 14 });
+      T(h, 52, y + 44, d, { "font-size": 12.5, class: "muted" });
+      const bw = (Math.log10(b) - 6) / 5 * 140;
+      el("rect", { x: 330, y: y + 30, width: bw, height: 12, rx: 3, class: "f-" + (c === "grn" ? "grn" : c === "blu" ? "blu" : "amb") }, h);
+      T(h, 330 + bw + 6, y + 41, cap, { "font-size": 12 });
+    });
+    el("line", { x1: 22, y1: 40, x2: 22, y2: 300, class: "s-muted", "stroke-width": 1.5, "marker-end": "url(#arrH)" }, h);
+    const defs = el("defs", {}, h), m = el("marker", { id: "arrH", viewBox: "0 0 10 10", refX: 5, refY: 9, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0,0 L5,10 L10,0 z", class: "f-pur", style: "fill: var(--muted)" }, m);
+    T(h, 16, 170, "latency grows", { "font-size": 12, class: "muted", transform: "rotate(-90 16 170)", "text-anchor": "middle" });
+    const pe = [["registers + DSRs", "per PE", "box"], ["48 KB SRAM", "1 cycle · code + data · 44 GB wafer-wide", "grn"],
+      ["neighbour PEs", "wavelets over the fabric, hop by hop", "blu"], ["off-wafer", "host I/O, MemoryX", "amb"]];
+    pe.forEach(([n, d, c], i) => {
+      const y = 34 + i * 70;
+      el("rect", { x: 520, y, width: 225, height: 58, rx: 8, class: c, "stroke-width": 1.3 }, h);
+      T(h, 532, y + 22, n, { "font-weight": 700, "font-size": 14 });
+      T(h, 532, y + 44, d, { "font-size": 11.5, class: "muted" });
+    });
+  })();
+
+  /* ---------- coalescing ---------- */
+  (function () {
+    let seed = 7;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    let perm = [];
+    const reshuffle = () => { perm = Array.from({ length: 32 }, () => Math.floor(rnd() * (1 << 20))); };
+    reshuffle();
+    function draw() {
+      const pat = $("#c-pat").value, e = +$("#c-e").value, svg = $("#c-svg"); svg.innerHTML = "";
+      const idx = i => ({ unit: i, off: i + 1, s2: 2 * i, s4: 4 * i, s32: 32 * i, rand: perm[i] })[pat];
+      const addr = Array.from({ length: 32 }, (_, i) => idx(i) * e);
+      const sectors = new Map();
+      addr.forEach(a => { for (let b = a; b < a + e; b += 4) { const s = Math.floor(b / 32); sectors.set(s, (sectors.get(s) || 0) + 4); } });
+      const lines = [...new Set([...sectors.keys()].map(s => Math.floor(s / 4)))].sort((a, b) => a - b);
+      const perRow = 8, LW = 80, gap = 4, x0 = 4;
+      const pos = new Map(); lines.forEach((l, j) => pos.set(l, [x0 + (j % perRow) * (LW + gap), 150 + Math.floor(j / perRow) * 36]));
+      const H = 150 + Math.ceil(lines.length / perRow) * 36 + 6;
+      svg.setAttribute("viewBox", `0 0 680 ${Math.max(200, H)}`);
+      T(svg, 4, 14, "warp lanes 0–31", { "font-size": 12, class: "muted" });
+      T(svg, 4, 140, `${lines.length} cache line${lines.length > 1 ? "s" : ""} of 128 B touched (4 sectors each)`, { "font-size": 12, class: "muted" });
+      addr.forEach((a, i) => {
+        const lx = 14 + i * 20.5 + 9, s = Math.floor(a / 32), l = Math.floor(s / 4), [px, py] = pos.get(l);
+        el("line", { x1: lx, y1: 44, x2: px + (s % 4) * 20 + 10, y2: py, class: "s-acc", "stroke-width": 1, opacity: .45 }, svg);
+      });
+      for (let i = 0; i < 32; i++) {
+        el("rect", { x: 14 + i * 20.5, y: 22, width: 18, height: 22, rx: 3, class: "acc" }, svg);
+        if (i % 8 === 0) T(svg, 14 + i * 20.5 + 9, 37, i, { "font-size": 10, "text-anchor": "middle" });
+      }
+      lines.forEach(l => {
+        const [px, py] = pos.get(l);
+        for (let k = 0; k < 4; k++) {
+          const s = l * 4 + k, used = sectors.get(s) || 0;
+          el("rect", { x: px + k * 20, y: py, width: 20, height: 26, class: used ? "amb" : "box", "stroke-width": 1 }, svg);
+          if (used) el("rect", { x: px + k * 20 + 1, y: py + 19, width: 18 * used / 32, height: 6, class: "f-acc" }, svg);
+        }
+      });
+      const S = sectors.size, useful = 32 * e, eff = useful / (32 * S);
+      $("#c-out").textContent = `sectors fetched: ${S}  (${32 * S} B)   bytes used: ${useful} B   efficiency: ${(100 * eff).toFixed(1)}%\n` +
+        `effective HBM bandwidth if nothing is reused: 3.35 TB/s × ${(eff).toFixed(3)} ≈ ${(3.35 * eff).toFixed(2)} TB/s  [derived]`;
+    }
+    $("#c-pat").onchange = draw; $("#c-e").onchange = draw;
+    $("#c-shuf").onclick = () => { reshuffle(); $("#c-pat").value = "rand"; draw(); };
+    draw();
+  })();
+
+  /* ---------- occupancy calculator ---------- */
+  let qPerSched = 4;
+  (function () {
+    function calc() {
+      const t = +$("#q-t").value, r = +$("#q-r").value, s = +$("#q-s").value;
+      $("#q-tv").textContent = t; $("#q-rv").textContent = r; $("#q-sv").textContent = s + " KB";
+      const wpb = Math.ceil(t / 32);
+      const lim = [["warp slots (64 / SM)", Math.floor(64 / wpb)], ["registers (65,536 / SM)", Math.floor(65536 / (r * t))],
+        ["shared memory (228 KB / SM)", s > 0 ? Math.floor(228 / s) : Infinity], ["block slots (32 / SM)", 32]];
+      const blocks = Math.min(...lim.map(l => l[1])), warps = blocks * wpb, occ = warps / 64;
+      qPerSched = warps / 4;
+      const svg = $("#q-svg"); svg.innerHTML = "";
+      for (let sc = 0; sc < 4; sc++) {
+        T(svg, 100, 30 + sc * 30, `scheduler ${sc}`, { "font-size": 12, "text-anchor": "end", class: "muted" });
+        for (let k = 0; k < 16; k++) {
+          const w = k * 4 + sc, b = Math.floor(w / wpb), filled = w < warps;
+          el("rect", { x: 110 + k * 25, y: 15 + sc * 30, width: 21, height: 21, rx: 3, class: filled ? (b % 2 ? "blu" : "acc") : "box" }, svg);
+        }
+      }
+      T(svg, 520, 30, `${blocks} block${blocks === 1 ? "" : "s"} × ${wpb} warps`, { "font-size": 13, "font-weight": 700 });
+      T(svg, 520, 50, `= ${warps} / 64 warps`, { "font-size": 13 });
+      T(svg, 520, 70, `occupancy ${(100 * occ).toFixed(0)}%`, { "font-size": 13 });
+      T(svg, 520, 90, `${(warps / 4).toFixed(warps % 4 ? 1 : 0)} warps per scheduler`, { "font-size": 13 });
+      T(svg, 10, 150, "blocks per SM allowed by each resource (bar capped at 32):", { "font-size": 12, class: "muted" });
+      lim.forEach(([n, v], i) => {
+        const y = 162 + i * 26, bound = v === blocks;
+        T(svg, 210, y + 13, n, { "font-size": 12, "text-anchor": "end" });
+        el("rect", { x: 220, y, width: Math.max(2, Math.min(v, 32) / 32 * 380), height: 18, rx: 3, class: bound ? "red" : "grn" }, svg);
+        T(svg, 226 + Math.max(2, Math.min(v, 32) / 32 * 380), y + 13, v === Infinity ? "no limit" : v + (bound ? "  ← limit" : ""), { "font-size": 12, "font-weight": bound ? 700 : 400 });
+      });
+      const limiter = lim.filter(l => l[1] === blocks).map(l => l[0].split(" (")[0]).join(" and ");
+      $("#q-out").textContent = blocks === 0 ? `One block does not fit: it needs ${r * t} registers (> 65,536) or more shared memory than the SM has.` :
+        `${blocks} blocks/SM, limited by ${limiter}. ${warps} resident warps = ${(100 * occ).toFixed(0)}% occupancy = ${t * blocks} threads.\n` +
+        `A grid of n threads runs in ⌈n / (132 × ${t * blocks})⌉ waves on an H100.  [derived; ignores allocation granularity]`;
+    }
+    ["#q-t", "#q-r", "#q-s"].forEach(s => $(s).oninput = calc); calc();
+    $("#q-send").onclick = () => { $("#o-w").value = Math.max(1, Math.min(16, Math.floor(qPerSched))); window.__occ && window.__occ(); $("#occ").scrollIntoView({ behavior: "smooth", block: "center" }); };
+  })();
+
+  /* ---------- latency hiding ---------- */
+  (function () {
+    function occ() {
+      const W = +$("#o-w").value, C = +$("#o-c").value, L = +$("#o-l").value, k = +$("#o-k").value;
+      $("#o-wv").textContent = W; $("#o-cv").textContent = C; $("#o-lv").textContent = L; $("#o-kv").textContent = k;
+      const B = k * C, END = 20000, WIN = 1000, T0 = END - WIN, M0 = 10000;
+      const ready = new Array(W).fill(0), busy = [], queued = []; let t = 0, issuedM = 0;
+      while (t < END) {
+        let w = -1, best = Infinity;
+        for (let q = 0; q < W; q++) if (ready[q] <= t && ready[q] < best) { best = ready[q]; w = q; }
+        if (w < 0) { t = Math.min(...ready); continue; }
+        if (ready[w] < t) queued.push([w, ready[w], t]);
+        const e = t + B; busy.push([w, t, e]);
+        issuedM += Math.max(0, Math.min(e, END) - Math.max(t, M0));
+        t = e; ready[w] = e + L;
+      }
+      const util = issuedM / (END - M0), model = Math.min(1, W * B / (B + L)), need = Math.ceil((B + L) / B);
+      const svg = $("#o-svg"); svg.innerHTML = "";
+      const X = v => 70 + (Math.min(Math.max(v, T0), END) - T0) * 600 / WIN;
+      const rh = Math.min(24, 190 / W), top = 30;
+      [["computing", "f-acc"], ["waiting on HBM", "amb"], ["ready, waiting to issue", "box"], ["scheduler idle", "red"]].forEach(([n, c], i) => {
+        el("rect", { x: 70 + i * 150, y: 6, width: 14, height: 12, rx: 2, class: c }, svg);
+        T(svg, 90 + i * 150, 16, n, { "font-size": 12 });
+      });
+      for (let q = 0; q < W; q++) T(svg, 62, top + q * rh + rh / 2 + 4, `w${q}`, { "text-anchor": "end", "font-size": 12, class: "muted" });
+      const vis = ([, a, b]) => b > T0 && a < END;
+      queued.filter(vis).forEach(([w, a, b]) => el("rect", { x: X(a), y: top + w * rh, width: Math.max(0.5, X(b) - X(a)), height: rh - 3, class: "box" }, svg));
+      busy.forEach(([w, a, b]) => { if (b + L > T0 && b < END) el("rect", { x: X(b), y: top + w * rh, width: Math.max(0.5, X(b + L) - X(b)), height: rh - 3, class: "amb", "stroke-width": .8 }, svg); });
+      busy.filter(vis).forEach(([w, a, b]) => el("rect", { x: X(a), y: top + w * rh, width: Math.max(1, X(b) - X(a)), height: rh - 3, class: "f-acc" }, svg));
+      if (rh >= 14) {
+        const first = busy.find(([w, a]) => w === 0 && a >= T0 && a + B + L < END);
+        if (first) {
+          const [, a, b] = first;
+          if (X(b) - X(a) >= 12) T(svg, (X(a) + X(b)) / 2, top + rh / 2 + 3, "C" + (k > 1 ? "×" + k : ""), { "text-anchor": "middle", "font-size": 11, style: "fill: var(--on-accent)" });
+          if (X(b + L) - X(b) >= 26) T(svg, (X(b) + X(b + L)) / 2, top + rh / 2 + 3, "L", { "text-anchor": "middle", "font-size": 11 });
+        }
+      }
+      const by = top + W * rh + 8;
+      T(svg, 62, by + 12, "issuing", { "text-anchor": "end", "font-size": 12 });
+      el("rect", { x: 70, y: by, width: 600, height: 16, class: "red", "stroke-width": .8 }, svg);
+      busy.filter(vis).forEach(([w, a, b]) => el("rect", { x: X(a), y: by, width: Math.max(1, X(b) - X(a)), height: 16, class: "f-grn" }, svg));
+      const ay = by + 26;
+      el("line", { x1: 70, y1: ay, x2: 670, y2: ay, class: "s-muted" }, svg);
+      for (let c = 0; c <= WIN; c += 200) {
+        el("line", { x1: 70 + c * 0.6, y1: ay, x2: 70 + c * 0.6, y2: ay + 5, class: "s-muted" }, svg);
+        T(svg, 70 + c * 0.6, ay + 18, c, { "text-anchor": "middle", "font-size": 11, class: "muted" });
+      }
+      T(svg, 670, ay + 32, "cycles (a 1,000-cycle window in steady state)", { "text-anchor": "end", "font-size": 11, class: "muted" });
+      svg.setAttribute("viewBox", `0 0 680 ${ay + 38}`);
+      let msg = `scheduler utilisation (steady state) ≈ ${(100 * util).toFixed(0)}%   = min(1, W·kC/(kC+L)) = min(1, ${W}·${B}/${B + L})\n` +
+        `warps needed: ⌈(kC+L)/kC⌉ = ⌈${B + L}/${B}⌉ = ${need}`;
+      if (W >= need) msg += "   ✓ latency hidden";
+      else if (need <= 16) msg += `   add ${need - W} more warp${need - W > 1 ? "s" : ""}`;
+      else msg += `\nneeds ${need} > 16, the most one H100 scheduler holds (64 per SM). Raise k (independent loads per warp, ILP)\nor prefetch into shared memory with async copies (cp.async, TMA).`;
+      $("#o-out").textContent = msg;
+    }
+    window.__occ = occ;
+    ["#o-w", "#o-c", "#o-l", "#o-k"].forEach(s => $(s).oninput = occ); occ();
+  })();
+
+  /* ---------- tile calculator ---------- */
+  (function () {
+    function calc() {
+      const BM = +$("#t-m").value, BN = +$("#t-n").value, BK = +$("#t-k").value, S = +$("#t-s").value, th = +$("#t-th").value;
+      $("#t-sv").textContent = S;
+      const stage = (BM + BN) * BK * 2, smem = stage * S, acc = BM * BN / th, inten = BM * BN / (BM + BN);
+      const svg = $("#t-svg"); svg.innerHTML = "";
+      const sz = 150, sc = sz / 1024, y0 = 40;
+      const mat = (x, label, w, h) => { el("rect", { x, y: y0, width: sz, height: sz, class: "box" }, svg); T(svg, x + sz / 2, y0 - 10, label, { "text-anchor": "middle", "font-size": 13, "font-weight": 700 }); T(svg, x + sz / 2, y0 + sz + 18, `${w}`, { "text-anchor": "middle", "font-size": 12, class: "muted" }); };
+      mat(30, "A (M × K)", "slab BM × BK in smem"); mat(265, "B (K × N)", "slab BK × BN in smem"); mat(500, "C (M × N)", "tile BM × BN in registers");
+      const kk = 2;
+      el("rect", { x: 30, y: y0 + sc * BM, width: sz, height: sc * BM, class: "acc", opacity: .45 }, svg);
+      el("rect", { x: 30 + kk * BK * sc, y: y0 + sc * BM, width: BK * sc, height: sc * BM, class: "acc", "stroke-width": 2 }, svg);
+      el("rect", { x: 265 + sc * BN, y: y0, width: sc * BN, height: sz, class: "blu", opacity: .45 }, svg);
+      el("rect", { x: 265 + sc * BN, y: y0 + kk * BK * sc, width: sc * BN, height: BK * sc, class: "blu", "stroke-width": 2 }, svg);
+      el("rect", { x: 500 + sc * BN, y: y0 + sc * BM, width: sc * BN, height: sc * BM, class: "grn", "stroke-width": 2 }, svg);
+      T(svg, 222, y0 + sz / 2 + 6, "×", { "text-anchor": "middle", "font-size": 22 });
+      T(svg, 457, y0 + sz / 2 + 6, "→", { "text-anchor": "middle", "font-size": 22 });
+      T(svg, 340, 222, "the K loop marches the slabs along K, one BK-wide step at a time", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+      const smOK = smem <= 228 * 1024, rOK = acc <= 255;
+      $("#t-out").textContent =
+        `smem per stage: (${BM}+${BN})×${BK}×2 B = ${(stage / 1024).toFixed(0)} KB  × ${S} stages = ${(smem / 1024).toFixed(0)} KB  ${smOK ? "✓ fits in 228 KB" : "✗ exceeds 228 KB per SM"}\n` +
+        `accumulator: ${BM}×${BN} FP32 = ${(BM * BN * 4 / 1024).toFixed(0)} KB = ${acc.toFixed(0)} registers per thread over ${th} threads  ${rOK ? (acc > 200 ? "(tight: ≤ 255, other values need registers too)" : "✓") : "✗ > 255 registers per thread"}\n` +
+        `intensity from global memory: ${BM}·${BN}/(${BM}+${BN}) = ${inten.toFixed(0)} FLOP/B  vs H100 ridge ≈ 295 → ${inten < 295 ? "still below: L2 reuse across blocks must do the rest" : "above the ridge"}  [derived]`;
+    }
+    ["#t-m", "#t-n", "#t-k", "#t-th"].forEach(s => $(s).onchange = calc); $("#t-s").oninput = calc; calc();
+  })();
+
+  /* ---------- Hopper pipeline ---------- */
+  (function () {
+    const s = $("#pipe");
+    const box = (x, y, w, h, c, a, b) => { el("rect", { x, y, width: w, height: h, rx: 8, class: c, "stroke-width": 1.4 }, s); T(s, x + w / 2, y + (b ? h / 2 - 2 : h / 2 + 5), a, { "text-anchor": "middle", "font-size": 13, "font-weight": 700 }); if (b) T(s, x + w / 2, y + h / 2 + 15, b, { "text-anchor": "middle", "font-size": 11.5, class: "muted" }); };
+    const defs = el("defs", {}, s), m = el("marker", { id: "arrP", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto" }, defs);
+    el("path", { d: "M0,0 L10,5 L0,10 z", style: "fill: var(--muted)" }, m);
+    const arr = (x1, y1, x2, y2, lab, dash) => { el("line", { x1, y1, x2, y2, class: "s-muted", "stroke-width": 1.5, "marker-end": "url(#arrP)", "stroke-dasharray": dash ? "4 3" : "none" }, s); if (lab) T(s, (x1 + x2) / 2, (y1 + y2) / 2 - 6, lab, { "text-anchor": "middle", "font-size": 11.5 }); };
+    box(10, 20, 130, 50, "amb", "HBM / L2", "global memory");
+    box(10, 150, 130, 60, "acc", "producer", "1 warpgroup, ~40 regs");
+    box(190, 20, 120, 50, "amb", "TMA engine", "makes all addresses");
+    arr(140, 180, 250, 72, "issue copy");
+    arr(140, 45, 188, 45, "");
+    T(s, 520, 16, "ring of 4 shared-memory stages", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+    for (let i = 0; i < 4; i++) {
+      const x = 360 + i * 82;
+      el("rect", { x, y: 26, width: 72, height: 44, rx: 6, class: "grn", "stroke-width": 1.4 }, s);
+      T(s, x + 36, 46, `stage ${i}`, { "text-anchor": "middle", "font-size": 12, "font-weight": 700 });
+      T(s, x + 36, 62, "full · empty", { "text-anchor": "middle", "font-size": 10.5, class: "muted" });
+    }
+    arr(310, 45, 358, 45, "");
+    T(s, 334, 90, "arrive full[s]", { "text-anchor": "middle", "font-size": 11.5 });
+    box(380, 150, 150, 60, "pur", "consumer 0", "wgmma on Tensor Cores");
+    box(560, 150, 150, 60, "pur", "consumer 1", "~232 regs each");
+    arr(455, 72, 455, 148, "wait full[s]");
+    arr(635, 72, 635, 148, "");
+    arr(380, 195, 142, 195, "arrive empty[s] → producer refills", true);
+    T(s, 545, 236, "accumulators stay in registers (Hopper) or tensor memory (Blackwell)", { "text-anchor": "middle", "font-size": 11.5, class: "muted" });
+  })();
+
+  /* ---------- decode calculator ---------- */
+  (function () {
+    const G = { h: ["H100", 3.35e12, 80e9], b: ["B200", 8e12, 180e9], r: ["Rubin", 19.2e12, 288e9] };
+    function calc() {
+      const [gn, bw, cap] = G[$("#d-g").value], pb = +$("#d-p").value, kvb = +$("#d-kv").value, tp = +$("#d-tp").value;
+      const B = 2 ** +$("#d-b").value, ctx = 2 ** +$("#d-c").value;
+      $("#d-bv").textContent = B; $("#d-cv").textContent = ctx >= 1024 ? ctx / 1024 + "k" : ctx;
+      const Wt = 70e9 * pb, kvTok = 2 * 80 * 8 * 128 * kvb, KV = B * ctx * kvTok;
+      const per = (Wt + KV) / tp, wPer = Wt / tp, kPer = KV / tp, step = per / bw, fits = per <= cap;
+      const svg = $("#d-svg"); svg.innerHTML = "";
+      const max = Math.max(cap, per) * 1.08, X = v => 20 + v / max * 640;
+      T(svg, 20, 18, `bytes each ${gn} reads per decode step (TP = ${tp})`, { "font-size": 12, class: "muted" });
+      el("rect", { x: 20, y: 30, width: X(wPer) - 20, height: 30, class: "blu" }, svg);
+      el("rect", { x: X(wPer), y: 30, width: Math.max(0, X(per) - X(wPer)), height: 30, class: "amb" }, svg);
+      if (X(wPer) - 20 > 70) T(svg, 26, 50, "weights " + fmtB(wPer), { "font-size": 12 });
+      if (X(per) - X(wPer) > 70) T(svg, X(wPer) + 6, 50, "KV " + fmtB(kPer), { "font-size": 12 });
+      el("line", { x1: X(cap), y1: 24, x2: X(cap), y2: 70, class: "s-red", "stroke-width": 2, "stroke-dasharray": "5 3" }, svg);
+      T(svg, X(cap), 86, `HBM capacity ${fmtB(cap)}`, { "font-size": 12, "text-anchor": X(cap) > 560 ? "end" : "middle" });
+      T(svg, 20, 108, fits ? "fits (ignoring activations and workspace)" : "does NOT fit: raise TP, lower precision, or shrink batch / context", { "font-size": 12.5, "font-weight": 700, class: fits ? "" : "f-red" });
+      $("#d-out").textContent =
+        `per GPU per step: weights ${fmtB(wPer)} + KV ${fmtB(kPer)} = ${fmtB(per)}   (KV cache ${(kvTok / 1024).toFixed(0)} KiB per token)\n` +
+        `step time ≥ ${fmtB(per)} ÷ ${(bw / 1e12).toFixed(2)} TB/s = ${(step * 1e3).toFixed(2)} ms\n` +
+        `≤ ${(1 / step).toFixed(0)} tokens/s per user · ≤ ${(B / step).toFixed(0)} tokens/s aggregate over ${B} sequence${B > 1 ? "s" : ""}  [derived upper bounds]`;
+    }
+    ["#d-g", "#d-p", "#d-kv", "#d-tp"].forEach(s => $(s).onchange = calc); ["#d-b", "#d-c"].forEach(s => $(s).oninput = calc); calc();
+  })();
+
+  /* ---------- topology ---------- */
+  (function () {
+    const s = $("#topo");
+    T(s, 20, 20, "HGX H100: one 8-GPU NVLink domain", { "font-weight": 700, "font-size": 13.5 });
+    T(s, 410, 20, "GB200 NVL72: one 72-GPU NVLink domain", { "font-weight": 700, "font-size": 13.5 });
+    const sw = [0, 1, 2, 3].map(i => [40 + i * 82, 130]);
+    for (let g = 0; g < 8; g++) {
+      const x = 24 + g * 42;
+      sw.forEach(([sx, sy]) => el("line", { x1: x + 17, y1: 68, x2: sx + 30, y2: sy, class: "s-acc", opacity: .5 }, s));
+      el("line", { x1: x + 17, y1: 68, x2: x + 17, y2: 232, class: "s-blu", "stroke-dasharray": "3 3", opacity: .7 }, s);
+      el("rect", { x, y: 36, width: 34, height: 32, rx: 4, class: "acc" }, s);
+      T(s, x + 17, 56, "GPU", { "text-anchor": "middle", "font-size": 10.5 });
+    }
+    sw.forEach(([x, y]) => { el("rect", { x, y, width: 60, height: 26, rx: 4, class: "pur" }, s); T(s, x + 30, y + 17, "NVSwitch", { "text-anchor": "middle", "font-size": 11 }); });
+    T(s, 190, 176, "NVLink 4: 900 GB/s per GPU (bidir.)", { "text-anchor": "middle", "font-size": 12 });
+    T(s, 190, 222, "1 × 400 Gb/s NIC per GPU (dashed)", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 18; c++) el("rect", { x: 410 + c * 18.5, y: 36 + r * 13, width: 15, height: 10, rx: 2, class: "acc" }, s);
+    for (let t = 0; t < 9; t++) {
+      const x = 410 + t * 37;
+      for (let c = 0; c < 18; c += 3) el("line", { x1: 418 + c * 18.5, y1: 88, x2: x + 15, y2: 132, class: "s-acc", opacity: .25 }, s);
+    }
+    for (let t = 0; t < 9; t++) { const x = 410 + t * 37; el("rect", { x, y: 132, width: 31, height: 26, rx: 4, class: "pur" }, s); }
+    T(s, 575, 176, "NVSwitch trays · every GPU reaches every GPU in one hop", { "text-anchor": "middle", "font-size": 12 });
+    T(s, 575, 194, "1.8 TB/s per GPU · ~130 TB/s per rack", { "text-anchor": "middle", "font-size": 12 });
+    el("rect", { x: 20, y: 236, width: 720, height: 34, rx: 8, class: "blu" }, s);
+    T(s, 380, 258, "scale-out: InfiniBand / Ethernet between boards and racks (~50 GB/s per GPU per direction at 400 Gb/s)", { "text-anchor": "middle", "font-size": 12.5 });
+    el("line", { x1: 575, y1: 200, x2: 575, y2: 236, class: "s-blu", "stroke-dasharray": "3 3" }, s);
+  })();
 })();
 </script>
 </body>

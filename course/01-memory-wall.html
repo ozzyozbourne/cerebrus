@@ -12,8 +12,6 @@
   .seg .lbl { font-size: 14px; color: var(--muted); align-self: center; margin-right: 2px; }
   .halo { paint-order: stroke; stroke: var(--surface); stroke-width: 3.5px; stroke-linejoin: round; }
   .note { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
-  .terms dt { font-weight: 650; display: inline; }
-  .terms dd { display: inline; margin: 0; }
   .terms div { margin: 3px 0; }
   .num td:not(:first-child), .num th:not(:first-child) { white-space: nowrap; }
   .derivation { font-size: 15.5px; }
@@ -37,15 +35,15 @@
 
 <div class="callout terms">
 <strong>Terms used here</strong>
-<div><dt>Decode / prefill:</dt> <dd>generating one new token per step / processing the whole prompt in one pass.</dd></div>
-<div><dt>Dense FLOP/s:</dt> <dd>peak with no assumed zero-skipping. Vendors often quote "sparse" figures that are 2× (NVIDIA 2:4) or 8× (Cerebras, analyst reading) higher — Chapter 2.</dd></div>
-<div><dt>BF16 / FP16, FP8, FP4, BlockFP8:</dt> <dd>number formats of 2, 1 and ½ bytes. BlockFP8 is Tenstorrent's 8-bit format with one exponent shared by a block of values.</dd></div>
-<div><dt>SM, RF, smem:</dt> <dd>an NVIDIA streaming multiprocessor (the GPU's core, 132 on an H100 SXM), its register file, and its shared memory.</dd></div>
-<div><dt>HBM / GDDR6:</dt> <dd>DRAM stacked next to the GPU die inside its package / ordinary graphics DRAM soldered on the board.</dd></div>
-<div><dt>Tensix:</dt> <dd>one Tenstorrent core (Chapter 13).</dd></div>
-<div><dt>PE (processing element):</dt> <dd>one of the ~900,000 tiny cores on a Cerebras WSE-3, each with its own 48 KB of SRAM (Chapter 3).</dd></div>
-<div><dt>Fabric:</dt> <dd>the on-wafer network linking each PE to its four neighbours (Chapter 4).</dd></div>
-<div><dt>KV cache:</dt> <dd>the keys and values of every earlier token, which attention re-reads on every decode step.</dd></div>
+<div><b>Decode / prefill:</b> generating one new token per step / processing the whole prompt in one pass.</div>
+<div><b>Dense FLOP/s:</b> peak with no assumed zero-skipping. Vendors often quote "sparse" figures that are 2× (NVIDIA 2:4) or 8× (Cerebras, analyst reading) higher — Chapter 2.</div>
+<div><b>BF16 / FP16, FP8, FP4, BlockFP8:</b> number formats of 2, 1 and ½ bytes. BlockFP8 is Tenstorrent's 8-bit format with one exponent shared by a block of values.</div>
+<div><b>SM, RF, smem:</b> an NVIDIA streaming multiprocessor (the GPU's core, 132 on an H100 SXM), its register file, and its shared memory.</div>
+<div><b>HBM / GDDR6:</b> DRAM stacked next to the GPU die inside its package / ordinary graphics DRAM soldered on the board.</div>
+<div><b>Tensix:</b> one Tenstorrent core (Chapter 13).</div>
+<div><b>PE (processing element):</b> one of the ~900,000 tiny cores on a Cerebras WSE-3, each with its own 48 KB of SRAM (Chapter 3).</div>
+<div><b>Fabric:</b> the on-wafer network linking each PE to its four neighbours (Chapter 4).</div>
+<div><b>KV cache:</b> the keys and values of every earlier token, which attention re-reads on every decode step.</div>
 </div>
 
 <h2>Two numbers describe every accelerator</h2>
@@ -143,7 +141,7 @@
 <div class="callout derivation">
 <strong>Derivation: intensity of a linear layer, plus the KV cache</strong>
 <p>A linear layer multiplies a <em>d</em> × <em>d</em> weight matrix by <em>B</em> input vectors (one per sequence). FLOPs = 2·B·d². Bytes moved at FP16 = 2·d² (weights) + 2·2·B·d (inputs in, outputs out). So intensity = B·d² ÷ (d² + 2·B·d) ≈ B while B ≪ d. For d = 8,192: B = 1 gives 1.0, B = 64 gives 63, and B = 2,000 (a prefill) gives about 1,300 <span class="tag derived">Derived</span>. It can never exceed d/2 ≈ 4,100.</p>
-<p>Attention adds the <strong>KV cache</strong>, which every sequence reads in full on every step and which batching does not share. For a Llama-3-70B-shaped model (80 layers, 8 KV heads of width 128) it is 80 × 8 × 128 × 2 (K and V) × 2 B ≈ <strong>0.33 MB per token per sequence</strong> <span class="tag derived">Derived, assumes Llama-3 shapes</span>. At a 2,000-token context that is ≈ 0.65 GB per sequence, or ≈ 42 GB for batch 64. Step intensity ≈ (64 × 140 GFLOP) ÷ (140 GB + 42 GB) ≈ <strong>49 FLOP/byte</strong>; at 8,000 tokens it falls to ≈ 30 <span class="tag derived">Derived</span>. That is why sources quote "about 50–100 FLOP/byte" for batch 64 on a 70B model <span class="tag derived">Derived</span>, still far under the H100's ridge. Batching helps until the KV cache is as large as the weights; after that, extra batch buys little intensity. And batching raises <em>throughput</em>, not per-user speed.</p>
+<p>Attention adds the <b>KV cache</b>, which every sequence reads in full on every step and which batching does not share. For a Llama-3-70B-shaped model (80 layers, 8 KV heads of width 128) it is 80 × 8 × 128 × 2 (K and V) × 2 B ≈ <b>0.33 MB per token per sequence</b> <span class="tag derived">Derived, assumes Llama-3 shapes</span>. At a 2,000-token context that is ≈ 0.65 GB per sequence, or ≈ 42 GB for batch 64. Step intensity ≈ (64 × 140 GFLOP) ÷ (140 GB + 42 GB) ≈ <b>49 FLOP/byte</b>; at 8,000 tokens it falls to ≈ 30 <span class="tag derived">Derived</span>. That is why sources quote "about 50–100 FLOP/byte" for batch 64 on a 70B model <span class="tag derived">Derived</span>, still far under the H100's ridge. Batching helps until the KV cache is as large as the weights; after that, extra batch buys little intensity. And batching raises <em>throughput</em>, not per-user speed.</p>
 </div>
 
 <div class="widget" id="calc">

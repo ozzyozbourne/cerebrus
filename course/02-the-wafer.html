@@ -19,6 +19,7 @@
   table.ro td.dep { color: var(--accent); font-weight: 650; }
   .widget .table-wrap { margin: 10px 0 0; }
   .note { font-size: 14px; color: var(--muted); }
+  #pe table.ro { min-width: 600px; }
 </style>
 </head>
 <body>
@@ -92,7 +93,7 @@
 </div>
 <p class="note">Two cautions. The WSE numbers are aggregates over 900,000 private memories and links, not one pipe any core can use at that rate. The fair on-chip GPU counterpart is its aggregate register-file and shared-memory bandwidth, tens to hundreds of TB/s (Chapter 1), which is not shown here. The point of the ladder is the off-chip links: the wafer replaces them with on-silicon wires.</p>
 
-<p>The wafer is also big in <em>time</em>. A wavelet moves about one hop per cycle <span class="tag indep">Indep</span> (arXiv:2209.15040). At the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span>, crossing the 750-column width of a CS-2 takes about 0.9 µs, and going corner to corner (750 + 994 = 1,744 hops) takes about 2 µs <span class="tag derived">Derived</span>. That is short for a whole machine, but about a thousand times longer than one hop to a neighbour, which is why the algorithms in later chapters favour locality. The rest of this chapter is the price of the bet.</p>
+<p>The wafer is also big in <em>time</em>. A wavelet moves about one hop per cycle <span class="tag indep">Indep</span> (arXiv:2209.15040). At the WSE-2's 1.1 GHz <span class="tag vendor">Vendor (HC22)</span>, crossing the 750-column width of a CS-2 takes about 0.7 µs, and going corner to corner (750 + 994 = 1,744 hops) takes about 1.6 µs; at the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span>, about 0.9 and 2 µs <span class="tag derived">Derived</span>. That is short for a whole machine, but about a thousand times longer than one hop to a neighbour, which is why the algorithms in later chapters favour locality. The rest of this chapter is the price of the bet.</p>
 
 <h2>The numbers, generation by generation</h2>
 <p>Every generation is the same 46,225 mm² square. Gains come from process shrinks, wider SIMD, and in 2026 (per press analysis) a higher clock.</p>
@@ -105,6 +106,8 @@
 <tr><td>SRAM per PE</td><td>48 KB</td><td>48 KB + 256 B cache</td><td>48 KB + 512 B cache</td><td>same as WSE-3</td></tr>
 <tr><td>Memory bandwidth</td><td>—</td><td>20 PB/s</td><td>21 PB/s</td><td>43.2 PB/s</td></tr>
 <tr><td>Fabric bandwidth</td><td>—</td><td>27.5 PB/s (220 Pb/s)</td><td>26.8 PB/s (214 Pb/s)</td><td>53.5 PB/s (~428 Pb/s)</td></tr>
+<tr><td>Core clock</td><td>—</td><td>1.1 GHz <span class="tag vendor">Vendor (HC22)</span></td><td>not published</td><td>not published (press: higher than WSE-3)</td></tr>
+<tr><td>Core size</td><td>—</td><td>228 × 170 µm = 0.039 mm², 30 mW peak <span class="tag vendor">Vendor (HC22)</span></td><td>~0.05 mm² <span class="tag vendor">Vendor (yield blog)</span></td><td>same as WSE-3</td></tr>
 <tr><td>FP16 SIMD per core</td><td>4-wide*</td><td>4-wide*</td><td>8-wide FP16/BF16, 16-wide INT8</td><td>same as WSE-3</td></tr>
 <tr><td>Peak AI compute</td><td>—</td><td>75 PF sparse; ~7.5 PF dense <span class="tag analyst">Analyst</span></td><td>125 PF <em>sparse</em>; ~15.6 PF dense <span class="tag analyst">Analyst</span></td><td>250 PF sparse; dense disputed (~25 PF per The Register <span class="tag analyst">Analyst</span>)</td></tr>
 <tr><td>System power</td><td>—</td><td>15–20 kW (sources conflict)</td><td>~23 kW peak, 15U</td><td>not published (3 wafers per rack; each "backpack" has 2× CS-3 power and cooling)</td></tr>
@@ -115,17 +118,17 @@
   <div class="stat"><div class="v">900k</div><div class="l">PEs on a WSE-3 <span class="tag vendor">Vendor</span></div></div>
   <div class="stat"><div class="v">48 KB</div><div class="l">SRAM per PE, every generation <span class="tag vendor">Vendor</span></div></div>
   <div class="stat"><div class="v">~737k</div><div class="l">PEs a CS-2 program can use <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span></div></div>
-  <div class="stat"><div class="v">none</div><div class="l">official clock published; SDK benchmarks assume 850 MHz <span class="tag sdk">SDK 2.10.1</span></div></div>
+  <div class="stat"><div class="v">1.1 GHz</div><div class="l">WSE-2 clock <span class="tag vendor">Vendor (HC22)</span>; none published for WSE-3; SDK benchmarks assume 850 MHz <span class="tag sdk">SDK 2.10.1</span></div></div>
 </div>
 
 <div class="callout key">
 <strong>Read the FLOPs carefully</strong>
 <p>WSE-3's 125 PF is a <em>sparse</em> FP16 figure; Cerebras has never published a dense one. A sparse figure counts the multiply-adds the chip skips because an operand is zero as if they had been done. Cerebras's dataflow cores skip zeros that are never sent (Chapter 3). Analysts get ~15.6 PF dense by assuming 8:1 unstructured sparsity <span class="tag analyst">Analyst</span>: the headline counts 8 operations for every one actually performed, as if 7 of every 8 were zeros. (For WSE-2 they assumed 10:1, so the ratio itself is a guess.) NVIDIA plays a milder version of the game. The H100's 1,979 TF BF16 is a "2:4 sparsity" number, a fixed pattern of 2 zeros in every 4 weights, worth exactly 2×; dense is ~989 TF <span class="tag vendor">Vendor</span>.</p>
-<p>A first-principles check: 900k cores × 8 FP16 FMAs (16 FLOPs) × clock. At the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span> that gives ≈ 12.2 PF; at 1 GHz, ≈ 14.4 PF <span class="tag derived">Derived</span> (clock unconfirmed). Both land near the analyst estimate. The WSE-2 → WSE-3 jump is mostly SIMD width (4 → 8) plus 6% more cores <span class="tag derived">Derived</span>.</p>
+<p>A first-principles check: cores × SIMD width × 2 FLOPs × clock. WSE-2 is the one generation with an official clock, 1.1 GHz <span class="tag vendor">Vendor (HC22)</span>: 850k × 4 × 2 × 1.1 GHz ≈ 7.5 PF, exactly the analyst figure <span class="tag derived">Derived</span>. No WSE-3 clock is published. If it also ran at 1.1 GHz, 900k × 8 × 2 × 1.1 GHz ≈ 15.8 PF, close to the analyst ~15.6 PF; at the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span>, ≈ 12.2 PF <span class="tag derived">Derived</span> (WSE-3 clock unconfirmed). The WSE-2 → WSE-3 jump is mostly SIMD width (4 → 8) plus 6% more cores <span class="tag derived">Derived</span>.</p>
 </div>
 
 <h2>One wafer, 900,000 small machines</h2>
-<p>A wafer total is easier to trust once you divide it by the PE count and by the clock. Every later chapter works at that scale: one PE, 48 KB, 32-bit links, a few words per cycle. Pick a generation and drag the clock. The cells in orange depend on the clock, which is the one input nobody publishes.</p>
+<p>A wafer total is easier to trust once you divide it by the PE count and by the clock. Every later chapter works at that scale: one PE, 48 KB, 32-bit links, a few words per cycle. Pick a generation and drag the clock. The cells in orange depend on the clock. Only WSE-2's is published (1.1 GHz <span class="tag vendor">Vendor (HC22)</span>); the SDK benchmarks convert cycles to time at 850 MHz, and nobody has published a WSE-3 clock.</p>
 
 <div class="widget" id="pe">
 <h4>Per-PE budget and dense-FLOPs calculator</h4>
@@ -133,13 +136,14 @@
 <div class="seg" role="group" aria-label="Generation"><button type="button" data-g="0">WSE-2</button><button type="button" class="on" data-g="1">WSE-3</button></div>
 <label>Clock <input type="range" id="pe-f" min="0.6" max="1.2" step="0.01" value="0.85"> <span id="pe-fv" class="mono"></span></label>
 <button class="btn secondary" type="button" id="pe-sdk">SDK 850 MHz</button>
+<button class="btn secondary" type="button" id="pe-hc">HC22 1.1 GHz</button>
 </div>
 <div class="table-wrap"><table class="ro"><thead><tr><th>Wafer total</th><th>÷ PEs</th><th>÷ clock</th><th>Means later</th></tr></thead><tbody id="pe-tb"></tbody></table></div>
 <svg id="pe-svg" viewBox="0 0 700 150" width="700" role="img" aria-label="Dense FLOPs estimate compared with analyst and vendor sparse figures"></svg>
-<p class="note" style="margin:6px 0 0">Totals <span class="tag vendor">Vendor</span>; analyst dense <span class="tag analyst">Analyst</span>; every per-PE and per-cycle cell <span class="tag derived">Derived</span>; 850 MHz <span class="tag sdk">SDK 2.10.1</span>.</p>
+<p class="note" style="margin:6px 0 0">Totals <span class="tag vendor">Vendor</span>; analyst dense <span class="tag analyst">Analyst</span>; every per-PE and per-cycle cell <span class="tag derived">Derived</span>; 850 MHz <span class="tag sdk">SDK 2.10.1</span>; 1.1 GHz and 30 mW peak per core are WSE-2 figures <span class="tag vendor">Vendor (HC22)</span>.</p>
 </div>
 
-<p>Read across a row and the marketing totals become one small machine repeated 900,000 times: about 48 KB of memory that can serve about 7 words a cycle, roughly 9 words a cycle of mesh links, and an 8-wide FP16 unit. The rows agree with each other within the rounding of the vendor figures. Memory bandwidth stays under the 32 B/cycle ceiling of 8 single-cycle 32-bit banks (Chapter 3), and fabric bandwidth sits between 4 links × 2 directions × 4 B = 32 B/cycle and 40 B/cycle with the ramp added. That agreement is the best evidence we have that the totals are real.</p>
+<p>Read across a row and the marketing totals become one small machine repeated 900,000 times: about 48 KB of memory that can serve about 7 words a cycle, roughly 9 words a cycle of mesh links, and an 8-wide FP16 unit. The rows agree with each other within the rounding of the vendor figures. Memory bandwidth stays under the 32 B/cycle ceiling of 8 single-cycle 32-bit banks (Chapter 3), and fabric bandwidth sits between 4 links × 2 directions × 4 B = 32 B/cycle and 40 B/cycle with the ramp added. Power agrees too: HC22 gives 30 mW peak per WSE-2 core <span class="tag vendor">Vendor</span>, and 850k × 30 mW ≈ 25 kW is the same order as the 15–20 kW system figures <span class="tag derived">Derived</span>. That agreement is the best evidence we have that the totals are real.</p>
 
 <div class="callout ok">
 <strong>What a real kernel gets</strong>
@@ -149,7 +153,7 @@
 
 <h2>Surviving defects</h2>
 <p>Every wafer has defects. Cerebras's own model assumes about 46 on the wafer-scale square <span class="tag vendor">Vendor modelling</span>; real defect densities are not published. On a GPU wafer a defect landing in a die usually kills or downgrades that die, and the bigger the die, the more silicon goes with it. GPUs already soften this with spares: an H100 SXM enables 132 SMs <span class="tag vendor">Vendor</span> out of the 144 in the full GH100 design <span class="tag indep">Industry figure</span> (not re-verified), so a defect in one SM costs that SM, not the die. An SM (streaming multiprocessor) is the GPU's core unit.</p>
-<p>A wafer-scale chip cannot throw itself away, so Cerebras pushes the same idea about 100× finer. A core is about 0.05 mm², roughly 1/100th of an H100 SM <span class="tag vendor">Vendor</span>; another source says ~0.038 mm². Either way it is tiny. (0.05 mm² × 900k = 45,000 mm², 97% of the square; 0.038 mm² gives 74%. The larger figure is probably the whole tile including its router <span class="tag derived">Derived</span>.) Spare cores and spare fabric links are built in, and the fabric is reconfigured to route around bad cores <span class="tag vendor">Vendor</span>. When and how that configuration is done is not public.</p>
+<p>A wafer-scale chip cannot throw itself away, so Cerebras pushes the same idea about 100× finer. A WSE-3 core is about 0.05 mm², roughly 1/100th of an H100 SM <span class="tag vendor">Vendor (yield blog)</span>; the HC22 deck gives the WSE-2 core as 228 × 170 µm = 0.039 mm² <span class="tag vendor">Vendor (HC22)</span>. Either way it is tiny. (0.05 mm² × 900k = 45,000 mm², 97% of the square; 0.039 mm² × 850k = 33,000 mm², 71%. The two may count different things, such as the core with or without its router, or simply differ by generation <span class="tag derived">Derived</span>.) Spare cores and spare fabric links are built in, and the fabric is reconfigured to route around bad cores <span class="tag vendor">Vendor</span>. When and how that configuration is done is not public.</p>
 
 <div class="callout">
 <strong>Worked example: why spares are not optional</strong>
@@ -169,7 +173,7 @@
 
 <figure>
 <div class="panels">
-<svg id="f2a" viewBox="0 0 330 290" role="img" aria-label="Physical cores with a spare column; one defective core is bypassed">
+<svg id="f2a" viewBox="0 0 330 304" role="img" aria-label="Physical cores with a spare column; one defective core is bypassed">
   <defs>
     <marker id="ar-blu" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
     <marker id="ar-amb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-amb"/></marker>
@@ -178,7 +182,7 @@
   <text x="20" y="18" font-weight="700">Physical cores (spare column)</text>
   <g id="phys"></g>
 </svg>
-<svg id="f2b" viewBox="0 0 330 290" role="img" aria-label="The logical rectangle software sees">
+<svg id="f2b" viewBox="0 0 330 304" role="img" aria-label="The logical rectangle software sees">
   <text x="20" y="18" font-weight="700">What software sees</text>
   <g id="logi"></g>
 </svg>
@@ -260,7 +264,7 @@
 <details><summary>Why is a small core size essential to wafer-scale yield?</summary><p>A defect only kills the unit it lands in. With ~0.05 mm² cores and spares, each defect costs a tiny area instead of a whole ~800 mm² die.</p></details>
 <details><summary>At 0.001 defects/mm², what fraction of 858 mm² GPU dies are defect-free, and what is the chance a 46,225 mm² chip with no spares is?</summary><p>e<sup>−0.858</sup> ≈ 42%; e<sup>−46</sup> ≈ 10<sup>−20</sup>. Without fine-grained spares a wafer-scale chip would never yield. Even with spares, one spare per row would fail on most wafers (birthday problem), so the spares must be finer-grained.</p></details>
 <details><summary>A slide says "WSE-3: 125 PFLOPS". What should you ask?</summary><p>Sparse or dense, and at what precision? 125 PF is sparse FP16; dense is not published (analysts estimate ~15.6 PF). The 125 / 15.6 ≈ 8× ratio tells you how much zero-skipping the headline assumes.</p></details>
-<details><summary>Estimate WSE-3 dense FP16 peak from first principles. Which input is weakest?</summary><p>900k PEs × 8 FMAs × 2 FLOPs × 0.85–1 GHz ≈ 12–14 PF. The clock: none is published; 850 MHz is only the SDK benchmarks' assumption.</p></details>
+<details><summary>Estimate WSE-3 dense FP16 peak from first principles. Which input is weakest?</summary><p>900k PEs × 8 FMAs × 2 FLOPs × clock: ≈ 12.2 PF at the SDK's 850 MHz, ≈ 15.8 PF at WSE-2's official 1.1 GHz. The clock is the weak input, because no WSE-3 clock is published. The same arithmetic for WSE-2 at its published 1.1 GHz gives 7.5 PF, matching the analyst figure.</p></details>
 <details><summary>Why can't your program use all 850,000 WSE-2 cores?</summary><p>The SDK exposes only 750 × 994 = 745,500 positions. The rest are most likely spares and edge infrastructure; Cerebras has not published the breakdown. The memcpy runtime then runs on PEs that frame your program, so your rectangle must be at least 7 columns and 2 rows smaller: at most 743 × 992 ≈ 737k.</p></details>
 </div>
 </main>
@@ -349,7 +353,7 @@
       [`${g.mem / 1e15} PB/s memory`, `${(g.mem / N / 1e9).toFixed(1)} GB/s`, `${memB.toFixed(1)} B = ${(memB / 4).toFixed(1)} words`, "under 8 banks × 4 B = 32 B/cycle", true],
       [`${g.fab / 1e15} Pb/s fabric`, `${(g.fab / N / 1e9).toFixed(0)} Gb/s`, `${fabB.toFixed(1)} B = ${(fabB / 4).toFixed(1)} words`, "≈ 4 links × 2 dir × 4 B (+ ramp), Chapter 4", true],
       [`dense FP16 peak`, `${g.simd * 2} FLOP/cycle`, `${peak.toFixed(1)} PF total`, `${g.simd}-wide FP16 SIMD; analyst says ~${g.dense} PF`, true],
-      [`${g.pw[0] === g.pw[1] ? "~23" : "15–20"} kW system`, pw, "—", "system figure, so an upper bound per PE", false]
+      [`${g.pw[0] === g.pw[1] ? "~23" : "15–20"} kW system`, pw, "—", gi === 0 ? "system figure; HC22: 30 mW peak per core" : "system figure, so an upper bound per PE", false]
     ];
     $("#pe-tb").innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td class="${r[4] ? "dep" : ""}">${r[2]}</td><td>${r[3]}</td></tr>`).join("");
     // bars
@@ -364,7 +368,8 @@
       const y = 10 + i * 36;
       el("text", { x: L - 8, y: y + 18, "text-anchor": "end", "font-size": 12.5 }, svg).textContent = lab;
       el("rect", { x: L, y: y + 4, width: X(v) - L, height: 20, rx: 3, class: cls, "stroke-width": 1.4, "stroke-dasharray": dash }, svg);
-      el("text", { x: X(v) + 6, y: y + 19, "font-size": 12, class: "mono" }, svg).textContent = v.toFixed(1) + " PF" + (i === 2 ? "  (sparse: not comparable)" : "");
+      if (i === 2) el("text", { x: X(v) - 8, y: y + 19, "font-size": 12, class: "mono", "text-anchor": "end" }, svg).textContent = v.toFixed(0) + " PF sparse: not comparable";
+      else el("text", { x: X(v) + 6, y: y + 19, "font-size": 12, class: "mono" }, svg).textContent = v.toFixed(1) + " PF";
     });
     el("text", { x: L, y: 140, "font-size": 11.5, class: "muted" }, svg).textContent =
       `clock needed to match the analyst figure: ${(g.dense * 1e15 / (N * g.simd * 2) / 1e6).toFixed(0)} MHz`;
@@ -374,6 +379,7 @@
   });
   $("#pe-f").oninput = drawPE;
   $("#pe-sdk").onclick = () => { $("#pe-f").value = 0.85; drawPE(); };
+  $("#pe-hc").onclick = () => { $("#pe-f").value = 1.1; drawPE(); };
   drawPE();
 
   /* ---------- Yield curve ---------- */
@@ -403,7 +409,7 @@
       const p = Math.exp(-d * a), g = el("g", {}, svg);
       el("title", {}, g).textContent = `${n}: ${a} mm², defect-free ${p < 1e-4 ? p.toExponential(1) : (100 * p).toFixed(2) + "%"}`;
       el("circle", { cx: X(a), cy: Y(p), r: 5.5, class: i === 0 ? "grn" : i === 4 ? "red" : "blu", "stroke-width": 2 }, g);
-      const up = i === 3 ? 18 : -10;
+      const up = i === 3 || p > 0.9 ? 20 : -10;
       el("text", { x: X(a) + (i === 4 ? -8 : 8), y: Y(p) + up, "font-size": 12, "text-anchor": i === 4 ? "end" : "start" }, g).textContent =
         `${n} ${p < 1e-4 ? "≈ 0" : (100 * p).toFixed(p > 0.999 ? 3 : 0) + "%"}`;
       const pe = p < 1e-4 ? p.toExponential(0) : (100 * p).toFixed(p > 0.999 ? 3 : 1) + "%";
@@ -414,7 +420,7 @@
 
   /* ---------- Repair schematic ---------- */
   const S = 36, G = 8, ph = $("#phys"), lg = $("#logi"), BR = 2, BC = 3;
-  const cx = (c) => 20 + c * (S + G), cy = (r) => 40 + r * (S + 6);
+  const cx = (c) => 20 + c * (S + G), cy = (r) => 40 + r * (S + 6) + (r >= BR ? 12 : 0);
   for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++) {
     const spare = c === 5, isBad = r === BR && c === BC, moved = r === BR && c > BC;
     el("rect", { x: cx(c), y: cy(r), width: S, height: S, rx: 4, class: isBad ? "red" : moved ? "blu" : spare ? "box" : "grn",
@@ -426,13 +432,13 @@
     const y = cy(BR) - 2;
     el("path", { d: `M${cx(c) + S / 2} ${y} q ${(S + G) / 2} -9 ${S + G} 0`, fill: "none", class: "s-blu", "stroke-width": 1.6, "marker-end": "url(#ar-blu)" }, ph);
   }
-  el("text", { x: 20, y: 262, "font-size": 12, class: "muted" }, ph).textContent = "green = in use · dashed = idle spare";
-  el("text", { x: 20, y: 278, "font-size": 12, class: "muted" }, ph).textContent = "blue = remapped · numbers = logical x";
+  el("text", { x: 20, y: 280, "font-size": 12, class: "muted" }, ph).textContent = "green = in use · dashed = idle spare";
+  el("text", { x: 20, y: 296, "font-size": 12, class: "muted" }, ph).textContent = "blue = remapped · numbers = logical x";
   for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++) {
     el("rect", { x: cx(c), y: cy(r), width: S, height: S, rx: 4, class: r === BR && c >= BC ? "blu" : "grn", "stroke-width": 1.5 }, lg);
     if (r === BR) el("text", { x: cx(c) + S / 2, y: cy(r) + 23, "text-anchor": "middle", "font-size": 12, class: "mono" }, lg).textContent = c;
   }
-  el("text", { x: 20, y: 262, "font-size": 12, class: "muted" }, lg).textContent = "a perfect 5 × 5 rectangle";
+  el("text", { x: 20, y: 280, "font-size": 12, class: "muted" }, lg).textContent = "a perfect 5 × 5 rectangle";
 
   /* ---------- Defect simulator ---------- */
   const SC = 165, SY = 165, HALF = 107.5;      // 330-wide panels, 1 px = 1 mm
@@ -524,10 +530,10 @@
     }
     el("text", { x: ix, y: iy - 8, "font-size": 12.5, "font-weight": 700 }, svg).textContent = "north-west corner, zoomed";
     el("text", { x: ix, y: iy + rows * cs + 18, "font-size": 12 }, svg).textContent = "purple: 4 west columns + 1 north row (memcpy frame)";
+    el("text", { x: ix, y: iy + rows * cs + 50, "font-size": 12 }, svg).textContent = "orange: your PEs, starting at (4, 1)";
     el("text", { x: ix, y: iy + rows * cs + 34, "font-size": 12 }, svg).textContent = "east side: 3 more columns, plus 1 south row";
-    el("text", { x: ix + 4 * cs + 4, y: iy + 4 * cs + 4, "font-size": 12.5, "font-weight": 700, class: "muted" }, svg).textContent = "your PEs start at (4, 1)";
     // waterfall bars
-    const bx = 290, by = 250, bw = 440, MAX = 850000;
+    const bx = 290, by = 262, bw = 440, MAX = 850000;
     [["marketed cores", 850000, "box", "Vendor"], ["SDK fabric 750 × 994", 745500, "pur", "SDK 2.10.1"], ["your program ≤ 743 × 992", 737056, "acc", "SDK + Derived"]]
       .forEach(([lab, v, cls, src], i) => {
         const y = by + i * 34, w = v / MAX * (bw - 150), g = el("g", {}, svg);
@@ -540,7 +546,7 @@
 
   /* ---------- Cross-section arrows ---------- */
   for (let x = 110; x < 680; x += 60) el("path", { d: `M${x} 62 V90`, class: "s-amb", "stroke-width": 2, "marker-end": "url(#ar-amb)" }, $("#pwr"));
-  for (let x = 200; x <= 560; x += 120) el("path", { d: `M${x} 186 q 6 8 0 16 q -6 8 0 16`, fill: "none", class: "s-blu", "stroke-width": 2, "marker-end": "url(#ar-blu)" }, $("#heat"));
+  for (let x = 200; x <= 560; x += 120) el("path", { d: `M${x} 188 V222`, fill: "none", class: "s-blu", "stroke-width": 2, "marker-end": "url(#ar-blu)" }, $("#heat"));
 })();
 </script>
 </body>

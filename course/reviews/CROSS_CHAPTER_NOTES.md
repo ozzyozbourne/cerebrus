@@ -9,3 +9,5 @@ Fixers: apply any item that touches your chapter.
 6. **Cerebras decode is not memory-bandwidth bound (ch01, ch08, ch15).** The bandwidth ceiling on 4 × CS-3 is far above the measured ~2,100–2,314 tok/s. The limit is pipeline latency and communication. Sources: reviews/ch01-depth.md, reviews/ch08-depth.md, reviews/ch15-depth.md.
 7. **Removing unblock_cmd_stream (ch07, ch09, ch10).** In the simulator this does not hang forever: after ~4 s cs_python aborts with "received length (0 bytes) is not expected … could be a kernel stall". Source: reviews/ch10-pedagogy.md and reviews/ch10-accuracy.md.
 8. **Halo columns (ch02, ch07, ch09).** 1 halo + 3 memcpy columns on the west (hence offset 4), 2 memcpy + 1 halo on the east, so the fabric is 7 columns wider and 2 rows taller. Source: reviews/ch07-depth.md.
+9. **"At least" (ch07, ch09).** The user rectangle must be AT LEAST 7 columns narrower and 2 rows shorter than the fabric.
+10. **Clock in sanity checks (ch03, ch04).** Replace "~1 GHz" with WSE-2 1.1 GHz [Vendor, HC22] and the SDK's 850 MHz. Ch02 now shows a per-PE budget at both clocks.

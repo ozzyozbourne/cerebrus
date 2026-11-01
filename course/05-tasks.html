@@ -5,6 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tasks: Computing on Arrival</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+  /* chapter-local helpers */
+  .ctl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 14px; font-size: 14px; margin: 8px 0; }
+  .ctl-grid label { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .ctl-grid input[type=range] { width: 110px; accent-color: var(--accent); }
+  .ctl-grid output { font: 13px var(--mono); min-width: 1.5em; }
+  .tally { font: 14px var(--mono); margin-top: 8px; }
+  .tally .bar { display: inline-block; height: 10px; border-radius: 3px; vertical-align: middle; margin-right: 6px; }
+  .op-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 14px; }
+  .op-row b { min-width: 6.5em; font-weight: 600; }
+  .mt-ops { display: grid; gap: 6px; margin: 8px 0; }
+  table.small td, table.small th { font-size: 14px; padding: 5px 8px; }
+  svg .dash { stroke-dasharray: 5 3; }
+  main p code, main li code { overflow-wrap: anywhere; }
+</style>
 </head>
 <body>
 <main>
@@ -12,160 +27,664 @@
 <h1>Tasks: computing on arrival</h1>
 <p class="lede">A PE has no operating system, no threads and no main loop. Its code is a set of short handlers called <em>tasks</em>. Data arriving from the fabric, or an operation finishing, marks a task as ready; the hardware runs ready tasks one at a time, each to completion. This is the execution model you program against.</p>
 
+<div class="callout key">
+<strong>If you know JavaScript or interrupt handlers, you already know this model.</strong>
+Each task is like a callback on an event loop, or a short interrupt service routine. It runs, returns, and must never spin waiting for something; the hardware picker then chooses the next ready task. The hardware offers nothing more: a PE has 48 KB of memory <span class="tag vendor">Vendor</span>, no MMU and no context-switch machinery for user code, so there is no saved state to resume a paused task from. In exchange, scheduling is a hardware lookup, and work can start as soon as its data arrives. That is the dataflow idea behind the whole wafer.
+</div>
+
 <div class="objectives">
 <h4>After this chapter you can</h4>
 <ul>
-<li>Distinguish data, local and control tasks and say what activates each.</li>
-<li>Use <code>@activate</code>, <code>@block</code>/<code>@unblock</code> and async-op completion to build control flow.</li>
-<li>Avoid the two WSE-3 traps: queue-bound data tasks and microthread sharing.</li>
+<li>Name the four ways a task gets activated (wavelet, <code>@activate</code> or async completion, control wavelet, the teardown task) and the task kind each one starts.</li>
+<li>Describe the per-task hardware state (one <em>activated</em> bit, one <em>blocked</em> bit) and predict when two activations collapse into one run.</li>
+<li>Use <code>@activate</code>, <code>@block</code>/<code>@unblock</code> and <code>.activate</code>/<code>.unblock</code> on async ops to build control flow: callbacks, joins and state machines.</li>
+<li>Budget task IDs and queues on WSE-2 and WSE-3, and avoid the two WSE-3 traps: queue-bound data tasks and shared microthreads.</li>
 </ul>
 </div>
 
 <h2>The path from wire to code</h2>
+<p>Chapter 4 said that the color picks the task at the receiver. That is exactly true on WSE-2. On WSE-3 there is one more step in between: the color is bound to an <em>input queue</em>, and the queue picks the task. The figure shows both.</p>
 <figure>
-<svg viewBox="0 0 760 250" width="760" role="img" aria-label="From wavelet arrival to task execution">
-  <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+<svg viewBox="0 0 760 290" width="760" role="img" aria-label="From wavelet arrival to task execution: fabric, router, input queue, task table, picker and CE">
+  <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
+  <marker id="a5r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-red"/></marker></defs>
   <g font-size="13">
   <rect x="10" y="80" width="100" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="60" y="106" text-anchor="middle" font-weight="600">fabric</text><text x="60" y="124" text-anchor="middle" font-size="11" class="muted">wavelet, color c</text>
-  <rect x="140" y="80" width="100" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="190" y="106" text-anchor="middle" font-weight="600">router</text><text x="190" y="124" text-anchor="middle" font-size="11" class="muted">route says RAMP</text>
-  <rect x="270" y="80" width="110" height="60" rx="8" class="grn" stroke-width="1.5"/><text x="325" y="104" text-anchor="middle" font-weight="600">input queue</text><text x="325" y="122" text-anchor="middle" font-size="11" class="muted">WSE-3: bound to c</text>
-  <rect x="410" y="60" width="150" height="100" rx="8" class="amb" stroke-width="1.5"/><text x="485" y="84" text-anchor="middle" font-weight="600">task table</text>
-  <text x="420" y="106" font-size="11" class="mono">id  activated blocked</text>
-  <text x="420" y="124" font-size="11" class="mono">2   ●         ○</text>
-  <text x="420" y="142" font-size="11" class="mono">10  ○         ○</text>
-  <rect x="590" y="80" width="150" height="60" rx="8" class="acc" stroke-width="1.5"/><text x="665" y="104" text-anchor="middle" font-weight="600">picker → CE</text><text x="665" y="122" text-anchor="middle" font-size="11" class="muted">runs task to completion</text>
+  <rect x="140" y="80" width="100" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="190" y="106" text-anchor="middle" font-weight="600">router</text><text x="190" y="124" text-anchor="middle" font-size="11" class="muted">route: c → RAMP</text>
+  <rect x="270" y="80" width="110" height="60" rx="8" class="grn" stroke-width="1.5"/><text x="325" y="104" text-anchor="middle" font-weight="600">input queue</text><text x="325" y="122" text-anchor="middle" font-size="11" class="muted">holds waiting wavelets</text>
+  <rect x="410" y="50" width="170" height="120" rx="8" class="amb" stroke-width="1.5"/><text x="495" y="72" text-anchor="middle" font-weight="600">task state</text>
+  <g font-size="11" class="mono">
+    <text x="426" y="94" class="muted">id</text><text x="478" y="94" text-anchor="middle" class="muted">act</text><text x="530" y="94" text-anchor="middle" class="muted">blk</text>
+    <text x="426" y="114">2</text><text x="478" y="114" text-anchor="middle">●</text><text x="530" y="114" text-anchor="middle">○</text>
+    <text x="426" y="134">10</text><text x="478" y="134" text-anchor="middle">○</text><text x="530" y="134" text-anchor="middle">○</text>
+    <text x="426" y="154">11</text><text x="478" y="154" text-anchor="middle">●</text><text x="530" y="154" text-anchor="middle">●</text>
+  </g>
+  <text x="556" y="114" font-size="10" class="f-grn">runs</text><text x="556" y="154" font-size="10" class="f-red">waits</text>
+  <rect x="610" y="80" width="140" height="60" rx="8" class="acc" stroke-width="1.5"/><text x="680" y="104" text-anchor="middle" font-weight="600">picker → CE</text><text x="680" y="122" text-anchor="middle" font-size="11" class="muted">runs one task to completion</text>
   <path d="M110 110 H136" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
-  <path d="M240 110 H266" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
+  <path d="M240 110 H266" class="s-blu" stroke-width="2" marker-end="url(#a5)"/><text x="253" y="100" text-anchor="middle" font-size="10" class="f-blu">RAMP</text>
   <path d="M380 110 H406" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
-  <path d="M560 110 H586" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
-  <text x="380" y="200" text-anchor="middle" font-size="13">Payload becomes the task's argument:  <tspan class="mono">task on_value(v: f32) void { ... }</tspan></text>
-  <text x="380" y="222" text-anchor="middle" font-size="12" class="muted">WSE-2: the data task ID is the color itself. WSE-3: it is the input queue the color is bound to.</text>
+  <path d="M580 110 H606" class="s-blu" stroke-width="2" marker-end="url(#a5)"/>
+  <text x="190" y="160" text-anchor="middle" font-size="11" class="f-blu">WSE-2: task ID = color c</text>
+  <text x="310" y="160" text-anchor="middle" font-size="11" class="f-grn">WSE-3: task ID = queue q</text>
+  <path d="M470 170 V196 H362 V144" fill="none" class="s-red dash" stroke-width="1.5" marker-end="url(#a5r)"/>
+  <text x="480" y="192" font-size="11" class="f-red">blocked: wavelets stay in the queue (a fabric DSD may drain them)</text>
+  <text x="380" y="238" text-anchor="middle" font-size="13">Payload becomes the task's argument:  <tspan class="mono">task on_value(v: f32) void { ... }</tspan></text>
+  <text x="380" y="260" text-anchor="middle" font-size="12" class="muted">IDs in the table: 2 = data task (input queue 2, as in program 02); 10, 11 = local tasks (as in Lab 3).</text>
+  <text x="380" y="280" text-anchor="middle" font-size="12" class="muted">The table is a schematic of the per-task bits described below, not a documented register layout.</text>
   </g>
 </svg>
-<figcaption><b>Arrival is activation.</b> The hardware "picks the next task to run from those that have been activated and unblocked" <span class="tag vendor">SDK docs, via search extract</span>.</figcaption>
+<figcaption><b>Arrival is activation.</b> The hardware "picks the next task to run from those that have been activated and unblocked" <span class="tag vendor">SDK docs, via search extract</span>. The task-state table is schematic <span class="tag derived">Derived</span>; the WSE-2/WSE-3 difference in where the task ID comes from is from the SDK topic-05 tutorial <span class="tag sdk">SDK 2.10.1</span>.</figcaption>
 </figure>
 
-<h2>Three kinds of task</h2>
+<h2>What activates a task</h2>
 <div class="table-wrap"><table>
 <tr><th>Kind</th><th>Activated by</th><th>Gets</th><th>Typical use</th><th>Binding</th></tr>
-<tr><td><strong>Data task</strong> (wavelet-triggered)</td><td>each arriving wavelet on its color/queue</td><td>the 32-bit payload</td><td>streaming input, per-element processing (Lab 1, program 02)</td><td><code>@bind_data_task</code></td></tr>
-<tr><td><strong>Local task</strong></td><td><code>@activate(id)</code> in code, or an async DSD op finishing</td><td>nothing</td><td>"callbacks", state machines, iteration (Lab 3)</td><td><code>@bind_local_task</code></td></tr>
-<tr><td><strong>Control task</strong></td><td>a control wavelet carrying its ID</td><td>optional 16-bit payload</td><td>end-of-stream sentinels, remote triggers</td><td><code>@bind_control_task</code></td></tr>
+<tr><td><strong>Data task</strong> (wavelet-triggered)</td><td>each arriving wavelet on its color (WSE-2) or input queue (WSE-3)</td><td>the 32-bit payload (one 32-bit arg, or two 16-bit halves)</td><td>streaming input, per-element processing (Lab 1, program 02)</td><td><code>@bind_data_task</code></td></tr>
+<tr><td><strong>Local task</strong></td><td><code>@activate(id)</code> in code, or an async DSD op finishing (<code>.activate = id</code>)</td><td>nothing</td><td>"callbacks", state machines, iteration (Lab 3)</td><td><code>@bind_local_task</code></td></tr>
+<tr><td><strong>Control task</strong></td><td>a control wavelet whose payload names its ID</td><td>optional 16-bit payload (the lower half of the wavelet)</td><td>end-of-stream sentinels, remote triggers</td><td><code>@bind_control_task</code></td></tr>
+<tr><td><strong>Teardown task</strong> (ID 29)</td><td>hardware: a teardown wavelet arrives, or a flushed output queue drains (WSE-3)</td><td>nothing; it reads which colors are in teardown</td><td>queue reuse, phase changes; memcpy owns it</td><td>handlers registered via the library</td></tr>
 </table></div>
-<p>Rules that follow from the hardware <span class="tag sdk">SDK 2.10.1</span>:</p>
+<p style="font-size:14px;color:var(--muted)">All rows <span class="tag sdk">SDK 2.10.1</span>: tutorials <code>topic-04</code>, <code>topic-05-sentinels</code>, <code>topic-07-switches-entrypt</code>, <code>topic-16-queue-flush</code> (in <code>examples/tutorials/</code>) and the library file <code>tile_config/teardown.csl</code>.</p>
+
+<div class="callout">
+<strong>Preview: async operations (full story in Chapter 6).</strong>
+The CE can launch a vector instruction, such as "copy 64 words from memory out onto the fabric", and carry on without waiting for it. The operation runs on one of the PE's 8 <em>microthreads</em> (Chapter 3), hardware slots that each drive one vector operation, while the CE goes back to the picker. You ask for this with <code>.async = true</code>, and you name the task to run when it ends with <code>.activate = some_task</code>. The operands are <em>DSDs</em>, descriptors of a memory array or of a fabric stream. A <em>fabric</em> DSD (<code>fabin_dsd</code> to receive, <code>fabout_dsd</code> to send) moves many wavelets with one instruction instead of running a data task per wavelet. For this chapter you need one fact: an async op is work in flight, and its completion is an event that activates a local task.
+</div>
+
+<h3>Control tasks and sentinels</h3>
+<p>How does a streaming receiver know the stream has ended? The standard answer is a <em>sentinel</em>. The sender streams N data wavelets on color c, then one <em>control</em> wavelet whose payload names a control-task ID. The receiver's data task handles the N values; the control wavelet activates the task bound to that ID, which now knows the stream is complete. A control-task ID is not a color, so it needs no route <span class="tag sdk">SDK 2.10.1, topic-05</span>. The compiler accepts control-task IDs in the range 0–63 (it rejects 64 with "expected control task ID in the range [0,64)") <span class="tag measured">Measured, cslc 2.10.1</span>. memcpy uses 33–37 and 40 (Chapter 7); the topic-05 sentinel uses 43.</p>
+<div class="filename">sentinel pattern, condensed from SDK topic-05 and topic-07</div>
+<pre><code><span class="k">const</span> ctrl = <span class="b">@import_module</span>(<span class="s">"&lt;control&gt;"</span>);
+<span class="k">const</span> done_id: <span class="n">control_task_id</span> = <span class="b">@get_control_task_id</span>(43);   <span class="c">// &gt; 31 is fine for control tasks</span>
+
+<span class="c">// sender, after the last data wavelet:</span>
+<span class="b">@mov32</span>(tx_ctrl_dsd, ctrl.encode_single_payload(ctrl.opcode.SWITCH_ADV, <span class="k">false</span>, done_id, 0));
+
+<span class="c">// receiver:</span>
+<span class="k">task</span> send_result(payload: <span class="n">u16</span>) <span class="n">void</span> { <span class="c">/* stream complete: reply to host */</span> }
+<span class="k">comptime</span> { <span class="b">@bind_control_task</span>(send_result, done_id); }</code></pre>
+<p>The same control wavelet also advances any router switch it passes, which is how Chapter 4's switches are driven. Its own payload follows the <em>old</em> switch position <span class="tag sdk">SDK 2.10.1, topic-07</span>.</p>
+
+<h2>What the hardware stores, and the rules that follow</h2>
+<p>For each task ID the PE keeps two bits: <strong>activated</strong> and <strong>blocked</strong>. The picker considers only IDs with activated = 1 and blocked = 0. Setting the activated bit when it is already 1 changes nothing. The SDK's own 25-point stencil says so in a comment: "the hardware does not queue activations (instead, the hardware uses a single bit to track task activations)" <span class="tag sdk">SDK 2.10.1, benchmarks/25-pt-stencil/task.csl</span>. The two-bits-per-ID picture is how the SDK comments describe it; the register layout behind it is not documented <span class="tag derived">Derived</span>.</p>
 <ul>
-<li><strong>Run to completion.</strong> A task cannot wait. Long work is started asynchronously (a DSD op with <code>.async = true</code>) and a <em>different</em> task runs when it finishes.</li>
-<li><strong>Tasks do not call tasks.</strong> They activate them. Activation is a flag: activating an already-activated task does not queue a second run.</li>
-<li><strong>Back-pressure.</strong> <code>@block(id)</code> stops a task from being picked even if activated; <code>@unblock(id)</code> releases it. A blocked data task leaves wavelets waiting in the queue — which is how a fabric DSD can consume them instead.</li>
+<li><strong>Run to completion.</strong> A task must not wait. A synchronous fabric op inside a task <em>does</em> wait, in the instruction, and if the data it waits for needs another task to run first, the PE deadlocks. SDK pipeline-01 shows exactly this: with a blocking <code>@add16(outDsd, inDsd, 1)</code>, "The CE has no resource to run the H2D command received by the router, so it stalls" <span class="tag sdk">SDK 2.10.1, pipeline-01</span>. Start long work asynchronously and let its completion activate a <em>different</em> task.</li>
+<li><strong>Tasks do not call tasks; they activate them, and activation is a single bit.</strong> For local tasks the bit is all there is: two <code>@activate</code>s, or two async completions, that land before the task runs give <strong>one</strong> run. Data tasks behave differently because the input queue sits behind the bit. Each wavelet waits in the queue, and the data task runs once per wavelet: program 02 sends 100 wavelets and <code>on_value</code> counts exactly 100 <span class="tag measured">Measured</span>. The rule of thumb: <em>events that carry data are buffered; events that carry no data collapse.</em></li>
+<li><strong>Blocking.</strong> <code>@block(id)</code> stops a task from being picked even if it is activated; <code>@unblock(id)</code> releases it. <strong>If a fabric DSD is to read a queue, you must block that queue's data task</strong>; otherwise the task fires on each wavelet and consumes it first <span class="tag sdk">SDK 2.10.1, pipeline-01</span>. Blocked wavelets wait in the queue. When the queue fills, the lossless fabric pushes <em>back-pressure</em> upstream until the sender stalls. Queues are small: one SDK example "stalls when size exceeds 14" wavelets <span class="tag sdk">SDK 2.10.1, pipeline-01</span>.</li>
+<li><strong>Self-start and self-send.</strong> <code>@activate(id)</code> inside a <code>comptime</code> block (code the compiler runs to set up bindings, Chapter 9) runs that task at program start. A PE can also feed its own data task by routing a color RAMP → RAMP, which "immediately sends them back to the compute element" <span class="tag sdk">SDK 2.10.1, topic-09</span>.</li>
 </ul>
 
-<div class="widget" id="tsk">
-<h4>Task picker: why Lab 3 uses four completion tasks</h4>
-<p class="hint">One timestep of the heat stencil launches four async transfers (send east, send west, receive from west, receive from east). Each completion must decrement <code>pending</code>; when it hits 0 the PE updates its cells. Compare one shared completion task with one task per transfer.</p>
+<div class="widget" id="buf">
+<h4>Buffered versus collapsed: why data tasks never lose wavelets</h4>
+<p class="hint">While the CE is busy with some other task, N events arrive. Left: N wavelets for a data task. Right: N <code>@activate</code> calls (or async completions) for a local task. Step through, then watch both tasks run once the CE is free. The queue is drawn with 6 slots for illustration; the real depth is not published <span class="tag derived">schematic</span>.</p>
 <div class="controls">
-<label>Design <select id="t-mode"><option value="four">four tasks (t_se, t_sw, t_rw, t_re)</option><option value="one">one shared task (done)</option></select></label>
-<button class="btn" id="t-run" type="button">Run one timestep</button>
+<label>Events N <input type="range" id="b-n" min="1" max="10" value="3"><output id="b-nv">3</output></label>
+<button class="btn" id="b-step" type="button">Step</button>
+<button class="btn secondary" id="b-play" type="button">Play</button>
+<button class="btn secondary" id="b-reset" type="button">Reset</button>
 </div>
-<svg id="t-svg" viewBox="0 0 680 230" width="680" role="img" aria-label="Task timeline"></svg>
-<div class="readout" id="t-out"></div>
+<svg id="b-svg" viewBox="0 0 680 230" width="680" role="img" aria-label="Buffered data-task activations versus collapsed local-task activations"></svg>
+<div class="readout" id="b-out" aria-live="polite"></div>
 </div>
+
+<h3>Tasks are entry points; functions do the work</h3>
+<p>Tasks are only the <em>entry points</em> the hardware can start. Inside a task you call ordinary CSL <code>fn</code>s as on any CPU, synchronously and on the same stack. A function such as Lab 3's <code>update()</code> runs <em>as part of</em> whichever task called it. Lab 3 has exactly four tasks (<code>t_se</code>, <code>t_sw</code>, <code>t_rw</code>, <code>t_re</code>); <code>start_step</code>, <code>update</code> and <code>op_done</code> are plain functions, and the host-callable <code>run</code> is a function that memcpy's own command task calls (Chapter 7). The state between hand-offs is just globals such as <code>pending</code> and <code>step</code>. Task IDs are scarce (see the budget below), so make something a task only if the hardware has to start it.</p>
+
+<p>Control flow in a dozen lines, condensed from Lab 3 and SDK pipeline-01:</p>
+<div class="filename">control flow with local tasks (sketch)</div>
+<pre><code><span class="k">const</span> done_id: <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(10);
+<span class="k">const</span> kick_id: <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(11);
+
+<span class="k">task</span> on_done() <span class="n">void</span> { <span class="c">/* runs once the async op has finished */</span> }
+
+<span class="k">fn</span> start() <span class="n">void</span> {             <span class="c">// a plain function, not a task</span>
+  <span class="b">@fmovs</span>(out_dsd, buf_dsd, .{ .async = <span class="k">true</span>, .activate = done_id });   <span class="c">// completion -&gt; on_done</span>
+}
+<span class="k">task</span> kick() <span class="n">void</span> { start(); }    <span class="c">// started by @activate(kick_id) from any task</span>
+
+<span class="k">comptime</span> {
+  <span class="b">@bind_local_task</span>(on_done, done_id);
+  <span class="b">@bind_local_task</span>(kick, kick_id);
+  <span class="b">@activate</span>(kick_id);            <span class="c">// run kick() at program start</span>
+  <span class="b">@block</span>(h2d_task_id);           <span class="c">// let a fabin_dsd, not the data task, consume these wavelets</span>
+}</code></pre>
+<p>An async op can instead say <code>.unblock = id</code>. Use it when the task is (or will be) activated by something else and should run only once a transfer has finished. That gives you a join, the next idea.</p>
+
+<h3>Block + activate = join</h3>
+<p>Because the picker needs <em>both</em> activated = 1 and blocked = 0, the two bits form a hardware AND gate. The SDK uses it to make a task run only after two independent events, in either order:</p>
+<ol>
+<li>an operation starts and blocks task L;</li>
+<li>a different event activates L (it stays pending, because L is blocked);</li>
+<li>the operation finishes and unblocks L (<code>.unblock = L</code>);</li>
+<li>L runs only now, whichever of 2 and 3 came first.</li>
+</ol>
+<p>memcpy itself works this way: "H2D blocks SYS_UBLK_C22 in the beginning, H2D unblocks SYS_UBLK_C22 when operation is done, teardown handler of H2D activates SYS_UBLK_C22" <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span>. The hypersparse SpMV benchmark uses the same lock: "LOCK runs only if teardown is received and the operation is done" <span class="tag sdk">SDK 2.10.1, spmv-hypersparse</span>. Lab 3 uses the other tool, counting completions in <code>pending</code>.</p>
+<div class="widget" id="join">
+<h4>Two bits, one AND: try the join</h4>
+<p class="hint">Task L starts blocked. Press the two events in either order. Press A twice to see that a second activation adds nothing.</p>
+<div class="controls">
+<button class="btn" id="j-a" type="button">Event A: @activate(L)</button>
+<button class="btn" id="j-b" type="button">Event B: op done, .unblock = L</button>
+<button class="btn secondary" id="j-r" type="button">Reset</button>
+</div>
+<svg id="j-svg" viewBox="0 0 680 120" width="680" role="img" aria-label="Activated and blocked bits of task L"></svg>
+<div class="readout" id="j-out" aria-live="polite"></div>
+</div>
+
+<h2>The picker in action: why Lab 3 uses four completion tasks</h2>
+<p>One timestep of the Lab 3 heat stencil launches four async transfers (send east, send west, receive from west, receive from east). Each completion must decrement <code>pending</code>; when it hits 0 the PE updates its cells. Give all four ops one shared completion task and two completions that land before it runs merge into one, so <code>pending</code> never reaches 0. Whether that happens depends on timing, which is why the SDK's comment says that activating a task several times "does not guarantee" several runs.</p>
+<div class="widget" id="tsk">
+<h4>Task picker: shared versus per-op completion tasks</h4>
+<p class="hint">Set when each op finishes and how long a task runs, then compare the designs. Timings are illustrative, not measured. The model assumes that a task's activated bit clears when the task starts, and that ready tasks are picked lowest ID first; the SDK documents neither <span class="tag derived">toy model</span>.</p>
+<div class="controls">
+<label>Design <select id="t-mode"><option value="one">one shared task (done)</option><option value="four">four tasks (t_se, t_sw, t_rw, t_re)</option></select></label>
+<button class="btn secondary" id="t-together" type="button">Two finish together</button>
+<button class="btn secondary" id="t-spread" type="button">Spread out</button>
+<button class="btn secondary" id="t-rand" type="button">Random times</button>
+</div>
+<div class="ctl-grid">
+<label>send E done <input type="range" id="t-se" min="0" max="10" value="3"><output id="t-sev">3</output></label>
+<label>send W done <input type="range" id="t-sw" min="0" max="10" value="4"><output id="t-swv">4</output></label>
+<label>recv W done <input type="range" id="t-rw" min="0" max="10" value="4"><output id="t-rwv">4</output></label>
+<label>recv E done <input type="range" id="t-re" min="0" max="10" value="6"><output id="t-rev">6</output></label>
+<label>task length <input type="range" id="t-len" min="1" max="4" value="2"><output id="t-lenv">2</output></label>
+</div>
+<svg id="t-svg" viewBox="0 0 680 270" width="680" role="img" aria-label="Task timeline: op completions, activation bits and CE runs"></svg>
+<div class="readout" id="t-out" aria-live="polite"></div>
+<div class="controls"><button class="btn" id="t-many" type="button">Run 500 random timesteps with both designs</button></div>
+<div class="tally" id="t-tally" aria-live="polite"></div>
+</div>
+<p>The SDK's own 25-point stencil uses one completion task per transfer for exactly this reason <span class="tag sdk">SDK 2.10.1, benchmarks/25-pt-stencil</span>. We also ran the real thing: Lab 3 with all four ops pointing <code>.activate</code> at one task stalls on both WSE-2 and WSE-3, and the host runtime gives up with "the received length (0 bytes) is not expected (576 bytes), could be a kernel stall" <span class="tag measured">Measured, simulator, P = 8, n = 16</span>.</p>
+
+<h3>When several tasks are ready</h3>
+<p>The picker is not purely first-come. The CSL library exposes a <strong>task-priority</strong> register: two 16-bit config words at <code>0x7e08</code>/<code>0x7e09</code> that together hold one bit per task ID, HIGH = 1 or LOW = 0. <code>tile_config.task_priority.set_task_priority(id)</code> and <code>clear_task_priority(id)</code> set the bit, at comptime or at run time ("updates … may take a few clock cycles to take effect"). For wavelet-activated tasks, control tasks included, you set the priority on the color (WSE-2) or the input queue (WSE-3) that carries the wavelets <span class="tag sdk">SDK 2.10.1, csl-libs tile_config/task_priority</span>. Because the vector has 32 bits, only IDs 0–31 can be prioritised <span class="tag derived">Derived</span>.</p>
+<figure>
+<svg id="pri-svg" viewBox="0 0 680 120" width="680" role="img" aria-label="Decoding the priority mask 0x73FD for task IDs 16 to 31"></svg>
+<figcaption><b>A real priority mask, decoded.</b> A commented-out line in the hypersparse SpMV benchmark reads <code>COMP_LO_PRI: u16 = 0x73FD; // all comp tasks at 17, 26, 27 at task_pri=0, else at 1</code> <span class="tag sdk">SDK 2.10.1, spmv-hypersparse pe.csl</span>. Written into the upper word (IDs 16–31), its zero bits fall on IDs 17, 26, 27 and 31 (NOP), as the comment says <span class="tag derived">Derived</span>.</figcaption>
+</figure>
+<p>A second knob, <code>main_thread_priority.update_main_thread_priority(level)</code>, sets how the main thread (the one running your task code) ranks against microthreads. Async ops can be marked <code>.priority = .{ .high = true }</code> or <code>.{ .medium = true }</code> <span class="tag sdk">SDK 2.10.1, csl-libs and spmv-hypersparse</span>.</p>
+<div class="table-wrap"><table class="small">
+<tr><th>Main-thread level</th><th>Meaning (library comment)</th></tr>
+<tr><td><code>MEDIUM_LOW</code></td><td>between low- and medium-priority microthreads</td></tr>
+<tr><td><code>MEDIUM</code></td><td>same priority as medium-priority microthreads</td></tr>
+<tr><td><code>MEDIUM_HIGH</code></td><td>between medium- and high-priority microthreads</td></tr>
+<tr><td><code>HIGH</code></td><td>same priority as high-priority microthreads</td></tr>
+</table></div>
+<p><strong>What is not documented:</strong> the order among ready tasks of equal priority, and the cycle cost of switching tasks. Do not write code that relies on either <span class="tag derived">Derived</span>. Lab 3's measured ~88 fixed cycles per step (Chapter 12) includes four completion tasks and their scheduling, which gives a rough upper bound.</p>
 
 <h2>WSE-2 versus WSE-3: the biggest portability hazard</h2>
 <div class="table-wrap"><table>
 <tr><th>Mechanism</th><th>WSE-2</th><th>WSE-3</th></tr>
-<tr><td>Data task ID comes from</td><td>the color (0–23)</td><td>an input queue bound to a color (0–7)</td></tr>
-<tr><td>Local task IDs</td><td>0–30</td><td>8–30</td></tr>
+<tr><td>Data task ID comes from</td><td>the color (0–23)</td><td>an input queue (ID 0–7) bound to any routable color</td></tr>
+<tr><td>Local task IDs</td><td>0–30 (any ID not used by a color you receive on)</td><td>8–30 (compiler: "expected task ID in the range [8,31)")</td></tr>
 <tr><td>Input / output queues</td><td>8 / 6</td><td>8 / 8</td></tr>
-<tr><td>Output queue ↔ color</td><td>fabout DSD names the color</td><td>queue bound to one color by <code>@initialize_queue</code>; reuse needs <code>@queue_flush</code></td></tr>
-<tr><td>Microthread</td><td>= queue ID</td><td>explicit <code>.ut_id</code> (0–7) or defaults per queue</td></tr>
-<tr><td>Fabric inputs per DSD op</td><td>several</td><td>at most one</td></tr>
+<tr><td>Output queue ↔ color</td><td>fabout DSD names the color</td><td>queue bound to one color by <code>@initialize_queue</code>; reuse needs <code>@queue_flush</code> (below)</td></tr>
+<tr><td>Microthread of an async fabric op</td><td>= its queue ID, always</td><td>explicit <code>.ut_id</code> (0–7); defaults to the queue ID</td></tr>
+<tr><td>Fabric inputs per DSD op</td><td>more than one</td><td>at most one</td></tr>
 </table></div>
-<p style="font-size:14px;color:var(--muted)">All rows <span class="tag sdk">SDK 2.10.1</span> (topic-05, topic-15, topic-16 tutorials and the target library).</p>
-<p>The idiom that makes one source file serve both chips — used in every program in this course:</p>
-<div class="filename">pe_program.csl (Lab 1, program 02)</div>
+<p style="font-size:14px;color:var(--muted)">All rows <span class="tag sdk">SDK 2.10.1</span> (tutorials topic-05, topic-15, topic-16 and sdklayout-03, and the target library <code>target/wse2.csl</code>, <code>wse3.csl</code>); the compiler message is <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
+
+<figure>
+<svg id="ids-svg" viewBox="0 0 760 300" width="760" role="img" aria-label="Task-ID space on WSE-2 and WSE-3, IDs 0 to 43"></svg>
+<figcaption><b>The task-ID space.</b> Hover a cell for details. <code>@activate</code>, <code>.activate</code> and <code>.unblock</code> can only name IDs below 31: "there is only 5-bit 'ACT/UB color' field in fabin/fabout DSD"; "control wavelet indeed can trigger entrypoints bigger than 31" <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span>. Reserved IDs from the same file and from the task maps in the topic-09 tutorial. Highlighted: program 02's data task 2 and Lab 3's local tasks 10–13.</figcaption>
+</figure>
+
+<h3>Budget check</h3>
+<div class="table-wrap"><table class="small">
+<tr><th>Resource</th><th>WSE-2</th><th>WSE-3</th><th>Taken by memcpy</th><th>Left for you on WSE-3</th></tr>
+<tr><td>Data tasks</td><td>one per receive color (0–23)</td><td>one per input queue (0–7)</td><td>queues 0, 1 (WSE-3); colors 20–23</td><td><strong>6</strong> (queues 2–7)</td></tr>
+<tr><td>Local tasks</td><td>shares 0–30 with colors</td><td>8–30</td><td>24, 27, 28, 30; 29 = teardown</td><td><strong>18</strong> (8–23, 25, 26); <strong>15</strong> if you also avoid 21–23</td></tr>
+<tr><td>Output queues</td><td>6</td><td>8</td><td>0 (and 1 on WSE-3)</td><td><strong>6</strong></td></tr>
+<tr><td>Microthreads</td><td>8, tied to queues</td><td>8</td><td>shares with its queues</td><td>8, two ops never at once on one</td></tr>
+</table></div>
+<p style="font-size:14px;color:var(--muted)">Counts <span class="tag derived">Derived</span> from <code>memcpy/sys_params.csl</code> and the topic-05 and topic-09 tutorials <span class="tag sdk">SDK 2.10.1</span>. Two caveats. The topic-09 WSE-3 task map also marks 21–23 "reserved (memcpy)", so stay in 8–20 to be safe (Chapter 7 gives the looser "9–23"). And 24 is <code>SYS_EN_MAIN</code>, the "first task after context switch", yet the WSE-2 25-point stencil binds its own task to 24, so 24 is probably needed only in some memcpy modes <span class="tag derived">Derived</span>.</p>
+<p>A worked squeeze: the 25-point stencil, shipped for WSE-2 only, binds <strong>18 local tasks</strong> (IDs 2, 3, 8–20 and 24–26), skips 4–7 because those are its channel colors, and skips 21–23 with "WARNING: ID 21: reserved (memcpy)" <span class="tag sdk">SDK 2.10.1, 25-pt-stencil/layout.csl</span>. On WSE-3 that is the entire user local-task budget, with no room left for anything else <span class="tag derived">Derived</span>.</p>
+
+<p><strong>What this means in practice.</strong></p>
+<ul>
+<li><strong>Trap 1: queue-bound data tasks.</strong> WSE-2 code that binds a data task straight to a color does not compile for WSE-3: <code>@get_data_task_id(color)</code> fails with "expected 'input_queue' expression, got: 'color'" <span class="tag measured">Measured, cslc 2.10.1</span>. That is the friendly trap: the compiler catches it.</li>
+<li><strong>Trap 2: shared microthreads.</strong> Two concurrent async ops on the same microthread compile cleanly and then fail at run time (the callout below). Nothing warns you at build time.</li>
+</ul>
+<p>The idiom that makes one source file serve both chips (<code>@is_arch</code> selects the per-chip form; programs 02–05 all use it):</p>
+<div class="filename">pe_program.csl (Lab 1, program 02), excerpt, simplified</div>
 <pre><code><span class="k">const</span> h2d_iq: <span class="n">input_queue</span> = <span class="b">@get_input_queue</span>(2);   <span class="c">// queues 0,1 belong to memcpy on WSE-3</span>
 <span class="k">const</span> recv_task_id: <span class="n">data_task_id</span> =
   <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse2"</span>)) <span class="b">@get_data_task_id</span>(h2d_color)   <span class="c">// WSE-2: task ID == color</span>
   <span class="k">else</span> <span class="b">@get_data_task_id</span>(h2d_iq);                     <span class="c">// WSE-3: task ID == input queue</span>
 
-<span class="k">task</span> on_value(v: <span class="n">f32</span>) <span class="n">void</span> { stats[0] += v; count[0] += 1; }
+<span class="k">task</span> on_value(v: <span class="n">f32</span>) <span class="n">void</span> { stats[0] += v; <span class="c">/* … */</span> count[0] += 1; }
 
 <span class="k">comptime</span> {
   <span class="b">@bind_data_task</span>(on_value, recv_task_id);
   <span class="b">@initialize_queue</span>(h2d_iq, .{ .color = h2d_color });
 }</code></pre>
+<p style="font-size:14px;color:var(--muted)"><code>memcpy</code> is the SDK's host-to-device runtime; it owns some colors, queues and task IDs (Chapter 7).</p>
 
-<div class="callout bug">
+<div class="callout bug" id="hang-callout">
 <strong>A real hang from this course</strong>
-The first version of Lab 3 used output queues 2, 3 and input queues 2, 3. It compiled cleanly and then the simulator stalled forever at cycle 1,894. On WSE-3 an async fabric op runs on the microthread matching its queue ID, so "send east" (output queue 2) and "receive from west" (input queue 2) both wanted microthread 2. Renumbering the input queues to 4 and 5 fixed it <span class="tag measured">Measured</span>. The SDK states the rule: "two operations cannot concurrently use the same microthread".
+The first version of Lab 3 used output queues 2, 3 and input queues 2, 3. It compiled cleanly, and then it failed at run time. An async fabric op with no explicit <code>.ut_id</code> runs on the microthread whose ID matches its queue (always on WSE-2, by default on WSE-3). So "send east" (output queue 2) and "receive from west" (input queue 2) both wanted microthread 2, and "send west" and "receive from east" both wanted microthread 3. The SDK states the rule: "two operations cannot concurrently use the same microthread" <span class="tag sdk">SDK 2.10.1, topic-15</span>.<br><br>
+We rebuilt that version to check. It fails the same way on both chips: <code>sim.log</code> ends with <code>FATAL: … trying to term ut_instr[3], but it's not ours</code> at cycle 2,123 on WSE-3 and 2,125 on WSE-2, and the host script then waits forever <span class="tag measured">Measured, simulator, P = 8, n = 16</span>. Renumbering the input queues to 4 and 5 fixed it on both chips <span class="tag measured">Measured</span>. Keeping input queues 2, 3 and giving the receives <code>.ut_id</code> 4 and 5 also works on WSE-3 <span id="utfix-tag" class="tag measured">Measured</span>.<br><br>
+<strong>Why the compiler cannot help.</strong> Whether two ops overlap in time is a run-time fact, so the program builds cleanly. The tell is a simulator that stops advancing with an async op still pending; look at the end of <code>sim.log</code> and at the instruction trace (Chapter 9). Cerebras's own WSE-2 25-point stencil follows the same convention: "FD uses input_queue = 4,5,6,7 … .input_queue = 4 + queueId, .output_queue = queueId" <span class="tag sdk">SDK 2.10.1, 25-pt-stencil/task.csl</span>.
 </div>
+
+<div class="widget" id="mt">
+<h4>Microthread collision explorer</h4>
+<p class="hint">Choose the queue (and, on WSE-3, the <code>.ut_id</code>) for each of Lab 3's four concurrent async ops. Each op lands on a microthread lane; two ops in one lane collide. Results marked Measured are the simulator runs described above; everything else is predicted from the topic-15 rule.</p>
+<div class="controls">
+<label>Chip <select id="mt-arch"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>Preset <select id="mt-preset"><option value="hang">first Lab 3 (queues 2,3 / 2,3)</option><option value="fixed">fixed Lab 3 (queues 2,3 / 4,5)</option><option value="ut">fixed with .ut_id (WSE-3)</option><option value="custom">custom</option></select></label>
+</div>
+<div class="mt-ops" id="mt-ops"></div>
+<svg id="mt-svg" viewBox="0 0 680 190" width="680" role="img" aria-label="Microthread lanes UT0 to UT7 with the ops assigned to each"></svg>
+<div class="readout" id="mt-out" aria-live="polite"></div>
+</div>
+
+<h3>Reusing a queue on WSE-3: <code>@queue_flush</code> and teardown task 29</h3>
+<p>On WSE-3 each output queue is bound to one color. To send on a new color you must wait until the queue is <em>empty</em>, and an async op's completion only means "the microthread pushed all of its data into the output queue; the queue may not be empty yet". The hardware helps: after <code>@queue_flush(oq)</code>, "When oq becomes empty, WSE-3 will trigger the special teardown task 29, the same way a teardown wavelet does" <span class="tag sdk">SDK 2.10.1, topic-16</span>. This is the fourth activation source in the table above. The sequence:</p>
+<ol>
+<li>send data 1 on <code>oq</code>; its completion task runs;</li>
+<li>the completion task calls <code>@queue_flush(oq)</code> (never before the send starts, or task 29 may fire at once on the still-empty queue);</li>
+<li><code>oq</code> drains into the router; the hardware activates task 29;</li>
+<li>task 29 calls the handler you registered with <code>@set_empty_queue_handler(foo, oq)</code>;</li>
+<li><code>foo</code> rebinds <code>oq</code> to the new color, activates the next send, and calls <code>queue_flush.exit(oq)</code>, otherwise task 29 will keep calling it.</li>
+</ol>
+<p>Input queues need no flush: by the time a receive's completion task runs, the queue is already empty <span class="tag sdk">SDK 2.10.1, topic-16</span>. Because memcpy registers handlers on task 29, you cannot bind your own task there (the compiler says "cannot bind task to teardown task ID '29'") <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
 
 <h2>Tasks as a state machine</h2>
 <p>Because tasks cannot block, iterative algorithms become state machines. Lab 3's per-PE control flow:</p>
 <figure>
-<svg viewBox="0 0 760 210" width="760" role="img" aria-label="Stencil state machine">
+<svg viewBox="0 0 760 256" width="760" role="img" aria-label="Lab 3 stencil state machine">
   <defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker></defs>
-  <rect x="20" y="70" width="120" height="56" rx="10" class="blu" stroke-width="1.5"/><text x="80" y="95" text-anchor="middle" font-weight="600">run(T, α)</text><text x="80" y="112" text-anchor="middle" font-size="11" class="muted">host RPC</text>
-  <rect x="190" y="70" width="140" height="56" rx="10" class="amb" stroke-width="1.5"/><text x="260" y="95" text-anchor="middle" font-weight="600">start_step()</text><text x="260" y="112" text-anchor="middle" font-size="11" class="muted">launch 4 async ops</text>
-  <rect x="380" y="70" width="150" height="56" rx="10" class="pur" stroke-width="1.5"/><text x="455" y="95" text-anchor="middle" font-weight="600">4 done tasks</text><text x="455" y="112" text-anchor="middle" font-size="11" class="muted">pending -= 1</text>
-  <rect x="580" y="70" width="140" height="56" rx="10" class="grn" stroke-width="1.5"/><text x="650" y="95" text-anchor="middle" font-weight="600">update()</text><text x="650" y="112" text-anchor="middle" font-size="11" class="muted">3 vector ops</text>
-  <path d="M140 98 H186" class="s-acc" stroke-width="2" marker-end="url(#a6)"/>
-  <path d="M330 98 H376" class="s-acc" stroke-width="2" marker-end="url(#a6)"/>
-  <path d="M530 98 H576" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="553" y="88" text-anchor="middle" font-size="11">=0</text>
-  <path d="M650 126 V170 H260 V130" fill="none" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="455" y="164" text-anchor="middle" font-size="12">step &lt; T: next step</text>
-  <path d="M650 70 V56" class="s-acc" stroke-width="2"/><text x="650" y="50" text-anchor="middle" font-size="12">step == T → unblock_cmd_stream()</text>
+  <g font-size="13">
+  <rect x="590" y="8" width="160" height="40" rx="10" class="box" stroke-width="1.5"/><text x="670" y="26" text-anchor="middle" font-weight="600">host unblocked</text><text x="670" y="41" text-anchor="middle" font-size="11" class="muted">next host call may run</text>
+  <rect x="20" y="90" width="120" height="56" rx="10" class="blu dash" stroke-width="1.5"/><text x="80" y="115" text-anchor="middle" font-weight="600">run(T, α)</text><text x="80" y="132" text-anchor="middle" font-size="11" class="muted">fn, host RPC</text>
+  <rect x="190" y="90" width="140" height="56" rx="10" class="amb dash" stroke-width="1.5"/><text x="260" y="112" text-anchor="middle" font-weight="600">start_step()</text><text x="260" y="128" text-anchor="middle" font-size="11" class="muted">fn: launch 2–4 async ops</text><text x="260" y="141" text-anchor="middle" font-size="10" class="muted">(4 inside, 2 at the ends)</text>
+  <rect x="380" y="90" width="150" height="56" rx="10" class="pur" stroke-width="2"/><text x="455" y="112" text-anchor="middle" font-weight="600">done tasks</text><text x="455" y="128" text-anchor="middle" font-size="11" class="muted">t_se t_sw t_rw t_re</text><text x="455" y="141" text-anchor="middle" font-size="10" class="muted">op_done(): pending -= 1</text>
+  <rect x="580" y="90" width="150" height="56" rx="10" class="grn dash" stroke-width="1.5"/><text x="655" y="112" text-anchor="middle" font-weight="600">update()</text><text x="655" y="128" text-anchor="middle" font-size="11" class="muted">fn: 3 vector ops,</text><text x="655" y="141" text-anchor="middle" font-size="10" class="muted">inside the last done task</text>
+  <path d="M140 118 H186" class="s-acc" stroke-width="2" marker-end="url(#a6)"/>
+  <path d="M330 118 H376" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="353" y="84" text-anchor="middle" font-size="10" class="muted">completions</text><text x="353" y="96" text-anchor="middle" font-size="10" class="muted">activate</text>
+  <path d="M530 118 H576" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="553" y="84" text-anchor="middle" font-size="11">pending</text><text x="553" y="97" text-anchor="middle" font-size="11">== 0</text>
+  <path d="M430 146 C430 186, 480 186, 480 150" fill="none" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="490" y="176" font-size="11">pending &gt; 0: back to picker</text>
+  <path d="M655 146 V206 H260 V150" fill="none" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="400" y="222" text-anchor="middle" font-size="12">step &lt; T: next step</text>
+  <path d="M655 90 V52" class="s-acc" stroke-width="2" marker-end="url(#a6)"/><text x="646" y="72" text-anchor="end" font-size="12">step == T → unblock_cmd_stream()</text>
+  <rect x="20" y="236" width="26" height="12" rx="3" class="pur" stroke-width="2"/><text x="52" y="246" font-size="11">solid = task (a hardware entry point)</text>
+  <rect x="270" y="236" width="26" height="12" rx="3" class="box dash" stroke-width="1.5" style="stroke:var(--muted)"/><text x="302" y="246" font-size="11">dashed = fn, called inside whichever task is running</text>
+  </g>
 </svg>
-<figcaption><b>No loops that wait — only tasks that hand off.</b> The <code>for</code> loop over timesteps in a CPU program becomes a cycle through the task graph.</figcaption>
+<figcaption><b>No loops that wait, only tasks that hand off.</b> The <code>for</code> loop over timesteps in a CPU program becomes a cycle through the task graph. Only the four completion handlers are tasks. Edge PEs launch 2 ops per step, and a lone PE (P = 1) calls <code>update()</code> straight from <code>start_step()</code>. <code>unblock_cmd_stream()</code> tells the host runtime that this PE has finished the current host call (Chapter 7). Source: <code>programs/04-heat-stencil/pe_program.csl</code>.</figcaption>
 </figure>
 
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>A data task does heavy work per wavelet and wavelets arrive faster than it runs. What happens?</summary><p>Wavelets back up in the input queue and then in the routers behind it; the fabric is lossless, so the sender eventually stalls. That is back-pressure, not data loss.</p></details>
-<details><summary>Why must a task not "wait for" a transfer?</summary><p>Tasks run to completion and the CE is needed for other tasks (including the memcpy runtime). Start the transfer asynchronously and let its completion activate another task.</p></details>
-<details><summary>Your WSE-2 program uses data task ID 5 for color 5. What changes on WSE-3?</summary><p>Bind color 5 to an input queue (say queue 2) with <code>@initialize_queue</code>, and bind the task to <code>@get_data_task_id(queue)</code> instead of the color.</p></details>
+<details><summary>A data task does heavy work per wavelet and wavelets arrive faster than it runs. What happens?</summary><p>Wavelets back up in the input queue, which holds only a handful (one SDK example stalls past 14), and then in the routers behind it. The fabric is lossless, so the sender eventually stalls. That is back-pressure, not data loss.</p></details>
+<details><summary>Why must a task not "wait for" a transfer?</summary><p>Tasks run to completion and there is only one CE main thread. While one task spins, no other task can run, including the one that would deliver the data, so the PE deadlocks. Start the transfer async and let its completion activate another task. (The host runtime, memcpy, also needs the CE; Chapter 7.)</p></details>
+<details><summary>Two async receives both use <code>.activate = done</code> and finish one cycle apart, before <code>done</code> runs. How many times does <code>done</code> run, and how do you fix it?</summary><p>Once, because activation is a single bit. Give each op its own local task, as Lab 3 and the SDK's 25-point stencil do, or use a block + activate join.</p></details>
+<details><summary>Three wavelets reach a data task's input queue before it runs. How many times does it run?</summary><p>Three. Events that carry data are buffered in the queue; only data-less events (<code>@activate</code>, async completions) collapse.</p></details>
+<details><summary>On WSE-3 you send on output queue 3 and receive on input queue 3 at the same time, with no <code>.ut_id</code>. What happens?</summary><p>Both default to microthread 3. Two ops cannot use one microthread at once, so the program builds and then fails at run time (in our simulator run: a FATAL in <code>sim.log</code>, and a host that waits forever). Renumber a queue or set <code>.ut_id</code>. The same pairing fails on WSE-2, where microthread = queue ID always.</p></details>
+<details><summary>Your WSE-2 program uses data task ID 5 for color 5. What changes on WSE-3?</summary><p>Bind color 5 to an input queue (say queue 2, not 0 or 1, which memcpy uses on WSE-3) with <code>@initialize_queue</code>, and bind the task to <code>@get_data_task_id(queue)</code> instead of the color. If you forget, the compiler stops you.</p></details>
+<details><summary>Convert <code>for (s = 0; s &lt; T; s++) { exchange(); update(); }</code> into tasks. Which pieces are tasks and which are functions?</summary><p>Only the completion handlers need to be tasks. <code>start_step</code> and <code>update</code> are functions, and the loop counter is a global checked at the end of <code>update</code>.</p></details>
+<details><summary>How many independent completion tasks can a WSE-3 PE have alongside memcpy?</summary><p>At most 18 (IDs 8–23, 25, 26), or 15 if you also avoid 21–23 as the SDK's topic-09 map suggests. Data tasks are counted separately: at most 6 (input queues 2–7).</p></details>
+<details><summary>You want a task to run only after both a teardown event and an async op have happened, in either order. How?</summary><p>Block the task when the op starts, let the other event <code>@activate</code> it, and give the op <code>.unblock = task</code>. The picker needs activated ∧ unblocked, so it runs only after both.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
 <script>
+/* ---------- shared tiny helpers ---------- */
+function txt(svg, x, y, s, attrs = {}) { const t = el("text", Object.assign({ x, y }, attrs), svg); t.textContent = s; return t; }
+
+/* ---------- buffered vs collapsed ---------- */
+(function () {
+  const svg = $("#b-svg"), out = $("#b-out"), nIn = $("#b-n");
+  const CAP = 6;
+  let s = 0, timer = null;
+  function N() { return +nIn.value; }
+  function draw() {
+    const n = N(); svg.innerHTML = "";
+    const arrived = Math.min(s, n), drained = Math.max(0, s - n);
+    const busy = s < n || (s === n && n > 0 && s === 0);
+    // status line
+    txt(svg, 340, 18, s <= n ? `step ${s}: CE busy with another task; ${arrived} of ${n} events have arrived` : `step ${s}: CE free; the picker runs ready tasks`,
+      { "text-anchor": "middle", "font-size": 12, class: "muted" });
+    el("line", { x1: 340, x2: 340, y1: 30, y2: 220, class: "line" }, svg);
+    // LEFT: data task
+    txt(svg, 170, 44, "Data task: wavelets wait in the input queue", { "text-anchor": "middle", "font-size": 13, "font-weight": 600 });
+    const leftInQ = arrived - drained; // remaining wavelets overall
+    const inQueue = Math.min(CAP, leftInQ), inRouter = Math.max(0, leftInQ - CAP);
+    el("rect", { x: 14, y: 80, width: 64, height: 60, rx: 6, class: "blu", "stroke-width": 1.2 }, svg);
+    txt(svg, 46, 102, "router", { "text-anchor": "middle", "font-size": 11 });
+    txt(svg, 46, 122, inRouter ? `${inRouter} waiting` : "–", { "text-anchor": "middle", "font-size": 11, class: inRouter ? "f-red" : "muted" });
+    for (let i = 0; i < CAP; i++) {
+      el("rect", { x: 92 + i * 24, y: 95, width: 20, height: 30, rx: 3, class: i < inQueue ? "grn" : "box", "stroke-width": 1 }, svg);
+    }
+    txt(svg, 92 + CAP * 12, 88, "input queue (schematic depth)", { "text-anchor": "middle", "font-size": 10, class: "muted" });
+    el("rect", { x: 250, y: 90, width: 76, height: 40, rx: 6, class: "amb", "stroke-width": 1.2 }, svg);
+    txt(svg, 288, 114, "on_value", { "text-anchor": "middle", "font-size": 12, class: "mono" });
+    txt(svg, 170, 160, `activated bit: ${leftInQ > 0 ? 1 : 0} (stays 1 while the queue is not empty)`, { "text-anchor": "middle", "font-size": 11 });
+    txt(svg, 170, 186, `runs: ${drained}`, { "text-anchor": "middle", "font-size": 15, "font-weight": 700, class: "f-grn" });
+    if (inRouter) txt(svg, 170, 208, "queue full → back-pressure into the router", { "text-anchor": "middle", "font-size": 11, class: "f-red" });
+    // RIGHT: local task
+    txt(svg, 510, 44, "Local task: @activate × N", { "text-anchor": "middle", "font-size": 13, "font-weight": 600 });
+    for (let i = 0; i < n; i++) {
+      const got = i < arrived;
+      el("rect", { x: 356 + (i % 5) * 18, y: 82 + Math.floor(i / 5) * 22, width: 14, height: 16, rx: 3, class: got ? (i === 0 ? "pur" : "red") : "box", "stroke-width": 1 }, svg);
+      if (got && i > 0) txt(svg, 363 + (i % 5) * 18, 95 + Math.floor(i / 5) * 22, "×", { "text-anchor": "middle", "font-size": 11, class: "f-red" });
+    }
+    txt(svg, 400, 140, "events", { "text-anchor": "middle", "font-size": 10, class: "muted" });
+    const ranRight = drained >= 1 && n > 0;
+    const bit = arrived > 0 && !ranRight ? 1 : 0;
+    el("rect", { x: 478, y: 92, width: 40, height: 36, rx: 4, class: bit ? "pur" : "box", "stroke-width": 1.5 }, svg);
+    txt(svg, 498, 116, String(bit), { "text-anchor": "middle", "font-size": 16, "font-weight": 700, class: "mono" });
+    txt(svg, 498, 86, "act. bit", { "text-anchor": "middle", "font-size": 10, class: "muted" });
+    el("rect", { x: 580, y: 90, width: 84, height: 40, rx: 6, class: "amb", "stroke-width": 1.2 }, svg);
+    txt(svg, 622, 114, "t_local", { "text-anchor": "middle", "font-size": 12, class: "mono" });
+    const absorbed = Math.max(0, arrived - 1);
+    txt(svg, 510, 160, `absorbed (bit already 1): ${absorbed}`, { "text-anchor": "middle", "font-size": 11, class: absorbed ? "f-red" : "muted" });
+    txt(svg, 510, 186, `runs: ${ranRight ? 1 : 0}`, { "text-anchor": "middle", "font-size": 15, "font-weight": 700, class: "f-grn" });
+    const finished = s >= 2 * n;
+    out.textContent = finished
+      ? `Done. ${n} wavelets → the data task ran ${n} time(s). ${n} activations → the local task ran once${n > 1 ? `; ${n - 1} were absorbed` : ""}.\nEvents that carry data are buffered; events that carry no data collapse.`
+      : (s <= n ? `Arrivals while the CE is busy. Left: each wavelet takes a queue slot${N() > CAP ? " (past the last slot they wait in the router)" : ""}. Right: the first event sets the bit; later ones find it already 1.` :
+        `The CE is free. The data task runs once per queued wavelet; the local task ran once and its bit is now 0.`);
+    $("#b-step").disabled = finished;
+  }
+  function step() { if (s < 2 * N()) { s++; draw(); } else stop(); }
+  function stop() { if (timer) { clearInterval(timer); timer = null; $("#b-play").textContent = "Play"; } }
+  $("#b-step").onclick = () => { stop(); step(); };
+  $("#b-play").onclick = () => {
+    if (timer) { stop(); return; }
+    if (s >= 2 * N()) s = 0;
+    $("#b-play").textContent = "Pause"; draw();
+    timer = setInterval(() => { if (s >= 2 * N()) stop(); else step(); }, 650);
+  };
+  $("#b-reset").onclick = () => { stop(); s = 0; draw(); };
+  nIn.oninput = () => { $("#b-nv").textContent = nIn.value; stop(); s = 0; draw(); };
+  draw();
+})();
+
+/* ---------- join ---------- */
+(function () {
+  const svg = $("#j-svg"), out = $("#j-out");
+  let act, blk, runs, log;
+  function reset() { act = 0; blk = 1; runs = 0; log = ["Start: the operation has blocked L (blocked = 1, activated = 0)."]; draw(); }
+  function tryRun() { if (act && !blk) { runs++; act = 0; log.push(`activated ∧ unblocked → the picker runs L (run #${runs}); activated clears to 0.`); } }
+  function draw() {
+    svg.innerHTML = "";
+    const cell = (x, label, v, cls) => {
+      txt(svg, x + 40, 22, label, { "text-anchor": "middle", "font-size": 12, class: "muted" });
+      el("rect", { x, y: 30, width: 80, height: 44, rx: 6, class: v ? cls : "box", "stroke-width": 1.5 }, svg);
+      txt(svg, x + 40, 60, String(v), { "text-anchor": "middle", "font-size": 20, "font-weight": 700, class: "mono" });
+    };
+    cell(40, "activated", act, "pur"); cell(160, "blocked", blk, "red");
+    txt(svg, 290, 60, "→  picker needs act = 1 and blk = 0  →", { "font-size": 12, class: "muted" });
+    el("rect", { x: 540, y: 30, width: 110, height: 44, rx: 8, class: runs ? "grn" : "box", "stroke-width": 1.5 }, svg);
+    txt(svg, 595, 58, `L ran ${runs}×`, { "text-anchor": "middle", "font-size": 14, "font-weight": 600 });
+    txt(svg, 340, 104, act && blk ? "L is activated but blocked: it waits" : (!act && !blk && runs ? "L has run; a new activation would run it again" : (!act && !blk ? "L is unblocked but not activated: nothing to run" : "L is blocked and not activated")),
+      { "text-anchor": "middle", "font-size": 12 });
+    out.textContent = log.slice(-5).join("\n");
+  }
+  $("#j-a").onclick = () => {
+    if (act) log.push("Event A again: activated is already 1, so nothing changes (no second run queued).");
+    else { act = 1; log.push("Event A: @activate(L) sets activated = 1."); }
+    tryRun(); draw();
+  };
+  $("#j-b").onclick = () => {
+    if (!blk) log.push("Event B again: L is already unblocked.");
+    else { blk = 0; log.push("Event B: the op finishes; .unblock = L clears blocked."); }
+    tryRun(); draw();
+  };
+  $("#j-r").onclick = reset;
+  reset();
+})();
+
+/* ---------- task picker (shared vs four completion tasks) ---------- */
 (function () {
   const svg = $("#t-svg"), out = $("#t-out");
-  // completion events (tick, op). Two ops finish in the same cycle at tick 4.
-  const events = [[3, "se"], [4, "sw"], [4, "rw"], [6, "re"]];
-  function run() {
-    const mode = $("#t-mode").value;
-    const names = mode === "four" ? { se: "t_se", sw: "t_sw", rw: "t_rw", re: "t_re" } : { se: "done", sw: "done", rw: "done", re: "done" };
-    const tasks = {}; Object.values(names).forEach(n => tasks[n] = { act: false });
-    let pending = 4, log = [], runs = [], updated = false, busyUntil = 0;
-    for (let t = 0; t <= 12; t++) {
-      events.filter(e => e[0] === t).forEach(([_, op]) => {
-        const n = names[op];
-        log.push(`cycle ${t}: op '${op}' finished → activate ${n}` + (tasks[n].act ? "  (already activated: no extra run)" : ""));
-        tasks[n].act = true;
+  const OPS = [["se", "send E"], ["sw", "send W"], ["rw", "recv W"], ["re", "recv E"]];
+  const TASK4 = { se: "t_se", sw: "t_sw", rw: "t_rw", re: "t_re" };
+  const ID4 = { t_se: 10, t_sw: 11, t_rw: 12, t_re: 13, done: 10 };
+  const UPD = 3, TMAX = 30;
+  function simulate(mode, tm, L) {
+    const names = mode === "four" ? TASK4 : { se: "done", sw: "done", rw: "done", re: "done" };
+    const order = [...new Set(OPS.map(o => names[o[0]]))];
+    const bit = {}, trace = {}, waiting = {};
+    order.forEach(n => { bit[n] = 0; trace[n] = []; waiting[n] = []; });
+    const evs = OPS.map(([k, lab]) => ({ k, lab, t: tm[k], task: names[k], merged: false, run: -1 }));
+    let pending = 4, busy = 0, done = false; const runs = [], log = [];
+    for (let t = 0; t <= TMAX; t++) {
+      evs.filter(e => e.t === t).forEach(e => {
+        if (bit[e.task]) { e.merged = true; log.push(`cycle ${t}: ${e.lab} done → ${e.task} already activated: bit stays 1, this completion is lost`); }
+        else { bit[e.task] = 1; waiting[e.task].push(e); log.push(`cycle ${t}: ${e.lab} done → activated bit of ${e.task} set`); }
       });
-      if (t >= busyUntil) {
-        const ready = Object.keys(tasks).find(n => tasks[n].act);
-        if (ready) { tasks[ready].act = false; pending--; runs.push([t, ready]); busyUntil = t + 2;
-          log.push(`cycle ${t}: picker runs ${ready} → pending = ${pending}`);
-          if (pending === 0) { updated = true; runs.push([t + 1, "update"]); log.push(`cycle ${t + 1}: pending hit 0 → update() runs`); } }
+      order.forEach(n => trace[n].push(bit[n]));
+      if (t >= busy && !done) {
+        const n = order.find(x => bit[x]);
+        if (n) {
+          bit[n] = 0; pending--; const last = pending === 0;
+          runs.push({ t, n, len: L + (last ? UPD : 0), last });
+          waiting[n].forEach(e => e.run = runs.length - 1); waiting[n] = [];
+          busy = t + L + (last ? UPD : 0);
+          log.push(`cycle ${t}: picker runs ${n} → pending = ${pending}` + (last ? ` → ${n} calls update() (same task)` : ""));
+          if (last) done = true;
+        }
       }
+      order.forEach(n => trace[n].push(bit[n]));
     }
-    if (!updated) log.push(`\nRESULT: pending stuck at ${pending}. update() never runs; the host never gets unblocked → HANG`);
-    else log.push(`\nRESULT: all 4 completions counted, the step finishes.`);
-    out.textContent = log.join("\n");
-    // draw
-    svg.innerHTML = "";
-    const X = t => 80 + t * 45;
-    for (let t = 0; t <= 12; t++) { el("line", { x1: X(t), x2: X(t), y1: 20, y2: 200, class: "line" }, svg); el("text", { x: X(t), y: 218, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg).textContent = t; }
-    el("text", { x: 10, y: 54, "font-size": 12 }, svg).textContent = "op done";
-    el("text", { x: 10, y: 124, "font-size": 12 }, svg).textContent = "CE runs";
-    events.forEach(([t, op], i) => { el("circle", { cx: X(t), cy: 44 + (i % 2) * 18, r: 7, fill: cssVar("--purple") }, svg);
-      el("text", { x: X(t) + 10, y: 48 + (i % 2) * 18, "font-size": 11 }, svg).textContent = op; });
-    runs.forEach(([t, n]) => { const up = n === "update";
-      el("rect", { x: X(t) - 2, y: 104, width: up ? 80 : 86, height: 30, rx: 5, class: up ? "grn" : "amb", "stroke-width": 1.2 }, svg);
-      el("text", { x: X(t) + 6, y: 124, "font-size": 12 }, svg).textContent = n; });
-    el("text", { x: 340, y: 176, "text-anchor": "middle", "font-size": 14, "font-weight": 700, class: updated ? "f-grn" : "f-red" }, svg).textContent = updated ? "✓ step completes" : "✕ pending never reaches 0 — hang";
+    return { order, evs, runs, trace, pending, ok: done, log };
   }
-  $("#t-run").onclick = run; $("#t-mode").onchange = run; run();
+  function times() { const o = {}; OPS.forEach(([k]) => o[k] = +$("#t-" + k).value); return o; }
+  function draw() {
+    const mode = $("#t-mode").value, L = +$("#t-len").value;
+    OPS.forEach(([k]) => $("#t-" + k + "v").textContent = $("#t-" + k).value); $("#t-lenv").textContent = L;
+    const r = simulate(mode, times(), L);
+    svg.innerHTML = "";
+    const X = t => 90 + t * 19;
+    for (let t = 0; t <= TMAX; t++) {
+      el("line", { x1: X(t), x2: X(t), y1: 20, y2: 214, class: "line", "stroke-width": t % 2 ? 0.4 : 1 }, svg);
+      if (t % 2 === 0) txt(svg, X(t), 228, t, { "text-anchor": "middle", "font-size": 11, class: "muted" });
+    }
+    txt(svg, 375, 244, "cycle (illustrative)", { "text-anchor": "middle", "font-size": 11, class: "muted" });
+    // op rows
+    const opY = i => 28 + i * 15;
+    txt(svg, 8, 16, "op finishes", { "font-size": 10, class: "muted" });
+    // CE lane & bars first so connectors overlay nicely
+    const ceY = 186;
+    txt(svg, 8, ceY + 18, "CE runs", { "font-size": 12, "font-weight": 600 });
+    r.evs.forEach((e, i) => {
+      if (e.run >= 0) {
+        const run = r.runs[e.run];
+        el("line", { x1: X(e.t), y1: opY(i), x2: X(run.t) + 6, y2: ceY, stroke: cssVar("--muted"), "stroke-width": 0.8, "stroke-dasharray": "2 3", opacity: 0.6 }, svg);
+      }
+    });
+    r.evs.forEach((e, i) => {
+      txt(svg, 8, opY(i) + 4, e.lab, { "font-size": 11 });
+      if (e.merged) {
+        el("circle", { cx: X(e.t), cy: opY(i), r: 6, fill: cssVar("--surface"), stroke: cssVar("--red"), "stroke-width": 2 }, svg);
+        txt(svg, X(e.t), opY(i) + 4, "×", { "text-anchor": "middle", "font-size": 11, "font-weight": 700, class: "f-red" });
+        txt(svg, X(e.t) + 10, opY(i) + 4, "lost: bit already 1", { "font-size": 10, class: "f-red" });
+      } else el("circle", { cx: X(e.t), cy: opY(i), r: 5.5, fill: cssVar("--purple") }, svg);
+    });
+    // activation bit lanes
+    const rows = r.order, top = 98, rowH = rows.length > 1 ? 20 : 30;
+    txt(svg, 8, top - 6, "activated bit", { "font-size": 10, class: "muted" });
+    rows.forEach((n, j) => {
+      const base = top + 14 + j * rowH;
+      txt(svg, 8, base, `${n} (${ID4[n]})`, { "font-size": 11, class: "mono" });
+      let d = "";
+      r.trace[n].forEach((b, k) => { const x = X(k / 2), y = base - b * 11; d += (k ? ` L${x},${y}` : `M${x},${y}`) + ` L${X((k + 1) / 2)},${y}`; });
+      el("path", { d, fill: "none", stroke: cssVar("--purple"), "stroke-width": 1.8 }, svg);
+    });
+    // CE bars
+    r.runs.forEach(run => {
+      const w = run.len * 19 - 2;
+      el("rect", { x: X(run.t), y: ceY, width: w, height: 26, rx: 4, class: "amb", "stroke-width": 1.2 }, svg);
+      txt(svg, X(run.t) + 3, ceY + 17, run.n, { "font-size": 10, class: "mono" });
+      if (run.last) {
+        el("rect", { x: X(run.t + run.len - UPD), y: ceY + 3, width: UPD * 19 - 4, height: 20, rx: 3, class: "grn", "stroke-width": 1 }, svg);
+        txt(svg, X(run.t + run.len - UPD) + 3, ceY + 17, "update()", { "font-size": 10, class: "mono" });
+      }
+    });
+    txt(svg, 340, 264, r.ok ? "✓ pending reached 0: the step completes" : `✕ pending stuck at ${r.pending}: update() never runs, the host waits forever`,
+      { "text-anchor": "middle", "font-size": 13, "font-weight": 700, class: r.ok ? "f-grn" : "f-red" });
+    out.textContent = r.log.join("\n") + (r.ok ? "\n\nRESULT: all 4 completions counted; the step finishes." : `\n\nRESULT: pending stuck at ${r.pending} → HANG`);
+  }
+  function setTimes(a) { OPS.forEach(([k], i) => $("#t-" + k).value = a[i]); draw(); }
+  OPS.forEach(([k]) => $("#t-" + k).oninput = draw);
+  $("#t-len").oninput = draw; $("#t-mode").onchange = draw;
+  $("#t-together").onclick = () => setTimes([3, 4, 4, 6]);
+  $("#t-spread").onclick = () => setTimes([1, 4, 7, 10]);
+  $("#t-rand").onclick = () => setTimes(OPS.map(() => Math.floor(Math.random() * 11)));
+  $("#t-many").onclick = () => {
+    const L = +$("#t-len").value, N = 500; let hung1 = 0, hung4 = 0;
+    for (let i = 0; i < N; i++) {
+      const tm = {}; OPS.forEach(([k]) => tm[k] = Math.floor(Math.random() * 11));
+      if (!simulate("one", tm, L).ok) hung1++;
+      if (!simulate("four", tm, L).ok) hung4++;
+    }
+    const bar = (v, c) => `<span class="bar" style="width:${Math.max(2, Math.round(160 * v / N))}px;background:var(${c})"></span>`;
+    $("#t-tally").innerHTML = `Completion times random in 0–10, task length ${L} (toy model):<br>` +
+      `${bar(hung1, "--red")}shared task: ${hung1} of ${N} steps hung (${(100 * hung1 / N).toFixed(0)}%)<br>` +
+      `${bar(hung4, "--green")}four tasks: ${hung4} of ${N} steps hung`;
+  };
+  draw();
+})();
+
+/* ---------- priority mask 0x73FD ---------- */
+(function () {
+  const svg = $("#pri-svg"), mask = 0x73FD;
+  txt(svg, 10, 20, "upper task-priority word = 0x73FD   (bit k ↔ task ID 16 + k)", { "font-size": 12, class: "mono" });
+  for (let k = 15; k >= 0; k--) {
+    const col = 15 - k, x = 40 + col * 38, hi = (mask >> k) & 1;
+    el("rect", { x, y: 34, width: 34, height: 34, rx: 4, class: hi ? "blu" : "red", "stroke-width": 1.2 }, svg);
+    txt(svg, x + 17, 56, String(hi), { "text-anchor": "middle", "font-size": 14, "font-weight": 700, class: "mono" });
+    txt(svg, x + 17, 84, String(16 + k), { "text-anchor": "middle", "font-size": 11, class: "muted" });
+  }
+  txt(svg, 10, 84, "ID", { "font-size": 11, class: "muted" });
+  el("rect", { x: 40, y: 98, width: 14, height: 12, rx: 2, class: "blu" }, svg); txt(svg, 60, 108, "1 = HIGH", { "font-size": 11 });
+  el("rect", { x: 140, y: 98, width: 14, height: 12, rx: 2, class: "red" }, svg); txt(svg, 160, 108, "0 = LOW: IDs 17, 26, 27 (\"comp tasks\") and 31 (NOP)", { "font-size": 11 });
+})();
+
+/* ---------- task-ID space map ---------- */
+(function () {
+  const svg = $("#ids-svg"), N = 44, W = 15, X0 = 74;
+  const K = {
+    data: ["blu", "data task (color or queue)"], local: ["amb", "local task (yours)"], both: ["blu", "WSE-2: color / data task, or a local task if no color uses it"],
+    mem: ["red", "reserved by memcpy"], memsoft: ["red", "marked reserved (memcpy) in the SDK task map"], td: ["pur", "teardown task 29"], nop: ["box", "31 = NOP"],
+    ctrl: ["grn", "control task only (reached by control wavelets)"], none: ["box", "not a data or local task on this chip"]
+  };
+  function kind(arch, id) {
+    if (id === 29) return ["td", "teardown task (memcpy registers handlers)"];
+    if (id === 31) return ["nop", "NOP"];
+    if ([24, 27, 28, 30].includes(id)) return ["mem", { 24: "SYS_EN_MAIN", 27: "SYS_UBLK_C22", 28: "SYS_EXIT", 30: "SYS_SEND_CTRL" }[id] + " (memcpy local task)"];
+    if ([33, 34, 35, 36, 37, 40].includes(id)) return ["mem", "memcpy control task"];
+    if (id >= 32) return ["ctrl", id === 43 ? "control task: the topic-05 sentinel uses 43" : "free control-task ID (0–63 allowed)"];
+    if (arch === "wse2") {
+      if (id >= 20 && id <= 23) return ["mem", { 20: "SYS_RXCTX", 21: "MEMCPYD2H_DATA", 22: "RXCOMMAND", 23: "MEMCPYH2D_DATA" }[id] + " (memcpy color)"];
+      if (id <= 23) return ["both", "color " + id + ": data task, or a local task if you do not receive on this color"];
+      return ["local", "local task"];
+    } else {
+      if (id <= 1) return ["mem", "input queue " + id + " (memcpy)"];
+      if (id <= 7) return ["data", "data task on input queue " + id];
+      if (id >= 21 && id <= 23) return ["memsoft", "local ID marked \"reserved (memcpy)\" in the topic-09 WSE-3 map"];
+      return ["local", "local task"];
+    }
+  }
+  const strip = (arch, y, label) => {
+    txt(svg, 8, y + 16, label, { "font-size": 13, "font-weight": 700 });
+    for (let id = 0; id < N; id++) {
+      const [k, tip] = kind(arch, id), x = X0 + id * W;
+      const r = el("rect", { x, y, width: W - 2, height: 24, rx: 2, class: K[k][0], "stroke-width": 1, opacity: k === "memsoft" ? 0.55 : 1 }, svg);
+      const t = el("title", {}, r); t.textContent = `${arch.toUpperCase()} ID ${id}: ${tip}`;
+      if (id % 4 === 0 || id === 43 || id === 31) txt(svg, x + (W - 2) / 2, y + 36, id, { "text-anchor": "middle", "font-size": 9, class: "muted" });
+    }
+  };
+  strip("wse2", 40, "WSE-2"); strip("wse3", 110, "WSE-3");
+  // highlights: program 02 data task 2 (wse3 queue 2) and Lab 3 IDs 10-13
+  [[40, 2], [110, 2]].forEach(([y, id]) => el("rect", { x: X0 + id * W - 2, y: y - 3, width: W + 2, height: 30, rx: 3, fill: "none", stroke: cssVar("--text"), "stroke-width": 1.6 }, svg));
+  [40, 110].forEach(y => el("rect", { x: X0 + 10 * W - 2, y: y - 3, width: 4 * W + 2, height: 30, rx: 3, fill: "none", stroke: cssVar("--text"), "stroke-width": 1.6 }, svg));
+  txt(svg, X0 + 2 * W + 6, 30, "program 02", { "text-anchor": "middle", "font-size": 10 });
+  txt(svg, X0 + 12 * W, 30, "Lab 3: 10–13", { "text-anchor": "middle", "font-size": 10 });
+  // 5-bit reach bracket
+  const by = 170;
+  el("path", { d: `M${X0} ${by} V${by + 8} H${X0 + 31 * W - 2} V${by}`, fill: "none", stroke: cssVar("--accent"), "stroke-width": 1.6 }, svg);
+  txt(svg, X0 + 15.5 * W, by + 24, "@activate / .activate / .unblock reach 0–30 (5-bit field)", { "text-anchor": "middle", "font-size": 11, class: "f-acc" });
+  el("path", { d: `M${X0 + 32 * W} ${by} V${by + 8} H${X0 + N * W - 2} V${by}`, fill: "none", stroke: cssVar("--green"), "stroke-width": 1.6 }, svg);
+  txt(svg, X0 + 38 * W, by + 24, "control wavelets only", { "text-anchor": "middle", "font-size": 11, class: "f-grn" });
+  // legend
+  const leg = [["blu", "data task (WSE-2: = color)"], ["amb", "local task"], ["red", "memcpy"], ["pur", "teardown 29"], ["box", "NOP 31"], ["grn", "control only"]];
+  leg.forEach(([c, l], i) => { const x = 10 + (i % 3) * 250, y = 222 + Math.floor(i / 3) * 22;
+    el("rect", { x, y, width: 14, height: 12, rx: 2, class: c, "stroke-width": 1 }, svg); txt(svg, x + 20, y + 10, l, { "font-size": 11 }); });
+  txt(svg, 10, 290, "Faded red on WSE-3 21–23: marked reserved in the topic-09 task map. Highlighted IDs: courses' own programs.", { "font-size": 10, class: "muted" });
+})();
+
+/* ---------- microthread collision explorer ---------- */
+(function () {
+  const svg = $("#mt-svg"), out = $("#mt-out"), box = $("#mt-ops");
+  const OPS = [["se", "send E", "out"], ["sw", "send W", "out"], ["rw", "recv W", "in"], ["re", "recv E", "in"]];
+  const PRE = { hang: { se: 2, sw: 3, rw: 2, re: 3 }, fixed: { se: 2, sw: 3, rw: 4, re: 5 }, ut: { se: 2, sw: 3, rw: 2, re: 3 } };
+  const PRE_UT = { hang: {}, fixed: {}, ut: { rw: 4, re: 5 } };
+  OPS.forEach(([k, lab, dir]) => {
+    const row = document.createElement("div"); row.className = "op-row";
+    row.innerHTML = `<b>${lab}</b><label>${dir === "out" ? "output" : "input"} queue <select id="mt-q-${k}"></select></label>` +
+      `<label>.ut_id <select id="mt-u-${k}"><option value="d">default (= queue)</option>${[0,1,2,3,4,5,6,7].map(i => `<option value="${i}">${i}</option>`).join("")}</select></label>`;
+    box.appendChild(row);
+  });
+  function fillQueues() {
+    const arch = $("#mt-arch").value;
+    OPS.forEach(([k, , dir]) => {
+      const s = $("#mt-q-" + k), cur = s.value, max = dir === "out" && arch === "wse2" ? 5 : 7;
+      s.innerHTML = [...Array(max + 1).keys()].map(i => `<option value="${i}">${i}${i < 2 ? " (memcpy)" : ""}</option>`).join("");
+      if (cur !== "" && +cur <= max) s.value = cur; else s.value = Math.min(2, max);
+      const u = $("#mt-u-" + k); u.disabled = arch === "wse2"; if (arch === "wse2") u.value = "d";
+    });
+  }
+  function applyPreset(p) {
+    if (p === "custom") return;
+    if (p === "ut") $("#mt-arch").value = "wse3";
+    fillQueues();
+    OPS.forEach(([k]) => { $("#mt-q-" + k).value = PRE[p][k]; $("#mt-u-" + k).value = PRE_UT[p][k] !== undefined ? PRE_UT[p][k] : "d"; });
+  }
+  function cfg() {
+    const arch = $("#mt-arch").value, c = {};
+    OPS.forEach(([k]) => { const q = +$("#mt-q-" + k).value, u = $("#mt-u-" + k).value; c[k] = { q, ut: arch === "wse2" || u === "d" ? q : +u, explicit: arch === "wse3" && u !== "d" }; });
+    return { arch, c };
+  }
+  function same(c, p, ut) { return OPS.every(([k]) => c[k].q === PRE[p][k] && c[k].ut === (ut[k] !== undefined ? ut[k] : PRE[p][k])); }
+  function draw() {
+    const { arch, c } = cfg(); svg.innerHTML = "";
+    const lanes = [...Array(8)].map(() => []);
+    OPS.forEach(([k, lab, dir]) => lanes[c[k].ut].push({ k, lab, dir, q: c[k].q, explicit: c[k].explicit }));
+    const LW = 80, X0 = 20;
+    lanes.forEach((ops, i) => {
+      const x = X0 + i * LW, bad = ops.length > 1;
+      el("rect", { x, y: 26, width: LW - 6, height: 150, rx: 6, class: bad ? "red" : (ops.length ? "grn" : "box"), "stroke-width": bad ? 2 : 1 }, svg);
+      txt(svg, x + (LW - 6) / 2, 18, "UT" + i, { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: bad ? "f-red" : "" });
+      ops.forEach((o, j) => {
+        el("rect", { x: x + 5, y: 36 + j * 44, width: LW - 16, height: 38, rx: 4, class: o.dir === "out" ? "acc" : "blu", "stroke-width": 1 }, svg);
+        txt(svg, x + (LW - 6) / 2, 52 + j * 44, o.lab, { "text-anchor": "middle", "font-size": 11, "font-weight": 600 });
+        txt(svg, x + (LW - 6) / 2, 67 + j * 44, `${o.dir === "out" ? "oq" : "iq"} ${o.q}${o.explicit ? " · ut" : ""}`, { "text-anchor": "middle", "font-size": 10, class: "mono" });
+      });
+      if (bad) txt(svg, x + (LW - 6) / 2, 168, "collision", { "text-anchor": "middle", "font-size": 10, "font-weight": 700, class: "f-red" });
+    });
+    const msgs = [];
+    const coll = lanes.map((o, i) => [i, o]).filter(([, o]) => o.length > 1);
+    coll.forEach(([i, o]) => msgs.push(`UT${i}: ${o.map(x => x.lab).join(" + ")} run concurrently → not allowed`));
+    const dupQ = {};
+    OPS.forEach(([k, lab, dir]) => { const key = dir + c[k].q; (dupQ[key] = dupQ[key] || []).push(lab); });
+    Object.entries(dupQ).filter(([, v]) => v.length > 1).forEach(([key, v]) => msgs.push(`${key.startsWith("out") ? "output" : "input"} queue ${key.replace(/\D/g, "")} used by ${v.join(" and ")}: one queue carries one color stream at a time`));
+    OPS.forEach(([k, lab]) => { if (c[k].q < 2) msgs.push(`${lab} uses queue ${c[k].q}, which memcpy owns${arch === "wse3" ? " on WSE-3" : " (queue 0 on WSE-2)"}`); });
+    let verdict;
+    if (same(c, "hang", {})) verdict = `MEASURED: this is the first Lab 3. Simulator FATAL "trying to term ut_instr[3], but it's not ours" at cycle ${arch === "wse3" ? "2,123 (WSE-3)" : "2,125 (WSE-2)"}; the host then waits forever.`;
+    else if (same(c, "fixed", {})) verdict = `MEASURED: this is the shipped Lab 3. It runs to SUCCESS on ${arch === "wse3" ? "WSE-3" : "WSE-2"}.`;
+    else if (arch === "wse3" && same(c, "ut", PRE_UT.ut)) verdict = ($("#utfix-tag").dataset.result || "MEASURED: input queues 2, 3 with .ut_id 4, 5 runs to SUCCESS on WSE-3.");
+    else verdict = msgs.length ? "PREDICTED to fail (topic-15 rule); this configuration was not run." : "PREDICTED to work: every op has its own microthread (not run).";
+    out.textContent = (msgs.length ? msgs.join("\n") : "No two ops share a microthread.") + "\n" + verdict;
+    $("#hang-callout").style.outline = coll.length ? `2px solid var(--red)` : "none";
+  }
+  $("#mt-arch").onchange = () => { fillQueues(); if ($("#mt-preset").value === "ut" && $("#mt-arch").value === "wse2") $("#mt-preset").value = "custom"; draw(); };
+  $("#mt-preset").onchange = () => { applyPreset($("#mt-preset").value); draw(); };
+  OPS.forEach(([k]) => { $("#mt-q-" + k).onchange = $("#mt-u-" + k).onchange = () => { $("#mt-preset").value = "custom"; draw(); }; });
+  fillQueues(); applyPreset("hang"); draw();
 })();
 </script>
 </body>
