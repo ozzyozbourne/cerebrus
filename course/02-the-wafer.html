@@ -5,208 +5,542 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>One Chip, One Wafer</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+  /* chapter-local helpers */
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .panels > svg { width: 100%; height: auto; display: block; }
+  @media (max-width: 680px) { .panels { grid-template-columns: 1fr; } .panels > svg { max-width: 380px; margin: 0 auto; } }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: var(--surface); color: var(--text); border: none; padding: 5px 12px; font: 600 13.5px var(--sans); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.on { background: var(--accent); color: var(--on-accent); }
+  table.ro { font: 13.5px/1.45 var(--mono); margin: 10px 0 0; }
+  table.ro td, table.ro th { padding: 5px 8px; }
+  table.ro td.dep { color: var(--accent); font-weight: 650; }
+  .widget .table-wrap { margin: 10px 0 0; }
+  .note { font-size: 14px; color: var(--muted); }
+</style>
 </head>
 <body>
 <main>
 <div class="kicker">Chapter 2 · Part I · Why wafer-scale</div>
 <h1>One chip, one wafer</h1>
-<p class="lede">A normal chip is one small rectangle cut from a 300 mm silicon wafer. Cerebras keeps the whole wafer as one chip: 46,225 mm², about 57× the area of an H100 die. This chapter covers what that buys, what it costs, and how a chip that size survives manufacturing defects.</p>
+<p class="lede">A normal chip is one small rectangle cut from a 300 mm silicon wafer. Cerebras keeps the whole wafer as one chip: 46,225 mm² <span class="tag vendor">Vendor</span>, about 57× the area of an H100 die (~814 mm²) <span class="tag derived">Derived</span>. This chapter covers what that buys, what it costs, and how a chip that size survives manufacturing defects.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
 <ul>
-<li>Quote the WSE-2 and WSE-3 specs with the right caveats (sparse vs dense FLOPs, vendor vs measured).</li>
-<li>Explain how small cores plus redundancy turn "every wafer has defects" into a usable chip.</li>
-<li>Say why software sees a clean rectangle of PEs, and how big that rectangle is.</li>
+<li>Say what keeping the wafer whole buys (on-silicon bandwidth, 44 GB of SRAM) and what it costs (unused corners, spare cores, power delivery, a narrow I/O rim).</li>
+<li>Quote the WSE-2 and WSE-3 specs with the right caveats: sparse vs dense FLOPs, and vendor vs analyst vs measured numbers.</li>
+<li>Divide a wafer total by its 900,000 PEs and get the per-PE, per-cycle budget the rest of the course uses.</li>
+<li>Use the Poisson yield model to show why tiny cores plus spares are not optional.</li>
+<li>Say why software sees a clean rectangle of PEs, how big it is on a CS-2, and why your program gets slightly less.</li>
 </ul>
 </div>
 
 <h2>From reticle to wafer</h2>
-<p>Lithography exposes a wafer one <em>reticle</em> field at a time — at most about 26 × 33 mm. That is why the largest conventional GPU dies stop near 800 mm², and why NVIDIA's B200 glues two such dies together with a 10 TB/s link. Cerebras prints an ordinary grid of reticle-sized fields, then adds wires <em>across the scribe lines</em> between them so that the on-chip network continues seamlessly from one field to the next. The result is the largest square that fits in the wafer, wired as one chip.</p>
+<p>Lithography exposes a wafer one <em>reticle</em> field at a time, and a field is at most about 26 × 33 mm <span class="tag indep">Industry standard</span>. That is why the largest conventional GPU dies stop near 800 mm², and why NVIDIA's B200 joins two such dies with a 10 TB/s die-to-die link <span class="tag vendor">Vendor</span>. Cerebras prints an ordinary grid of reticle-sized fields, then adds wires <em>across the scribe lines</em> (the narrow strips between fields where a saw would normally cut). The on-chip network therefore continues from one field to the next as if the boundary were not there. Cerebras calls that network the <em>fabric</em>: a 2-D mesh linking every core to its four neighbours (Chapter 4). Each core is a <em>processing element</em> (PE); the course uses the two words interchangeably.</p>
+<p>The result is a square about 215 mm on a side (√46,225 = 215) <span class="tag derived">Derived</span>, the largest that fits on the wafer. A full 215 mm square has a 304 mm diagonal, slightly more than the 300 mm wafer, so either the corners are trimmed or 46,225 mm² is rounded; the sources do not say <span class="tag derived">Derived</span>. The drawing below is to scale and shows that clipping honestly.</p>
 
 <figure>
-<svg viewBox="0 0 760 330" width="760" role="img" aria-label="Wafer with conventional dies versus one wafer-scale engine">
-  <defs><clipPath id="wcl"><circle cx="165" cy="165" r="140"/></clipPath><clipPath id="wcl2"><circle cx="545" cy="165" r="140"/></clipPath></defs>
-  <text x="165" y="18" text-anchor="middle" font-weight="700">Conventional: dice into ~60 GPUs</text>
-  <circle cx="165" cy="165" r="140" class="box" stroke-width="1.5"/>
-  <g clip-path="url(#wcl)" id="dies"></g>
-  <text x="165" y="322" text-anchor="middle" font-size="13" class="muted">each die ≤ one reticle (~800 mm²)</text>
-
-  <text x="545" y="18" text-anchor="middle" font-weight="700">Cerebras: keep the largest square</text>
-  <circle cx="545" cy="165" r="140" class="box" stroke-width="1.5"/>
-  <rect x="438" y="58" width="214" height="214" class="acc" stroke-width="2"/>
-  <g id="stitch"></g>
-  <text x="545" y="160" text-anchor="middle" font-weight="700" font-size="16">WSE</text>
-  <text x="545" y="180" text-anchor="middle" font-size="13">46,225 mm²</text>
-  <text x="545" y="322" text-anchor="middle" font-size="13" class="muted">reticle fields stitched by wires across scribe lines</text>
+<div class="panels">
+<svg id="f1a" viewBox="0 0 340 372" role="img" aria-label="A 300 mm wafer diced into whole reticle-sized GPU dies, drawn to scale">
+  <text x="170" y="16" text-anchor="middle" font-weight="700">Conventional: dice into ~60 GPUs</text>
+  <circle cx="170" cy="182" r="150" class="box" stroke-width="1.5"/>
+  <g id="dies"></g>
+  <text id="dies-n" x="170" y="356" text-anchor="middle" font-size="13" class="muted"></text>
 </svg>
-<figcaption><b>Same wafer, two products.</b> Dashed lines on the right are reticle boundaries that the fabric crosses as if they were not there <span class="tag vendor">Vendor (Hot Chips 2019/2022)</span>.</figcaption>
+<svg id="f1b" viewBox="0 0 340 372" role="img" aria-label="The same wafer kept whole: the largest square, stitched across reticle fields, drawn to scale">
+  <defs><clipPath id="wcl2"><circle cx="170" cy="182" r="150"/></clipPath></defs>
+  <text x="170" y="16" text-anchor="middle" font-weight="700">Cerebras: keep the largest square</text>
+  <circle cx="170" cy="182" r="150" class="box" stroke-width="1.5"/>
+  <g clip-path="url(#wcl2)">
+    <rect x="62.5" y="74.5" width="215" height="215" class="acc" stroke-width="2"/>
+    <g id="stitch"></g>
+  </g>
+  <text x="170" y="176" text-anchor="middle" font-weight="700" font-size="16">WSE</text>
+  <text x="170" y="196" text-anchor="middle" font-size="13">46,225 mm²</text>
+  <text x="170" y="56" text-anchor="middle" font-size="11.5" class="muted">corner silicon: never used</text>
+  <text x="170" y="341" text-anchor="middle" font-size="13" class="muted">215 × 215 mm, clipped by the wafer edge</text>
+  <text x="170" y="358" text-anchor="middle" font-size="13" class="muted">dashed = reticle fields (count illustrative)</text>
+</svg>
+</div>
+<figcaption><b>Same wafer, two products, both to scale (1 px = 1 mm).</b> Left: only whole 26 × 33 mm dies are counted; the fragments at the rim are waste. Right: the dashed lines are reticle boundaries that the fabric crosses as if they were not there <span class="tag vendor">Vendor (Hot Chips 2019/2022, via secondary extracts)</span>. The 9 × 7 field grid is schematic: each field fits a reticle, but the real field count was not confirmed for this course.</figcaption>
 </figure>
 
+<p>Wafer stitching is one of three ways to get past the reticle limit. They differ in where the boundaries are and how defects are handled.</p>
+<div class="table-wrap"><table>
+<tr><th>Approach</th><th>Example</th><th>Crossing a die boundary</th><th>Defect handling</th><th>Size limit</th></tr>
+<tr><td>Multi-die package</td><td>NVIDIA B200</td><td>one 10 TB/s die-to-die link <span class="tag vendor">Vendor</span></td><td>test, bin or discard each die before packaging</td><td>2 reticles</td></tr>
+<tr><td>Known-good-die tiles</td><td>Tesla Dojo (as described by Theseus)</td><td>package-level links at every die edge</td><td>test dies first; assemble only good ones</td><td>tile / package size</td></tr>
+<tr><td>Wafer stitching</td><td>Cerebras WSE</td><td>on-wafer wires under 1 mm, same as inside a field <span class="tag vendor">Vendor</span></td><td>spare cores and spare links, repaired in place</td><td>one wafer</td></tr>
+</table></div>
+<p class="note">An academic comparison (Theseus, arXiv:2407.02079) argues that the known-good-die route may yield better than stitching. That is an argument, not a measurement <span class="tag indep">Indep</span>.</p>
+
+<h2>What the wafer buys</h2>
+<p>Keeping the wafer whole buys one thing above all: data never has to leave the silicon. On a GPU cluster, every byte that moves between chips crosses a package edge, a SerDes and a cable; NVLink gives an H100 about 0.9 TB/s <span class="tag vendor">Vendor, not re-verified</span>. On the wafer, wires between neighbouring cores are under 1 mm long <span class="tag vendor">Vendor (Hot Chips 2022)</span>, and the fabric linking all of them carries 214 Pb/s ≈ 27 PB/s <span class="tag vendor">Vendor</span>, about 30,000× one H100's NVLink <span class="tag derived">Derived</span>.</p>
+<p>Area is the second gain. About half of each core's area is SRAM <span class="tag vendor">Vendor (HC34: 50:50 logic to SRAM)</span>, so the wafer holds 44 GB of single-cycle memory: the "capacity at that speed" from Chapter 1. A GPU cannot get that on one die, because one die stops at one reticle.</p>
+
+<div class="widget" id="bw">
+<h4>Bandwidth ladder: on the wafer vs between chips</h4>
+<p class="hint">Log scale. Toggle to divide by silicon area and see how much of the gap is just size. Hover a bar for its source.</p>
+<div class="controls">
+<div class="seg" role="group" aria-label="Normalisation"><button type="button" class="on" data-m="chip">per chip</button><button type="button" data-m="mm2">per mm² of silicon</button></div>
+</div>
+<svg id="bw-svg" viewBox="0 0 700 290" width="700" role="img" aria-label="Log-scale bar chart of link and memory bandwidths"></svg>
+<div class="readout" id="bw-out" aria-live="polite"></div>
+</div>
+<p class="note">Two cautions. The WSE numbers are aggregates over 900,000 private memories and links, not one pipe any core can use at that rate. The fair on-chip GPU counterpart is its aggregate register-file and shared-memory bandwidth, tens to hundreds of TB/s (Chapter 1), which is not shown here. The point of the ladder is the off-chip links: the wafer replaces them with on-silicon wires.</p>
+
+<p>The wafer is also big in <em>time</em>. A wavelet moves about one hop per cycle <span class="tag indep">Indep (arXiv:2209.15040)</span>. At the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span>, crossing the 750-column width of a CS-2 takes about 0.9 µs, and going corner to corner (750 + 994 = 1,744 hops) takes about 2 µs <span class="tag derived">Derived</span>. That is short for a whole machine, but about a thousand times longer than one hop to a neighbour, which is why the algorithms in later chapters favour locality. The rest of this chapter is the price of the bet.</p>
+
 <h2>The numbers, generation by generation</h2>
-<p>Every generation is the same 46,225 mm² square. Gains come from process shrinks, wider SIMD, and in 2026 a higher clock.</p>
+<p>Every generation is the same 46,225 mm² square. Gains come from process shrinks, wider SIMD, and in 2026 (per press analysis) a higher clock.</p>
 <div class="table-wrap"><table>
 <tr><th>Spec</th><th>WSE-1 (CS-1, 2019)</th><th>WSE-2 (CS-2, 2021)</th><th>WSE-3 (CS-3, 2024)</th><th>WSE-3T (CS-4, 2026)</th></tr>
-<tr><td>Process</td><td>TSMC 16nm</td><td>TSMC 7nm</td><td>TSMC 5nm</td><td>same silicon as WSE-3, higher clock</td></tr>
+<tr><td>Process</td><td>TSMC 16nm*</td><td>TSMC 7nm</td><td>TSMC 5nm</td><td>same silicon as WSE-3; higher clock <span class="tag indep">The Register</span></td></tr>
 <tr><td>Transistors</td><td>1.2 T</td><td>2.6 T</td><td>4 T</td><td>4 T</td></tr>
 <tr><td>Cores (PEs)</td><td>400,000</td><td>850,000</td><td>900,000</td><td>900,000</td></tr>
 <tr><td>On-wafer SRAM</td><td>~18 GB</td><td>40 GB</td><td>44 GB</td><td>44 GB</td></tr>
-<tr><td>SRAM per PE</td><td>48 KB</td><td>48 KB</td><td>48 KB + 512 B cache</td><td>—</td></tr>
+<tr><td>SRAM per PE</td><td>48 KB</td><td>48 KB + 256 B cache</td><td>48 KB + 512 B cache</td><td>same as WSE-3</td></tr>
 <tr><td>Memory bandwidth</td><td>—</td><td>20 PB/s</td><td>21 PB/s</td><td>43.2 PB/s</td></tr>
-<tr><td>Fabric bandwidth</td><td>—</td><td>220 Pb/s</td><td>214 Pb/s (~27 PB/s)</td><td>53.5 PB/s</td></tr>
-<tr><td>FP16 SIMD per core</td><td>4-wide*</td><td>4-wide*</td><td>8-wide FP16/BF16, 16-wide INT8</td><td>—</td></tr>
-<tr><td>Peak AI compute</td><td>—</td><td>~7.5 PF dense <span class="tag analyst">Analyst</span></td><td>125 PF <em>sparse</em> <span class="tag vendor">Vendor</span>; ~15.6 PF dense <span class="tag analyst">Analyst</span></td><td>250 PF sparse; dense disputed</td></tr>
-<tr><td>System power</td><td>—</td><td>15–20 kW (sources conflict)</td><td>~23 kW, 15U</td><td>3 wafers per rack</td></tr>
+<tr><td>Fabric bandwidth</td><td>—</td><td>27.5 PB/s (220 Pb/s)</td><td>26.8 PB/s (214 Pb/s)</td><td>53.5 PB/s (~428 Pb/s)</td></tr>
+<tr><td>FP16 SIMD per core</td><td>4-wide*</td><td>4-wide*</td><td>8-wide FP16/BF16, 16-wide INT8</td><td>same as WSE-3</td></tr>
+<tr><td>Peak AI compute</td><td>—</td><td>75 PF sparse; ~7.5 PF dense <span class="tag analyst">Analyst</span></td><td>125 PF <em>sparse</em>; ~15.6 PF dense <span class="tag analyst">Analyst</span></td><td>250 PF sparse; dense disputed (~25 PF per The Register <span class="tag analyst">Analyst</span>)</td></tr>
+<tr><td>System power</td><td>—</td><td>15–20 kW (sources conflict)</td><td>~23 kW peak, 15U</td><td>not published (3 wafers per rack; each "backpack" has 2× CS-3 power and cooling)</td></tr>
 </table></div>
-<p style="font-size:14px;color:var(--muted)">All rows <span class="tag vendor">Vendor</span> unless tagged. *4-wide FP16 on WSE-1/2 comes from a secondary source. The WSE-1 process node is widely reported but was not re-verified for this course.</p>
+<p class="note">All cells <span class="tag vendor">Vendor</span> unless tagged; byte/bit conversions in the fabric row are <span class="tag derived">Derived</span>. *4-wide FP16 on WSE-1/2 comes from a secondary source; the WSE-1 process node is widely reported but was not re-verified for this course. WSE-3T's bandwidth and sparse figures are almost exactly 2× WSE-3's on identical silicon, which would imply a roughly doubled clock; the press attributes the gain to clock, and Cerebras has not said. The slight WSE-2 → WSE-3 fabric drop is as published and unexplained.</p>
 
 <div class="stat-row">
   <div class="stat"><div class="v">900k</div><div class="l">PEs on a WSE-3 <span class="tag vendor">Vendor</span></div></div>
-  <div class="stat"><div class="v">48 KB</div><div class="l">SRAM per PE, every generation</div></div>
-  <div class="stat"><div class="v">~737k</div><div class="l">PEs a CS-2 program can use <span class="tag sdk">SDK 2.10.1</span></div></div>
-  <div class="stat"><div class="v">none</div><div class="l">official clock frequency published</div></div>
+  <div class="stat"><div class="v">48 KB</div><div class="l">SRAM per PE, every generation <span class="tag vendor">Vendor</span></div></div>
+  <div class="stat"><div class="v">~737k</div><div class="l">PEs a CS-2 program can use <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span></div></div>
+  <div class="stat"><div class="v">none</div><div class="l">official clock published; SDK benchmarks assume 850 MHz <span class="tag sdk">SDK 2.10.1</span></div></div>
 </div>
 
 <div class="callout key">
 <strong>Read the FLOPs carefully</strong>
-WSE-3's 125 PF is a <em>sparse</em> FP16 figure; Cerebras has never published a dense one. A sanity check agrees with the analyst estimate: 900k cores × 8 FP16 FMAs (16 FLOPs) × ~1 GHz ≈ 14–15 PF dense <span class="tag derived">Derived; clock unconfirmed</span>. The WSE-2 → WSE-3 jump is mostly SIMD width (4 → 8) plus 6% more cores. NVIDIA plays the same game: the H100's 1,979 TF BF16 is a 2:4-sparsity number; dense is ~989 TF.
+<p>WSE-3's 125 PF is a <em>sparse</em> FP16 figure; Cerebras has never published a dense one. A sparse figure counts the multiply-adds the chip skips because an operand is zero as if they had been done. Cerebras's dataflow cores skip zeros that are never sent (Chapter 3). Analysts get ~15.6 PF dense by assuming 8:1 unstructured sparsity <span class="tag analyst">Analyst</span>: the headline counts 8 operations for every one actually performed, as if 7 of every 8 were zeros. (For WSE-2 they assumed 10:1, so the ratio itself is a guess.) NVIDIA plays a milder version of the game. The H100's 1,979 TF BF16 is a "2:4 sparsity" number, a fixed pattern of 2 zeros in every 4 weights, worth exactly 2×; dense is ~989 TF <span class="tag vendor">Vendor</span>.</p>
+<p>A first-principles check: 900k cores × 8 FP16 FMAs (16 FLOPs) × clock. At the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span> that gives ≈ 12.2 PF; at 1 GHz, ≈ 14.4 PF <span class="tag derived">Derived; clock unconfirmed</span>. Both land near the analyst estimate. The WSE-2 → WSE-3 jump is mostly SIMD width (4 → 8) plus 6% more cores <span class="tag derived">Derived</span>.</p>
+</div>
+
+<h2>One wafer, 900,000 small machines</h2>
+<p>A wafer total is easier to trust once you divide it by the PE count and by the clock. Every later chapter works at that scale: one PE, 48 KB, 32-bit links, a few words per cycle. Pick a generation and drag the clock. The cells in orange depend on the clock, which is the one input nobody publishes.</p>
+
+<div class="widget" id="pe">
+<h4>Per-PE budget and dense-FLOPs calculator</h4>
+<div class="controls">
+<div class="seg" role="group" aria-label="Generation"><button type="button" data-g="0">WSE-2</button><button type="button" class="on" data-g="1">WSE-3</button></div>
+<label>Clock <input type="range" id="pe-f" min="0.6" max="1.2" step="0.01" value="0.85"> <span id="pe-fv" class="mono"></span></label>
+<button class="btn secondary" type="button" id="pe-sdk">SDK 850 MHz</button>
+</div>
+<div class="table-wrap"><table class="ro"><thead><tr><th>Wafer total</th><th>÷ PEs</th><th>÷ clock</th><th>Means later</th></tr></thead><tbody id="pe-tb"></tbody></table></div>
+<svg id="pe-svg" viewBox="0 0 700 150" width="700" role="img" aria-label="Dense FLOPs estimate compared with analyst and vendor sparse figures"></svg>
+<p class="note" style="margin:6px 0 0">Totals <span class="tag vendor">Vendor</span>; analyst dense <span class="tag analyst">Analyst</span>; every per-PE and per-cycle cell <span class="tag derived">Derived</span>; 850 MHz <span class="tag sdk">SDK 2.10.1</span>.</p>
+</div>
+
+<p>Read across a row and the marketing totals become one small machine repeated 900,000 times: about 48 KB of memory that can serve about 7 words a cycle, roughly 9 words a cycle of mesh links, and an 8-wide FP16 unit. The rows agree with each other within the rounding of the vendor figures. Memory bandwidth stays under the 32 B/cycle ceiling of 8 single-cycle 32-bit banks (Chapter 3), and fabric bandwidth sits between 4 links × 2 directions × 4 B = 32 B/cycle and 40 B/cycle with the ramp added. That agreement is the best evidence we have that the totals are real.</p>
+
+<div class="callout ok">
+<strong>What a real kernel gets</strong>
+<p>The SDK ships a benchmark that measures this: <code>single-tile-matvec</code> runs an N × N fp32 matrix-vector product on each PE and counts every SRAM byte it touches (12N² + 4N bytes). In the 2.10.1 simulator, N = 100 on one WSE-3 PE took 10,154 cycles and touched 120,400 bytes: about 12 B/cycle, and about one fp32 multiply-add per cycle <span class="tag measured">Measured: SDK 2.10.1 simulator, wse3, 8 × 3 fabric, width = height = 1, tile_size = 100</span>. The benchmark's own scaling to the 745,500-PE CS-2 fabric at 850 MHz gives 7.5 PB/s and 1.24 PF fp32 <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span>. WSE-2 gives the same within a few cycles (10,160).</p>
+<p>Two lessons. A fp32 FMA stream uses about 3 words per cycle, roughly 40% of the ~7 the vendor total implies, because the vendor peak assumes the full 16-bit SIMD path. And the per-PE rate does not change with N, because there is no cache to miss (Chapter 3). N = 100 is close to the largest square fp32 matrix that fits in 48 KB (40 KB of A).</p>
 </div>
 
 <h2>Surviving defects</h2>
-<p>Every wafer has defects — a few dozen point flaws is normal. On a GPU wafer a defect landing in a die usually kills or downgrades that die, and the bigger the die, the more silicon goes with it. A wafer-scale chip cannot throw itself away, so Cerebras makes the unit of failure tiny: a core is about 0.05 mm², roughly 1/100th of an H100 SM. Spare cores and spare fabric links are built in, and the fabric is configured at manufacturing time to route around bad cores.</p>
+<p>Every wafer has defects. Cerebras's own model assumes about 46 on the wafer-scale square <span class="tag vendor">Vendor modelling</span>; real defect densities are not published. On a GPU wafer a defect landing in a die usually kills or downgrades that die, and the bigger the die, the more silicon goes with it. GPUs already soften this with spares: an H100 SXM enables 132 SMs <span class="tag vendor">Vendor</span> out of the 144 in the full GH100 design <span class="tag indep">Industry figure, not re-verified</span>, so a defect in one SM costs that SM, not the die. An SM (streaming multiprocessor) is the GPU's core unit.</p>
+<p>A wafer-scale chip cannot throw itself away, so Cerebras pushes the same idea about 100× finer. A core is about 0.05 mm², roughly 1/100th of an H100 SM <span class="tag vendor">Vendor</span>; another source says ~0.038 mm². Either way it is tiny. (0.05 mm² × 900k = 45,000 mm², 97% of the square; 0.038 mm² gives 74%. The larger figure is probably the whole tile including its router <span class="tag derived">Derived</span>.) Spare cores and spare fabric links are built in, and the fabric is reconfigured to route around bad cores <span class="tag vendor">Vendor</span>. When and how that configuration is done is not public.</p>
+
+<div class="callout">
+<strong>Worked example: why spares are not optional</strong>
+<p>With randomly placed point defects at density D, an area A is defect-free with probability e<sup>−D·A</sup> (the Poisson yield model). Take Cerebras's own 0.001 defects/mm². A full-reticle 26 × 33 mm die (858 mm²) is defect-free with probability e<sup>−0.858</sup> ≈ 42%. A 46,225 mm² wafer chip with <em>no</em> redundancy is defect-free with probability e<sup>−46</sup> ≈ 10<sup>−20</sup>: you would never ship one. With 0.05 mm² cores, the same 46 defects disable about 46 of 900,000 cores (0.005%), and a modest pool of spares absorbs them <span class="tag derived">Derived, simple Poisson model</span>.</p>
+</div>
+
+<div class="widget" id="yc">
+<h4>Yield vs unit size</h4>
+<p class="hint">The fraction of units that come out defect-free, e<sup>−D·A</sup>, against the area A of the unit you would lose. Move the density; hover a point.</p>
+<div class="controls">
+<label>Defect density <input type="range" id="yc-d" min="0.0002" max="0.003" step="0.0001" value="0.001"> <span id="yc-dv" class="mono"></span></label>
+</div>
+<svg id="yc-svg" viewBox="0 0 700 300" width="700" role="img" aria-label="Poisson yield curve against unit area on a log axis"></svg>
+<div class="readout" id="yc-out" aria-live="polite"></div>
+<p class="note" style="margin:6px 0 0">Model <span class="tag derived">Derived</span>. Areas: WSE core 0.05 mm² <span class="tag vendor">Vendor</span>; H100 SM ≈ 814 / 132 ≈ 6.2 mm², an upper bound because the die also holds caches and I/O <span class="tag derived">Derived</span>; H100 die ~814 mm² <span class="tag indep">Industry figure</span>; reticle 858 mm² <span class="tag indep">Industry standard</span>; WSE 46,225 mm² <span class="tag vendor">Vendor</span>.</p>
+</div>
 
 <figure>
-<svg viewBox="0 0 760 250" width="760" role="img" aria-label="Rerouting around a defective core">
-  <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
-  <text x="20" y="20" font-weight="700">Physical cores (with spare column)</text>
+<div class="panels">
+<svg id="f2a" viewBox="0 0 330 290" role="img" aria-label="Physical cores with a spare column; one defective core is bypassed">
+  <defs>
+    <marker id="ar-blu" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
+    <marker id="ar-amb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-amb"/></marker>
+    <marker id="ar-grn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-grn"/></marker>
+  </defs>
+  <text x="20" y="18" font-weight="700">Physical cores (spare column)</text>
   <g id="phys"></g>
-  <text x="420" y="20" font-weight="700">What software sees</text>
+</svg>
+<svg id="f2b" viewBox="0 0 330 290" role="img" aria-label="The logical rectangle software sees">
+  <text x="20" y="18" font-weight="700">What software sees</text>
   <g id="logi"></g>
 </svg>
-<figcaption><b>Repair happens below the programming model.</b> A defective core (red ✕) is skipped and its row shifts into the spare column (dashed). Software sees a perfect rectangle — on a CS-2 that is 750 × 994 fabric positions <span class="tag sdk">SDK 2.10.1</span>. The exact spare-core scheme is not public; this is a schematic.</figcaption>
+</div>
+<figcaption><b>Repair happens below the programming model.</b> A defective core (red ✕) is skipped, and the rest of its row shifts one place into the spare column. The numbers are logical x positions: blue cores are the remapped ones. Software sees a perfect rectangle; on a CS-2 that is 750 × 994 fabric positions (PE slots with a router) <span class="tag sdk">SDK 2.10.1</span>. Spare <em>links</em> exist so that a shifted core still reaches its logical neighbour; Cerebras says the result behaves as a uniform mesh, but the exact hop cost around a repair is not public. This repair mapping is fixed below software and invisible to it. It is not the per-color routing you will program in Chapter 4. The exact spare scheme is not public; this is a schematic.</figcaption>
 </figure>
+
+<p><b>How many spares, and where?</b> Treat each row as a repair segment with one spare. With 46 random defects across ~994 rows, the chance that some row gets two of them is about 65% (the birthday problem), so a single spare per row would fail on most wafers. Cutting each row into 8 segments, each with its own spare, brings the failure rate down to about 12% <span class="tag derived">Derived, toy model</span>. This is why the Hot Chips 2019 slides list both "redundant cores" and "redundant fabric links" <span class="tag vendor">Vendor</span>: spare links let a repair shift around a cluster. Cerebras describes the result as "high yield with minimal spare capacity"; the real scheme is not public. Try it in the simulator below.</p>
 
 <div class="widget" id="yield">
 <h4>Defect simulator: big dies vs tiny cores</h4>
-<p class="hint">Random point defects land on a wafer. On the left, any die they hit is lost. On the right, only the tiny core they hit is lost (and replaced by a spare). Move the slider and re-roll.</p>
+<p class="hint">Random point defects land on a wafer (to scale, 1 px = 1 mm). On the left, any die they hit is lost. On the right, only the tiny core they hit is lost and replaced by a spare. The slider adds or removes defects from the same random pattern; Re-roll draws a new one.</p>
 <div class="controls">
 <label>Defect density <input type="range" id="y-d" min="0.0002" max="0.003" step="0.0001" value="0.001"> <span id="y-dv" class="mono"></span></label>
+<label>GPU accounting <select id="y-acc"><option value="die">discard the whole die</option><option value="sm">disable one SM (~7.8 mm², vendor-style)</option></select></label>
+<label>Spare segments per row <select id="y-seg"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>12</option></select></label>
 <button class="btn secondary" id="y-roll" type="button">Re-roll defects</button>
 </div>
-<svg id="y-svg" viewBox="0 0 700 330" width="700" role="img" aria-label="Defect simulation"></svg>
-<div class="readout" id="y-out"></div>
+<div class="panels">
+<svg id="y-l" viewBox="0 0 330 345" role="img" aria-label="Defects on a wafer of GPU dies"></svg>
+<svg id="y-r" viewBox="0 0 330 345" role="img" aria-label="Defects on a wafer-scale chip"></svg>
+</div>
+<div class="table-wrap"><table class="ro" aria-live="polite"><tbody id="y-out"></tbody></table></div>
+<p class="note" style="margin:6px 0 0">Real fabs bin partially defective GPU dies as cheaper SKUs, so "discard the whole die" is a worst case. The ~7.8 mm² per defect is 2.2 mm² × 164 ÷ 46 <span class="tag derived">Derived from the vendor's 164×</span>. The repair segments are a hypothetical scheme for illustration.</p>
 </div>
 
-<p>Cerebras's own model at 0.001 defects/mm² has the wafer taking 46 defects and losing only about 2.2 mm² of silicon, which it presents as a "164× reduction in dead silicon" versus a GPU <span class="tag vendor">Vendor modelling</span>. The simulator above makes the same point with your own numbers. Spare-core ratios are not published; a widely repeated claim of "70,000 disabled cores" traces only to a blog post and is unverified.</p>
+<p>Cerebras's own model at 0.001 defects/mm² has the wafer taking 46 defects and losing only about 2.2 mm² of silicon (2.2 ÷ 46 ≈ 0.048 mm² per defect, one core each), which it presents as a "164× reduction in dead silicon" versus a GPU <span class="tag vendor">Vendor modelling</span>. That multiplier only works if the GPU loses about one SM per defect; if it discarded whole dies the ratio would be in the thousands. Switch the simulator's accounting to see both. Spare-core ratios are not published; a widely repeated claim of "70,000 disabled cores" traces only to a blog post and is unverified.</p>
+<p>The comparison leaves out two fixed costs. The square uses only about 65% of the round wafer, so about 24,000 mm² of corner silicon is never used, defect or not <span class="tag derived">Derived</span>. And the spare cores and links take up area on every wafer, defective or not. There is also no binning: every wafer has to work. Cerebras trades a small, predictable overhead for having no yield lottery at all.</p>
+
+<p>How big is that overhead? The public record has only a few data points:</p>
+<div class="table-wrap"><table>
+<tr><th></th><th>Marketed cores</th><th>Visible to software</th><th>Fraction</th></tr>
+<tr><td>CS-1 / WSE-1</td><td>400,000 <span class="tag vendor">Vendor</span></td><td>~380,000 usable tiles <span class="tag measured">Measured on hardware (SC20, Cerebras/NETL authors)</span></td><td>~95% <span class="tag derived">Derived</span></td></tr>
+<tr><td>CS-2 / WSE-2</td><td>850,000 <span class="tag vendor">Vendor</span></td><td>750 × 994 = 745,500 fabric positions; a program gets ≤ 743 × 992 ≈ 737k <span class="tag sdk">SDK 2.10.1</span></td><td>~88% / ~87% <span class="tag derived">Derived</span></td></tr>
+<tr><td>CS-3 / WSE-3</td><td>900,000 <span class="tag vendor">Vendor</span></td><td>not published</td><td>—</td></tr>
+</table></div>
+<p>The hidden 5–13% includes spare cores and infrastructure at the edge of the fabric; Cerebras does not publish the split. On a CS-2 the gap is 104,500 cores, so the "70,000 disabled cores" claim is at least arithmetically possible, but it stays unverified. The same SC20 paper gives one of the few hardware-measured efficiency numbers: a BiCGStab stencil solve on CS-1 sustained about 0.86 PF, roughly a third of peak <span class="tag measured">Measured (SC20, Cerebras/NETL authors)</span>.</p>
 
 <h2>Power, cooling and the edges</h2>
 <div class="grid2">
 <div>
 <h3>Power goes in through the face</h3>
-<p>A ~23 kW system cannot feed a wafer from its edges. Power is delivered vertically through the face of the wafer, and a closed water loop (the CS-3 "engine block") removes the heat. A custom connector lets the wafer expand thermally without cracking. The CS-4 puts AC/DC conversion about 0.5 mm from the wafer, versus about 50 mm on GPU boards <span class="tag vendor">Vendor</span>.</p>
+<p>At core voltages below 1 V, 15–20 kW into the wafer means on the order of 20,000 amperes <span class="tag derived">Derived, assuming ~0.8 V; the voltage is not published</span>. Pushed in from the edge across 215 mm of thin metal, that current would lose much of its voltage on the way. So power is delivered vertically through the face of the wafer, and a closed water loop (the CS-3 "engine block") removes the heat. A custom connector lets the wafer expand thermally without cracking <span class="tag indep">Secondary sources</span>.</p>
+<p>The density is not the problem. Spread over 46,225 mm², even the full ~23 kW system figure is about 0.5 W/mm², and the wafer itself draws less <span class="tag derived">Derived</span>. That is below a high-end GPU die (an H100 SXM at ~700 W over ~814 mm² is ~0.9 W/mm²) <span class="tag indep">Industry figures</span>. The hard part is getting tens of thousands of amperes evenly into every part of a 215 mm square. The CS-4 puts AC/DC conversion about 0.5 mm from the wafer, versus about 50 mm on GPU boards <span class="tag vendor">Vendor</span>, which shortens the path that huge current travels.</p>
 </div>
 <div>
 <h3>I/O lives on the rim</h3>
-<p>Data enters and leaves at the wafer edges. That has a software consequence you will meet in Chapter 7: the runtime reserves columns on the west and east sides of your program for host I/O, so on a CS-2 your rectangle of PEs must be 7 columns narrower and 2 rows shorter than the 750 × 994 fabric — about 737k usable PEs out of 850k marketed <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span>.</p>
+<p>Data enters and leaves through I/O channels at the edge of the fabric <span class="tag derived">Derived; physical layout not public</span>. The rim is 860 mm long while the area is 46,225 mm², so I/O grows with the perimeter and compute with the area. Inside, the fabric carries 214 Pb/s. Through the SDK's host channels, about 16 × 7 Gb/s ≈ 112 Gb/s gets in <span class="tag sdk">SDK 2.10.1</span>, a ratio of about 2 million to one, and refilling all 44 GB that way would take about 3 s <span class="tag derived">Derived</span>. The CS-4 raises off-wafer I/O to 2.4 Tb/s per wafer <span class="tag vendor">Vendor</span>, still tiny next to the fabric. This is why weights stay resident or are streamed (Chapters 7 and 8).</p>
+<p>There is a software consequence too, which Chapter 7 covers. To move data from the edge to your PEs, the SDK's memcpy runtime compiles its own small programs onto ordinary PEs that frame your rectangle: columns on the west and east, plus a row above and below. Those PEs are not available to you. On a CS-2 your rectangle must therefore be at least 7 columns narrower and 2 rows shorter than the 750 × 994 fabric: at most 743 × 992 ≈ 737k PEs, against 850k marketed <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span>. The WSE-3 equivalent of 750 × 994 is not published in the SDK or anywhere we could find; expect the same kind of gap below 900k.</p>
 </div>
 </div>
 
 <figure>
-<svg viewBox="0 0 760 260" width="760" role="img" aria-label="Cross-section of a CS system">
-  <rect x="60" y="30" width="640" height="34" rx="4" class="amb" stroke-width="1.5"/><text x="380" y="52" text-anchor="middle" font-size="14">power delivery (vertical, through the wafer face)</text>
+<svg id="f-cores" viewBox="0 0 760 370" width="760" role="img" aria-label="Where the 850,000 marketed CS-2 cores go: fabric, memcpy frame and program rectangle"></svg>
+<figcaption><b>Where the 850k cores go on a CS-2.</b> Left, to scale: the 750 × 994 fabric the SDK exposes, inside a dashed outline with the area of 850,000 cores. The 7-column, 2-row frame is under 2 px wide at this scale, so the middle panel zooms into the north-west corner. The west/east split (4 + 3) follows this course's <code>--fabric-offsets=4,1</code>; at <code>--channels 1</code> the compiler put memcpy programs in 3 west and 2 east columns <span class="tag measured">Measured from out/ (Chapter 7)</span>, and the roles of the remaining frame PEs are not documented. Hover a region for its count.</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 760 290" width="760" role="img" aria-label="Cross-section of a CS system: power from above, heat out below, data out the sides">
+  <rect x="80" y="26" width="600" height="34" rx="4" class="amb" stroke-width="1.5"/><text x="380" y="48" text-anchor="middle" font-size="14">power delivery (vertical, through the wafer face)</text>
   <g id="pwr"></g>
-  <rect x="60" y="110" width="640" height="26" rx="3" class="acc" stroke-width="2"/><text x="380" y="128" text-anchor="middle" font-size="14" font-weight="700">the wafer (WSE)</text>
-  <rect x="60" y="150" width="640" height="34" rx="4" class="blu" stroke-width="1.5"/><text x="380" y="172" text-anchor="middle" font-size="14">cold plate · closed water loop</text>
-  <rect x="20" y="104" width="34" height="38" rx="3" class="grn" stroke-width="1.5"/><text x="37" y="160" text-anchor="middle" font-size="11">I/O</text>
-  <rect x="706" y="104" width="34" height="38" rx="3" class="grn" stroke-width="1.5"/><text x="723" y="160" text-anchor="middle" font-size="11">I/O</text>
-  <text x="380" y="220" text-anchor="middle" font-size="13" class="muted">Schematic only — layer thicknesses and the exact stack are not public.</text>
+  <rect x="80" y="94" width="600" height="16" rx="3" class="box" stroke-width="1.2"/><text x="380" y="106" text-anchor="middle" font-size="12">compliant connector (lets the wafer expand)</text>
+  <rect x="80" y="116" width="600" height="26" rx="3" class="acc" stroke-width="2"/><text x="380" y="134" text-anchor="middle" font-size="14" font-weight="700">the wafer (WSE)</text>
+  <rect x="80" y="148" width="600" height="34" rx="4" class="blu" stroke-width="1.5"/><text x="380" y="170" text-anchor="middle" font-size="14">cold plate · closed water loop</text>
+  <g id="heat"></g>
+  <text x="380" y="244" text-anchor="middle" font-size="13" class="f-blu">heat → water loop</text>
+  <rect x="8" y="110" width="40" height="38" rx="3" class="grn" stroke-width="1.5"/><text x="28" y="134" text-anchor="middle" font-size="13">I/O</text>
+  <rect x="712" y="110" width="40" height="38" rx="3" class="grn" stroke-width="1.5"/><text x="732" y="134" text-anchor="middle" font-size="13">I/O</text>
+  <path d="M80 129 H52" class="s-grn" stroke-width="2" fill="none" marker-end="url(#ar-grn)"/>
+  <path d="M680 129 H708" class="s-grn" stroke-width="2" fill="none" marker-end="url(#ar-grn)"/>
+  <text x="380" y="276" text-anchor="middle" font-size="13" class="muted">Schematic only: layer thicknesses and the exact stack are not public.</text>
 </svg>
-<figcaption><b>Power from above, heat out below, data out the sides.</b></figcaption>
+<figcaption><b>Power from above, heat out below, data out the sides.</b> Layer roles from secondary summaries of the Hot Chips 2019 talk and the CS-3 "engine block" <span class="tag indep">Secondary sources</span>.</figcaption>
 </figure>
 
 <div class="quiz">
 <h3>Check yourself</h3>
+<details><summary>What does keeping the wafer whole buy, in one sentence?</summary><p>Traffic between cores never leaves the silicon: sub-millimetre wires carry ~27 PB/s instead of off-chip links like NVLink (~0.9 TB/s), and the area holds 44 GB of single-cycle SRAM.</p></details>
 <details><summary>Why is a small core size essential to wafer-scale yield?</summary><p>A defect only kills the unit it lands in. With ~0.05 mm² cores and spares, each defect costs a tiny area instead of a whole ~800 mm² die.</p></details>
-<details><summary>A slide says "WSE-3: 125 PFLOPS". What should you ask?</summary><p>Sparse or dense, and at what precision? 125 PF is sparse FP16; dense is not published (analysts estimate ~15.6 PF).</p></details>
-<details><summary>Why can't your program use all 850,000 WSE-2 cores?</summary><p>Spares are hidden by the repair logic, and the I/O runtime reserves columns around your program. The SDK exposes a 750 × 994 fabric; your rectangle must be 7 columns and 2 rows smaller.</p></details>
+<details><summary>At 0.001 defects/mm², what fraction of 858 mm² GPU dies are defect-free, and what is the chance a 46,225 mm² chip with no spares is?</summary><p>e<sup>−0.858</sup> ≈ 42%; e<sup>−46</sup> ≈ 10<sup>−20</sup>. Without fine-grained spares a wafer-scale chip would never yield. Even with spares, one spare per row would fail on most wafers (birthday problem), so the spares must be finer-grained.</p></details>
+<details><summary>A slide says "WSE-3: 125 PFLOPS". What should you ask?</summary><p>Sparse or dense, and at what precision? 125 PF is sparse FP16; dense is not published (analysts estimate ~15.6 PF). The 125 / 15.6 ≈ 8× ratio tells you how much zero-skipping the headline assumes.</p></details>
+<details><summary>Estimate WSE-3 dense FP16 peak from first principles. Which input is weakest?</summary><p>900k PEs × 8 FMAs × 2 FLOPs × 0.85–1 GHz ≈ 12–14 PF. The clock: none is published; 850 MHz is only the SDK benchmarks' assumption.</p></details>
+<details><summary>Why can't your program use all 850,000 WSE-2 cores?</summary><p>The SDK exposes only 750 × 994 = 745,500 positions. The rest are most likely spares and edge infrastructure; Cerebras has not published the breakdown. The memcpy runtime then runs on PEs that frame your program, so your rectangle must be at least 7 columns and 2 rows smaller: at most 743 × 992 ≈ 737k.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
 <script>
 (function () {
-  // static diagram: dies on wafer + stitch lines
-  const dies = $("#dies");
-  for (let x = 25; x < 305; x += 34) for (let y = 25; y < 305; y += 30)
-    el("rect", { x, y, width: 31, height: 27, class: "blu", "stroke-width": 1 }, dies);
-  const st = $("#stitch");
-  for (let i = 1; i < 6; i++) {
-    el("line", { x1: 438 + i * 214 / 6, x2: 438 + i * 214 / 6, y1: 58, y2: 272, stroke: cssVar("--accent"), "stroke-dasharray": "3 3", opacity: .7 }, st);
-    el("line", { y1: 58 + i * 214 / 6, y2: 58 + i * 214 / 6, x1: 438, x2: 652, stroke: cssVar("--accent"), "stroke-dasharray": "3 3", opacity: .7 }, st);
-  }
-  // redundancy diagram
-  const ph = $("#phys"), lg = $("#logi"), S = 34, bad = [2, 3];
-  for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++) {
-    const spare = c === 5, isBad = r === bad[0] && c === bad[1];
-    el("rect", { x: 30 + c * (S + 8), y: 40 + r * (S + 6), width: S, height: S, rx: 4,
-      class: isBad ? "red" : spare ? "box" : "grn", "stroke-width": 1.5, "stroke-dasharray": spare ? "4 3" : "" }, ph);
-    if (isBad) el("text", { x: 30 + c * (S + 8) + S / 2, y: 40 + r * (S + 6) + 23, "text-anchor": "middle", "font-weight": 700, class: "f-red" }, ph).textContent = "✕";
-  }
-  // shifted row arrows
-  for (let c = bad[1]; c < 5; c++) {
-    const y = 40 + bad[0] * (S + 6) + S + 3;
-    el("path", { d: `M${30 + c * (S + 8) + S / 2} ${y} q ${(S + 8) / 2} 10 ${S + 8} 0`, fill: "none", stroke: cssVar("--blue"), "stroke-width": 1.5, "marker-end": "url(#ar3)" }, ph);
-  }
-  for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++)
-    el("rect", { x: 440 + c * (S + 8), y: 40 + r * (S + 6), width: S, height: S, rx: 4, class: "grn", "stroke-width": 1.5 }, lg);
-  el("text", { x: 440, y: 248, "font-size": 13, class: "muted" }, lg).textContent = "a perfect 5 × 5 rectangle";
-  // power arrows
-  for (let x = 90; x < 700; x += 60) el("path", { d: `M${x} 68 V104`, stroke: cssVar("--amber"), "stroke-width": 2, "marker-end": "url(#ar3)" }, $("#pwr"));
+  const C = 170, CY = 182, RW = 150;   // figure-1 wafer: centre and radius, 1 px = 1 mm
+  const inWafer = (x, y) => x * x + y * y < RW * RW;
+  const fmt = n => n.toLocaleString("en-US");
 
-  // yield simulator
-  const svg = $("#y-svg"), R = 150, cx1 = 165, cx2 = 535, cy = 165;
-  const dieW = 26, dieH = 32;                // mm, reticle-sized GPU die
-  const scale = R / 150;                     // 1 px per mm (300 mm wafer)
-  let defects = [];
-  function roll() {
-    const d = parseFloat($("#y-d").value), area = Math.PI * 150 * 150;
-    const n = Math.round(d * area); defects = [];
-    while (defects.length < n) { const x = (Math.random() * 2 - 1) * 150, y = (Math.random() * 2 - 1) * 150; if (x * x + y * y < 150 * 150) defects.push([x, y]); }
-    draw();
+  /* ---------- Figure 1: whole dies (left) and stitched square (right) ---------- */
+  function wholeDies(W, H, ox, oy) {      // grid of WxH mm dies with 1 mm streets, whole dies only
+    const out = [];
+    for (let x = -RW - ox; x < RW; x += W + 1) for (let y = -RW - oy; y < RW; y += H + 1)
+      if ([[x, y], [x + W, y], [x, y + H], [x + W, y + H]].every(([a, b]) => inWafer(a, b))) out.push([x, y]);
+    return out;
   }
-  function draw() {
-    svg.innerHTML = "";
-    const d = parseFloat($("#y-d").value); $("#y-dv").textContent = d.toFixed(4) + " /mm²";
-    // left: GPU dies
-    el("circle", { cx: cx1, cy, r: R, class: "box" }, svg);
-    let total = 0, lost = 0;
-    for (let x = -150; x + dieW <= 150; x += dieW + 1) for (let y = -150; y + dieH <= 150; y += dieH + 1) {
-      const corners = [[x, y], [x + dieW, y], [x, y + dieH], [x + dieW, y + dieH]];
-      if (!corners.every(([a, b]) => a * a + b * b < 150 * 150)) continue;
-      total++;
-      const hit = defects.some(([a, b]) => a >= x && a <= x + dieW && b >= y && b <= y + dieH);
-      if (hit) lost++;
-      el("rect", { x: cx1 + x * scale, y: cy + y * scale, width: dieW * scale, height: dieH * scale, class: hit ? "red" : "grn", "stroke-width": .8 }, svg);
+  const DW = 26, DH = 33, DIES = wholeDies(DW, DH, 10, 18);   // 62 whole reticle-sized dies
+  DIES.forEach(([x, y]) => el("rect", { x: C + x, y: CY + y, width: DW, height: DH, class: "blu", "stroke-width": 1 }, $("#dies")));
+  $("#dies-n").textContent = `${DIES.length} whole 26 × 33 mm dies (one reticle each)`;
+  const st = $("#stitch"), x0 = 62.5, y0 = 74.5, side = 215;
+  for (let i = 1; i < 9; i++) el("line", { x1: x0 + i * side / 9, x2: x0 + i * side / 9, y1: y0, y2: y0 + side, class: "s-acc", "stroke-dasharray": "3 3", opacity: .7 }, st);
+  for (let j = 1; j < 7; j++) el("line", { y1: y0 + j * side / 7, y2: y0 + j * side / 7, x1: x0, x2: x0 + side, class: "s-acc", "stroke-dasharray": "3 3", opacity: .7 }, st);
+
+  /* ---------- Bandwidth ladder ---------- */
+  const BW = [  // name, TB/s, area mm² (null = not in sources), kind, source
+    ["SDK host channels (16 × 7 Gb/s)", 0.014, 46225, "host", "SDK 2.10.1 bandwidth-test README; area = WSE"],
+    ["H100 NVLink 4", 0.9, 814, "gpu", "Vendor, not re-verified; H100 die ~814 mm² (industry figure)"],
+    ["H100 HBM3", 3.35, 814, "gpu", "Vendor (Hopper whitepaper)"],
+    ["B200 die-to-die NV-HBI", 10, null, "gpu", "Vendor via secondary; B200 die area not in course sources"],
+    ["WSE-3 SRAM (aggregate)", 21000, 46225, "wse", "Vendor: 21 PB/s"],
+    ["WSE-3 fabric (aggregate)", 26750, 46225, "wse", "Vendor: 214 Pb/s ÷ 8"]
+  ];
+  let bwMode = "chip";
+  function drawBW() {
+    const svg = $("#bw-svg"); svg.innerHTML = "";
+    const L = 210, Rr = 680, T = 14, rowH = 40;
+    const vals = BW.map(b => bwMode === "chip" ? b[1] : (b[2] ? b[1] / b[2] : null));
+    const good = vals.filter(v => v != null);
+    const lo = Math.floor(Math.log10(Math.min(...good))), hi = Math.ceil(Math.log10(Math.max(...good)));
+    const X = v => L + (Math.log10(v) - lo) / (hi - lo) * (Rr - L);
+    const yAxis = T + BW.length * rowH;
+    for (let e = lo; e <= hi; e++) {
+      el("line", { x1: X(10 ** e), x2: X(10 ** e), y1: T - 4, y2: yAxis, class: "line" }, svg);
+      el("text", { x: X(10 ** e), y: yAxis + 16, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg).textContent = "10^" + e;
     }
-    // right: wafer-scale square of tiny cores
-    el("circle", { cx: cx2, cy, r: R, class: "box" }, svg);
-    const half = 107.5; // 215 mm square
-    el("rect", { x: cx2 - half * scale, y: cy - half * scale, width: 2 * half * scale, height: 2 * half * scale, class: "grn", "stroke-width": 1 }, svg);
-    let hitsSq = 0;
-    defects.forEach(([a, b]) => {
-      const inSq = Math.abs(a) < half && Math.abs(b) < half; if (inSq) hitsSq++;
-      el("circle", { cx: cx1 + a * scale, cy: cy + b * scale, r: 2.2, fill: cssVar("--red") }, svg);
-      el("circle", { cx: cx2 + a * scale, cy: cy + b * scale, r: inSq ? 2.2 : 1.5, fill: cssVar("--red"), opacity: inSq ? 1 : .35 }, svg);
+    el("text", { x: (L + Rr) / 2, y: yAxis + 34, "text-anchor": "middle", "font-size": 12 }, svg).textContent =
+      bwMode === "chip" ? "TB/s per chip (log)" : "TB/s per mm² of silicon (log)";
+    const ref = vals[1];
+    BW.forEach((b, i) => {
+      const y = T + i * rowH, v = vals[i];
+      el("text", { x: L - 8, y: y + 21, "text-anchor": "end", "font-size": 12.5 }, svg).textContent = b[0];
+      const g = el("g", {}, svg);
+      el("title", {}, g).textContent = `${b[0]}: ${b[1]} TB/s. ${b[4]}`;
+      if (v == null) { el("text", { x: L + 6, y: y + 21, "font-size": 12, class: "muted" }, g).textContent = "area not in sources"; return; }
+      const cls = b[3] === "wse" ? "acc" : b[3] === "gpu" ? "blu" : "box";
+      el("rect", { x: L, y: y + 6, width: Math.max(2, X(v) - L), height: 22, rx: 3, class: cls, "stroke-width": 1.2 }, g);
+      const mult = v / ref, lab = mult >= 1 ? `${mult >= 100 ? fmt(Math.round(mult)) : mult.toFixed(1)}× NVLink` : `1/${fmt(Math.round(1 / mult))} of NVLink`;
+      const tx = X(v) + 6 > Rr - 90 ? X(v) - 6 : X(v) + 6;
+      el("text", { x: tx, y: y + 22, "font-size": 12, "text-anchor": tx < X(v) ? "end" : "start", class: "mono" }, g).textContent = i === 1 ? "reference" : lab;
     });
-    el("text", { x: cx1, y: 325, "text-anchor": "middle", "font-size": 13 }, svg).textContent = `GPU-sized dies: ${lost} of ${total} hit`;
-    el("text", { x: cx2, y: 325, "text-anchor": "middle", "font-size": 13 }, svg).textContent = `wafer-scale: ${hitsSq} cores lost`;
-    const deadGPU = lost * dieW * dieH, deadWSE = hitsSq * 0.05;
-    $("#y-out").textContent =
-      `defects on wafer: ${defects.length}\n` +
-      `GPU dies:     ${lost}/${total} dies hit → ${deadGPU.toLocaleString()} mm² discarded (${(100 * lost / total).toFixed(0)}% of dies)\n` +
-      `wafer-scale:  ${hitsSq} defects in the square → ${deadWSE.toFixed(1)} mm² of cores replaced by spares\n` +
-      `(real fabs bin partially defective GPU dies as cheaper SKUs, so the GPU number is a worst case)`;
+    const f = bwMode === "chip" ? 26750 / 0.9 : (26750 / 46225) / (0.9 / 814);
+    $("#bw-out").textContent = bwMode === "chip"
+      ? `WSE-3 fabric ÷ H100 NVLink ≈ ${fmt(Math.round(f))}×   (whole wafer vs one GPU)\nSDK host link ÷ WSE-3 fabric ≈ 1 / ${fmt(Math.round(26750 / 0.014))}   (the narrow door, Chapter 7)`
+      : `per mm²: WSE-3 fabric ÷ H100 NVLink ≈ ${fmt(Math.round(f))}×\nso size explains only ~${Math.round(46225 / 814)}× of the ${fmt(Math.round(26750 / 0.9))}× gap; the rest is wires vs off-chip links`;
   }
-  $("#y-d").oninput = roll; $("#y-roll").onclick = roll; roll();
+  document.querySelectorAll("#bw .seg button").forEach(b => b.onclick = () => {
+    bwMode = b.dataset.m; document.querySelectorAll("#bw .seg button").forEach(x => x.classList.toggle("on", x === b)); drawBW();
+  });
+  drawBW();
+
+  /* ---------- Per-PE budget + dense FLOPs ---------- */
+  const GEN = [
+    { n: "WSE-2", pes: 850000, area: 46225, sram: 40e9, mem: 20e15, fab: 220e15, simd: 4, pw: [15000, 20000], sparse: 75, sparseTag: "analyst table", dense: 7.5 },
+    { n: "WSE-3", pes: 900000, area: 46225, sram: 44e9, mem: 21e15, fab: 214e15, simd: 8, pw: [23000, 23000], sparse: 125, sparseTag: "vendor", dense: 15.6 }
+  ];
+  let gi = 1;
+  function drawPE() {
+    const g = GEN[gi], f = parseFloat($("#pe-f").value) * 1e9, N = g.pes;
+    $("#pe-fv").textContent = (f / 1e6).toFixed(0) + " MHz";
+    const memB = g.mem / N / f, fabB = g.fab / 8 / N / f, peak = N * g.simd * 2 * f / 1e15;
+    const pw = g.pw[0] === g.pw[1] ? `~${(g.pw[0] / N * 1e3).toFixed(0)} mW` : `${(g.pw[0] / N * 1e3).toFixed(0)}–${(g.pw[1] / N * 1e3).toFixed(0)} mW`;
+    const rows = [
+      [`${fmt(g.area)} mm²`, `${(g.area / N).toFixed(3)} mm²`, "—", "≈ the ~0.05 mm² core: the square is nearly all tiles", false],
+      [`${g.sram / 1e9} GB SRAM`, `${(g.sram / N / 1e3).toFixed(1)} KB`, "—", "the 48 KB per PE of Chapter 3 (decimal GB)", false],
+      [`${g.mem / 1e15} PB/s memory`, `${(g.mem / N / 1e9).toFixed(1)} GB/s`, `${memB.toFixed(1)} B = ${(memB / 4).toFixed(1)} words`, "under 8 banks × 4 B = 32 B/cycle", true],
+      [`${g.fab / 1e15} Pb/s fabric`, `${(g.fab / N / 1e9).toFixed(0)} Gb/s`, `${fabB.toFixed(1)} B = ${(fabB / 4).toFixed(1)} words`, "≈ 4 links × 2 dir × 4 B (+ ramp), Chapter 4", true],
+      [`dense FP16 peak`, `${g.simd * 2} FLOP/cycle`, `${peak.toFixed(1)} PF total`, `${g.simd}-wide FP16 SIMD; analyst says ~${g.dense} PF`, true],
+      [`${g.pw[0] === g.pw[1] ? "~23" : "15–20"} kW system`, pw, "—", "system figure, so an upper bound per PE", false]
+    ];
+    $("#pe-tb").innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td class="${r[4] ? "dep" : ""}">${r[2]}</td><td>${r[3]}</td></tr>`).join("");
+    // bars
+    const svg = $("#pe-svg"); svg.innerHTML = "";
+    const L = 200, Rr = 640, max = g.sparse * 1.05, X = v => L + v / max * (Rr - L);
+    const bars = [
+      [`your estimate (${(f / 1e6).toFixed(0)} MHz)`, peak, "acc", ""],
+      ["analyst dense estimate", g.dense, "pur", ""],
+      [`sparse headline (${g.sparseTag})`, g.sparse, "box", "5 4"]
+    ];
+    bars.forEach(([lab, v, cls, dash], i) => {
+      const y = 10 + i * 36;
+      el("text", { x: L - 8, y: y + 18, "text-anchor": "end", "font-size": 12.5 }, svg).textContent = lab;
+      el("rect", { x: L, y: y + 4, width: X(v) - L, height: 20, rx: 3, class: cls, "stroke-width": 1.4, "stroke-dasharray": dash }, svg);
+      el("text", { x: X(v) + 6, y: y + 19, "font-size": 12, class: "mono" }, svg).textContent = v.toFixed(1) + " PF" + (i === 2 ? "  (sparse: not comparable)" : "");
+    });
+    el("text", { x: L, y: 140, "font-size": 11.5, class: "muted" }, svg).textContent =
+      `clock needed to match the analyst figure: ${(g.dense * 1e15 / (N * g.simd * 2) / 1e6).toFixed(0)} MHz`;
+  }
+  document.querySelectorAll("#pe .seg button").forEach(b => b.onclick = () => {
+    gi = +b.dataset.g; document.querySelectorAll("#pe .seg button").forEach(x => x.classList.toggle("on", x === b)); drawPE();
+  });
+  $("#pe-f").oninput = drawPE;
+  $("#pe-sdk").onclick = () => { $("#pe-f").value = 0.85; drawPE(); };
+  drawPE();
+
+  /* ---------- Yield curve ---------- */
+  const UNITS = [
+    ["WSE core", 0.05], ["H100 SM (≤)", 6.2], ["H100 die", 814], ["full reticle", 858], ["WSE, no spares", 46225]
+  ];
+  function drawYC() {
+    const d = parseFloat($("#yc-d").value); $("#yc-dv").textContent = d.toFixed(4) + " /mm²";
+    const svg = $("#yc-svg"); svg.innerHTML = "";
+    const L = 60, Rr = 680, T = 16, B = 254, lo = -2, hi = 5;
+    const X = a => L + (Math.log10(a) - lo) / (hi - lo) * (Rr - L), Y = p => B - p * (B - T);
+    for (let e = lo; e <= hi; e++) {
+      el("line", { x1: X(10 ** e), x2: X(10 ** e), y1: T, y2: B, class: "line" }, svg);
+      el("text", { x: X(10 ** e), y: B + 16, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg).textContent = e < 0 ? "0." + "0".repeat(-e - 1) + "1" : fmt(10 ** e);
+    }
+    for (let p = 0; p <= 1.001; p += 0.25) {
+      el("line", { x1: L, x2: Rr, y1: Y(p), y2: Y(p), class: "line" }, svg);
+      el("text", { x: L - 6, y: Y(p) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = (p * 100) + "%";
+    }
+    el("text", { x: (L + Rr) / 2, y: B + 36, "text-anchor": "middle", "font-size": 12 }, svg).textContent = "area of the unit a defect kills, mm² (log)";
+    el("text", { x: 14, y: (T + B) / 2, "text-anchor": "middle", "font-size": 12, transform: `rotate(-90 14 ${(T + B) / 2})` }, svg).textContent = "defect-free";
+    const pts = [];
+    for (let e = lo; e <= hi + 1e-9; e += 0.02) pts.push([X(10 ** e), Y(Math.exp(-d * 10 ** e))].join(","));
+    el("polyline", { points: pts.join(" "), fill: "none", class: "s-acc", "stroke-width": 2.5 }, svg);
+    const lines = [];
+    UNITS.forEach(([n, a], i) => {
+      const p = Math.exp(-d * a), g = el("g", {}, svg);
+      el("title", {}, g).textContent = `${n}: ${a} mm², defect-free ${p < 1e-4 ? p.toExponential(1) : (100 * p).toFixed(2) + "%"}`;
+      el("circle", { cx: X(a), cy: Y(p), r: 5.5, class: i === 0 ? "grn" : i === 4 ? "red" : "blu", "stroke-width": 2 }, g);
+      const up = i === 3 ? 18 : -10;
+      el("text", { x: X(a) + (i === 4 ? -8 : 8), y: Y(p) + up, "font-size": 12, "text-anchor": i === 4 ? "end" : "start" }, g).textContent =
+        `${n} ${p < 1e-4 ? "≈ 0" : (100 * p).toFixed(p > 0.999 ? 3 : 0) + "%"}`;
+      const pe = p < 1e-4 ? p.toExponential(0) : (100 * p).toFixed(p > 0.999 ? 3 : 1) + "%";
+      lines.push(`${n.padEnd(15)} ${String(a).padStart(6)} mm²   defect-free ${pe.padStart(8)}   expected defects ${(d * a).toPrecision(2)}`);
+    });
+    $("#yc-out").textContent = lines.join("\n");
+  }
+
+  /* ---------- Repair schematic ---------- */
+  const S = 36, G = 8, ph = $("#phys"), lg = $("#logi"), BR = 2, BC = 3;
+  const cx = (c) => 20 + c * (S + G), cy = (r) => 40 + r * (S + 6);
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++) {
+    const spare = c === 5, isBad = r === BR && c === BC, moved = r === BR && c > BC;
+    el("rect", { x: cx(c), y: cy(r), width: S, height: S, rx: 4, class: isBad ? "red" : moved ? "blu" : spare ? "box" : "grn",
+      "stroke-width": 1.5, "stroke-dasharray": spare && !moved ? "4 3" : "" }, ph);
+    if (isBad) el("text", { x: cx(c) + S / 2, y: cy(r) + 24, "text-anchor": "middle", "font-weight": 700, class: "f-red" }, ph).textContent = "✕";
+    if (r === BR && !isBad) el("text", { x: cx(c) + S / 2, y: cy(r) + 23, "text-anchor": "middle", "font-size": 12, class: "mono" }, ph).textContent = c < BC ? c : c - 1;
+  }
+  for (let c = BC; c < 5; c++) {   // arcs above the repaired row
+    const y = cy(BR) - 2;
+    el("path", { d: `M${cx(c) + S / 2} ${y} q ${(S + G) / 2} -9 ${S + G} 0`, fill: "none", class: "s-blu", "stroke-width": 1.6, "marker-end": "url(#ar-blu)" }, ph);
+  }
+  el("text", { x: 20, y: 262, "font-size": 12, class: "muted" }, ph).textContent = "green = in use · dashed = idle spare";
+  el("text", { x: 20, y: 278, "font-size": 12, class: "muted" }, ph).textContent = "blue = remapped · numbers = logical x";
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++) {
+    el("rect", { x: cx(c), y: cy(r), width: S, height: S, rx: 4, class: r === BR && c >= BC ? "blu" : "grn", "stroke-width": 1.5 }, lg);
+    if (r === BR) el("text", { x: cx(c) + S / 2, y: cy(r) + 23, "text-anchor": "middle", "font-size": 12, class: "mono" }, lg).textContent = c;
+  }
+  el("text", { x: 20, y: 262, "font-size": 12, class: "muted" }, lg).textContent = "a perfect 5 × 5 rectangle";
+
+  /* ---------- Defect simulator ---------- */
+  const SC = 165, SY = 165, HALF = 107.5;      // 330-wide panels, 1 px = 1 mm
+  const sqArea = 46225, SM_MM2 = 2.2 * 164 / 46;
+  let pool = [];
+  function newPool() {
+    pool = [];
+    while (pool.length < 260) { const x = (Math.random() * 2 - 1) * 150, y = (Math.random() * 2 - 1) * 150; if (inWafer(x, y)) pool.push([x, y]); }
+  }
+  const SIMDIES = wholeDies(DW, DH, 10, 18);
+  function drawSim() {
+    const d = parseFloat($("#y-d").value), acc = $("#y-acc").value, segs = +$("#y-seg").value;
+    $("#y-dv").textContent = d.toFixed(4) + " /mm²";
+    const n = Math.round(d * Math.PI * 150 * 150), defects = pool.slice(0, n);
+    const Ls = $("#y-l"), Rs = $("#y-r"); Ls.innerHTML = ""; Rs.innerHTML = "";
+    // left: GPU dies
+    el("circle", { cx: SC, cy: SY, r: 150, class: "box" }, Ls);
+    let lost = 0, smHits = 0;
+    SIMDIES.forEach(([x, y]) => {
+      const k = defects.filter(([a, b]) => a >= x && a <= x + DW && b >= y && b <= y + DH).length;
+      if (k) lost++; smHits += k;
+      el("rect", { x: SC + x, y: SY + y, width: DW, height: DH, class: k ? (acc === "die" ? "red" : "amb") : "grn", "stroke-width": .8 }, Ls);
+    });
+    // right: wafer-scale square (clipped like figure 1)
+    el("circle", { cx: SC, cy: SY, r: 150, class: "box" }, Rs);
+    const cp = el("clipPath", { id: "simclip" }, Rs); el("circle", { cx: SC, cy: SY, r: 150 }, cp);
+    el("rect", { x: SC - HALF, y: SY - HALF, width: 2 * HALF, height: 2 * HALF, class: "grn", "stroke-width": 1, "clip-path": "url(#simclip)" }, Rs);
+    const inSq = defects.filter(([a, b]) => Math.abs(a) < HALF && Math.abs(b) < HALF);
+    // repair segments: 994 rows × segs per row
+    const cnt = new Map();
+    inSq.forEach(([a, b]) => {
+      const key = Math.floor((b + HALF) / 215 * 994) * 100 + Math.floor((a + HALF) / 215 * segs);
+      cnt.set(key, (cnt.get(key) || 0) + 1);
+    });
+    const badSegs = [...cnt.values()].filter(v => v >= 2).length;
+    defects.forEach(([a, b]) => {
+      el("circle", { cx: SC + a, cy: SY + b, r: 2.2, class: "f-red" }, Ls);
+      const inside = Math.abs(a) < HALF && Math.abs(b) < HALF;
+      el("circle", { cx: SC + a, cy: SY + b, r: inside ? 2.2 : 1.5, class: "f-red", opacity: inside ? 1 : .35 }, Rs);
+    });
+    el("text", { x: SC, y: 337, "text-anchor": "middle", "font-size": 13 }, Ls).textContent = `GPU dies: ${lost} of ${SIMDIES.length} hit`;
+    el("text", { x: SC, y: 337, "text-anchor": "middle", "font-size": 13 }, Rs).textContent = `wafer-scale: ${inSq.length} cores lost`;
+    const deadGPU = acc === "die" ? lost * DW * DH : smHits * SM_MM2, deadWSE = inSq.length * 0.05;
+    const S_ = 994 * segs; let pOk = 1; for (let k = 0; k < inSq.length; k++) pOk *= Math.max(0, 1 - k / S_);
+    const ratio = deadWSE > 0 ? fmt(Math.round(deadGPU / deadWSE)) + "×" : "—";
+    const rows = [
+      ["defects on wafer", `${defects.length}`],
+      ["GPU dies", acc === "die" ? `${lost}/${SIMDIES.length} hit → ${fmt(Math.round(deadGPU))} mm² discarded (${(100 * lost / SIMDIES.length).toFixed(0)}% of dies)`
+                                 : `${smHits} SMs disabled → ${fmt(Math.round(deadGPU))} mm² dead (${lost} dies downgraded)`],
+      ["expected good dies", `e^(−D·858) = ${(100 * Math.exp(-d * DW * DH)).toFixed(0)}%   this roll: ${(100 * (SIMDIES.length - lost) / SIMDIES.length).toFixed(0)}%`],
+      ["wafer-scale", `${inSq.length} defects in the square → ${deadWSE.toFixed(1)} mm² of cores replaced by spares`],
+      ["expected (model)", `D·46,225 = ${(d * sqArea).toFixed(0)} defects → ${(d * sqArea * 0.05).toFixed(1)} mm²  (Cerebras at 0.001: 46 → 2.2 mm²)`],
+      ["dead silicon ratio", `GPU : WSE = ${ratio}`],
+      [`repair, ${segs} seg/row`, `${badSegs} of ${fmt(S_)} segments got ≥ 2 defects → ${badSegs ? "repair FAILS this roll" : "repair succeeds"};  P(fail) ≈ ${(100 * (1 - pOk)).toFixed(0)}%`],
+      ["fixed cost", `~${fmt(Math.round(Math.PI * 150 * 150 - sqArea))} mm² of wafer outside the square is unused regardless of defects`]
+    ];
+    $("#y-out").innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("");
+  }
+  const syncD = (src, dst) => { $(dst).value = $(src).value; drawYC(); drawSim(); };
+  $("#y-d").oninput = () => syncD("#y-d", "#yc-d");
+  $("#yc-d").oninput = () => syncD("#yc-d", "#y-d");
+  $("#y-acc").onchange = drawSim; $("#y-seg").onchange = drawSim;
+  $("#y-roll").onclick = () => { newPool(); drawSim(); };
+  newPool(); drawYC(); drawSim();
+
+  /* ---------- Where the 850k cores go ---------- */
+  (function () {
+    const svg = $("#f-cores"), k = 0.26;       // px per PE
+    const fx = 40, fy = 50, fw = 750 * k, fh = 994 * k, m = Math.sqrt(850000 / 745500);
+    el("text", { x: 20, y: 22, "font-weight": 700 }, svg).textContent = "CS-2, to scale";
+    const ghost = el("g", {}, svg); el("title", {}, ghost).textContent = "850,000 marketed cores (Vendor): same aspect, area only";
+    el("rect", { x: fx - (m - 1) * fw / 2, y: fy - (m - 1) * fh / 2, width: fw * m, height: fh * m, fill: "none", class: "s-muted", "stroke-dasharray": "5 4", "stroke-width": 1.4 }, ghost);
+    const fab = el("g", {}, svg); el("title", {}, fab).textContent = "750 × 994 = 745,500 fabric positions (SDK 2.10.1)";
+    el("rect", { x: fx, y: fy, width: fw, height: fh, class: "pur", "stroke-width": 1.2 }, fab);
+    const usr = el("g", {}, svg); el("title", {}, usr).textContent = "≤ 743 × 992 = 737,056 PEs for your program (SDK 2.10.1, Derived)";
+    el("rect", { x: fx + 4 * k, y: fy + k, width: 743 * k, height: 992 * k, class: "acc", "stroke-width": 1 }, usr);
+    el("text", { x: fx + fw / 2, y: fy + fh / 2 - 6, "text-anchor": "middle", "font-size": 13, "font-weight": 700 }, svg).textContent = "your rectangle";
+    el("text", { x: fx + fw / 2, y: fy + fh / 2 + 12, "text-anchor": "middle", "font-size": 12 }, svg).textContent = "≤ 743 × 992";
+    el("text", { x: fx + fw / 2, y: fy + fh + 30, "text-anchor": "middle", "font-size": 11.5, class: "muted" }, svg).textContent = "dashed: area of 850k cores";
+    // zoom box marker + inset
+    el("rect", { x: fx - 2, y: fy - 2, width: 14, height: 10, fill: "none", class: "s-red", "stroke-width": 1.5 }, svg);
+    const ix = 290, iy = 40, cs = 17, cols = 14, rows = 8;
+    el("line", { x1: fx + 12, y1: fy - 2, x2: ix, y2: iy, class: "s-red", "stroke-dasharray": "3 3" }, svg);
+    el("line", { x1: fx + 12, y1: fy + 8, x2: ix, y2: iy + rows * cs, class: "s-red", "stroke-dasharray": "3 3" }, svg);
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const frame = c < 4 || r === 0, gq = el("g", {}, svg);
+      el("title", {}, gq).textContent = frame ? (c < 4 ? `west frame column ${c}` : "north frame row") : "your PE";
+      el("rect", { x: ix + c * cs, y: iy + r * cs, width: cs - 2, height: cs - 2, rx: 2, class: frame ? "pur" : "acc", "stroke-width": 1 }, gq);
+    }
+    el("text", { x: ix, y: iy - 8, "font-size": 12.5, "font-weight": 700 }, svg).textContent = "north-west corner, zoomed";
+    el("text", { x: ix, y: iy + rows * cs + 18, "font-size": 12 }, svg).textContent = "purple: 4 west columns + 1 north row (memcpy frame)";
+    el("text", { x: ix, y: iy + rows * cs + 34, "font-size": 12 }, svg).textContent = "east side: 3 more columns, plus 1 south row";
+    el("text", { x: ix + 4 * cs + 4, y: iy + 4 * cs + 4, "font-size": 12.5, "font-weight": 700, class: "muted" }, svg).textContent = "your PEs start at (4, 1)";
+    // waterfall bars
+    const bx = 290, by = 250, bw = 440, MAX = 850000;
+    [["marketed cores", 850000, "box", "Vendor"], ["SDK fabric 750 × 994", 745500, "pur", "SDK 2.10.1"], ["your program ≤ 743 × 992", 737056, "acc", "SDK + Derived"]]
+      .forEach(([lab, v, cls, src], i) => {
+        const y = by + i * 34, w = v / MAX * (bw - 150), g = el("g", {}, svg);
+        el("title", {}, g).textContent = `${lab}: ${fmt(v)} (${src})`;
+        el("rect", { x: bx, y, width: w, height: 24, rx: 3, class: cls, "stroke-width": 1.2 }, g);
+        el("text", { x: bx + 8, y: y + 17, "font-size": 12.5 }, g).textContent = lab;
+        el("text", { x: bx + w + 8, y: y + 17, "font-size": 12.5, class: "mono" }, g).textContent = fmt(v) + (i ? `  (${(100 * v / MAX).toFixed(1)}%)` : "");
+      });
+  })();
+
+  /* ---------- Cross-section arrows ---------- */
+  for (let x = 110; x < 680; x += 60) el("path", { d: `M${x} 62 V90`, class: "s-amb", "stroke-width": 2, "marker-end": "url(#ar-amb)" }, $("#pwr"));
+  for (let x = 200; x <= 560; x += 120) el("path", { d: `M${x} 186 q 6 8 0 16 q -6 8 0 16`, fill: "none", class: "s-blu", "stroke-width": 2, "marker-end": "url(#ar-blu)" }, $("#heat"));
 })();
 </script>
 </body>
