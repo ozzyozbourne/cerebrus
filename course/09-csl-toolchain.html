@@ -144,7 +144,7 @@ cs_python run.py --name out</code></pre>
 <tr><td><code>csdb</code></td><td>inspect memory, registers, traces, wavelets</td><td>deep dives</td></tr>
 <tr><td><code>cs_readelf</code></td><td>symbols, routing and switch config of an ELF</td><td>checking what the compiler emitted</td></tr>
 </table></div>
-<p>A cheap trick we used for program 02's race: export an extra array, have the data task record each running sum into it, read it back, and compare with <code>numpy.cumsum</code>. On a deterministic simulator, recording state is often faster than stepping a debugger.</p>
+<p>A cheap trick we used for program 02's race: export an extra array, have the data task record each running sum into it, read it back, and compare with <code>numpy.cumsum</code>. On a cycle-level simulator whose results repeat (cycle totals varied by at most 2 cycles across our reruns), recording state is often faster than stepping a debugger.</p>
 
 <h2>Setting up the SDK</h2>
 <p>The SDK ships as a tarball with wrapper scripts and a 3.4 GB Singularity image (<code>.sif</code>) containing the compiler, runtime and simulator. In the cloud container used for this course, two things were needed beyond unpacking it <span class="tag measured">Measured</span>:</p>

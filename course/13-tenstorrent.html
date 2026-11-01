@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tenstorrent, the Middle Path</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 13 · Part IV · Comparison</div>
+<h1>Tenstorrent, the middle path</h1>
+<p class="lede">Tenstorrent builds conventional-size chips out of a grid of "Tensix" cores, each with 1.4 MiB of SRAM and five small RISC-V processors that orchestrate a matrix engine. Cheap GDDR6 sits beside the chip and Ethernet ports on every die link chips into meshes. It shares the wafer's spatial, explicit-data-movement philosophy, at a very different scale and price.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Draw a Tensix core and explain what each of its five RISC-V cores does.</li>
+<li>Explain the reader / compute / writer kernel model and circular buffers.</li>
+<li>Compare Tensix and the Cerebras PE on memory, network and programming model.</li>
+</ul>
+</div>
+
+<h2>The product line</h2>
+<div class="table-wrap"><table>
+<tr><th></th><th>Grayskull e150</th><th>Wormhole n300</th><th>Blackhole p150</th><th>Galaxy Blackhole</th></tr>
+<tr><td>Status</td><td>legacy</td><td>older</td><td>current</td><td>current</td></tr>
+<tr><td>Process</td><td>12nm</td><td>12nm</td><td>TSMC 6nm</td><td>32 × Blackhole</td></tr>
+<tr><td>Tensix cores</td><td>120</td><td>128 (2 dies)</td><td>120 (140 before Feb 2026)</td><td>~4,000</td></tr>
+<tr><td>On-chip SRAM</td><td>120 MB</td><td>~1.43 MiB / core</td><td>180 MB</td><td>6.2 GB</td></tr>
+<tr><td>Off-chip memory</td><td>8 GB LPDDR4, 118 GB/s</td><td>24 GB GDDR6, 576 GB/s</td><td>32 GB GDDR6, ~512 GB/s</td><td>1 TB GDDR6, 16 TB/s</td></tr>
+<tr><td>Peak (vendor)</td><td>332 TF FP8</td><td>466 TF FP8</td><td>664–774 TF BlockFP8</td><td>23 PF BlockFP8</td></tr>
+<tr><td>Scale-out</td><td>—</td><td>16 × 100 GbE</td><td>14 × 400 GbE (paired as 800G)</td><td>8 × 4 mesh</td></tr>
+<tr><td>Power / price</td><td>200 W, $799</td><td>300 W</td><td>300 W</td><td>~12 kW, $110k+</td></tr>
+</table></div>
+<p style="font-size:14px;color:var(--muted)">All <span class="tag vendor">Vendor</span>, mostly from search extracts of spec pages. A February 2026 firmware update cut the published p150 from 140 to 120 cores, 210 to 180 MB SRAM and 774 to 664 TFLOPS; Tenstorrent says it costs 1–2% performance. Peak figures from different sources conflict (745 / 774 / 664).</p>
+
+<h2>Inside a Tensix core</h2>
+<figure>
+<svg viewBox="0 0 760 380" width="760" role="img" aria-label="Tensix core anatomy">
+  <defs><marker id="t1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <rect x="20" y="20" width="560" height="340" rx="14" fill="none" class="s-muted" stroke-dasharray="6 4" stroke-width="1.5"/>
+  <text x="36" y="44" font-weight="700">One Tensix core</text>
+  <rect x="40" y="60" width="520" height="56" rx="8" class="grn" stroke-width="1.5"/>
+  <text x="300" y="84" text-anchor="middle" font-weight="700">L1 SRAM · 1464 KiB · software-managed, no caches</text>
+  <text x="300" y="102" text-anchor="middle" font-size="12" class="muted">holds circular buffers of 32×32 tiles</text>
+  <g id="riscv"></g>
+  <rect x="40" y="250" width="520" height="90" rx="8" class="acc" stroke-width="1.5"/>
+  <text x="300" y="272" text-anchor="middle" font-weight="700">Tensix coprocessor</text>
+  <g id="tcop"></g>
+  <rect x="610" y="60" width="130" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="675" y="86" text-anchor="middle" font-weight="600">NoC 0</text><text x="675" y="104" text-anchor="middle" font-size="11" class="muted">reads (convention)</text>
+  <rect x="610" y="140" width="130" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="675" y="166" text-anchor="middle" font-weight="600">NoC 1</text><text x="675" y="184" text-anchor="middle" font-size="11" class="muted">writes (convention)</text>
+  <path d="M560 90 H606" class="s-blu" stroke-width="2" marker-end="url(#t1)"/><path d="M560 170 H606" class="s-blu" stroke-width="2" marker-end="url(#t1)"/>
+  <text x="675" y="240" text-anchor="middle" font-size="12" class="muted">two 2-D torus</text>
+  <text x="675" y="256" text-anchor="middle" font-size="12" class="muted">networks, opposite</text>
+  <text x="675" y="272" text-anchor="middle" font-size="12" class="muted">directions</text>
+</svg>
+<figcaption><b>Five little CPUs that issue work, not compute it.</b> BRISC and NCRISC move data; TRISC0/1/2 drive the unpack → math → pack pipeline <span class="tag vendor">tt-isa-documentation, METALIUM_GUIDE</span>.</figcaption>
+</figure>
+<ul>
+<li><strong>Everything is a 32 × 32 tile.</strong> A BF16 tile is 2,048 bytes; tensors are padded to tile boundaries. The math engine's destination register holds 8 BF16 tiles or 4 FP32 tiles.</li>
+<li><strong>Two engines.</strong> A matrix FPU for tile matmuls and a 32-lane FP32 SFPU vector unit for element-wise and transcendental ops.</li>
+<li><strong>Block floating point.</strong> bfloat8_b and bfloat4_b share an exponent across a block; LoFi/HiFi2/HiFi4 fidelity knobs trade accuracy for throughput.</li>
+</ul>
+
+<h2>Programming: reader, compute, writer</h2>
+<p>TT-Metalium is an open-source, OpenCL-like C++ host API. A typical operation compiles three kernels per core: a <strong>reader</strong> that pulls tiles from DRAM or other cores over NoC 0 into a circular buffer, a <strong>compute</strong> kernel (compiled into the three TRISC binaries) that consumes input buffers and produces output buffers, and a <strong>writer</strong> that pushes results out over NoC 1. Circular buffers (up to 32 per core) synchronise them; sizing one for two tiles gives double buffering. There is no global thread ID: the host hands each core explicit runtime arguments.</p>
+
+<div class="widget" id="cb">
+<h4>Circular buffers and double buffering</h4>
+<p class="hint">Reader → CB_in → compute → CB_out → writer. With a 1-tile buffer, stages wait on each other; with 2 tiles, the reader fetches tile k+1 while compute works on tile k.</p>
+<div class="controls">
+<label>CB size <select id="cb-n"><option value="1">1 tile</option><option value="2" selected>2 tiles</option><option value="4">4 tiles</option></select></label>
+<button class="btn" id="cb-go" type="button">Run 8 tiles</button>
+</div>
+<svg id="cb-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Pipeline timeline"></svg>
+<div class="readout" id="cb-out"></div>
+</div>
+
+<h2>Tensix vs the Cerebras PE</h2>
+<div class="table-wrap"><table>
+<tr><th></th><th>Cerebras PE (WSE-3)</th><th>Tensix core (Blackhole)</th></tr>
+<tr><td>Count per device</td><td>~900,000</td><td>120</td></tr>
+<tr><td>Local memory</td><td>48 KB, code + data</td><td>1,464 KiB L1</td></tr>
+<tr><td>Off-chip memory</td><td>none on the wafer</td><td>32 GB GDDR6</td></tr>
+<tr><td>Data unit</td><td>32-bit wavelet</td><td>32×32 tile; 32-byte NoC flits, packets up to 8 KiB</td></tr>
+<tr><td>Network</td><td>2-D mesh, 24 static colors, ~1 cycle/hop</td><td>two 2-D tori, dynamic packets, ~9 cycles router-to-router</td></tr>
+<tr><td>Control</td><td>tasks triggered by arriving data</td><td>three kernels on five RISC-V cores, synchronised by circular buffers</td></tr>
+<tr><td>Scale-out</td><td>off-wafer (MemoryX/SwarmX, Ethernet)</td><td>Ethernet on every die, switchless meshes</td></tr>
+<tr><td>Openness</td><td>public SDK, closed compiler</td><td>open-source stack, public ISA docs</td></tr>
+</table></div>
+<p>Both reject the GPU recipe of caches and massive multithreading in favour of explicit, software-scheduled data movement — Tenstorrent's guide compares its design to IBM's CELL. The difference is grain: a Cerebras PE handles a few kilobytes and communicates word by word; a Tensix core handles megabytes and communicates tile by tile, with DRAM behind it.</p>
+
+<h2>Performance and caveats</h2>
+<ul>
+<li>Wormhole Galaxy, Llama 3.3-70B: 72.5 tok/s per user (~2,269 tok/s total at batch 32) <span class="tag vendor">Vendor repo table</span>.</li>
+<li>Galaxy Blackhole, DeepSeek-R1 671B: ~350 tok/s per user (~308 at launch) <span class="tag vendor">Vendor</span>.</li>
+<li>No independent benchmark or MLPerf submission was found. A review described the software as "trapped in a software blackhole" (The Register, 2025). The firmware de-rating of shipped p150 cards is a reminder that early specs are targets.</li>
+<li>The tt-metal LLM report says decode is "bound by time to read model weights from DRAM" — the same memory wall as Chapter 1, met with ~512 GB/s per card.</li>
+</ul>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>What do BRISC and NCRISC do, and what do the TRISCs do?</summary><p>BRISC and NCRISC issue NoC data movement (reader/writer); TRISC0/1/2 issue unpack, math and pack instructions to the Tensix coprocessor.</p></details>
+<details><summary>Why size a circular buffer for two tiles?</summary><p>So the producer can fill one slot while the consumer works on the other — double buffering hides transfer time behind compute.</p></details>
+<details><summary>Where would a 70B model's weights live on a Galaxy, and why does that matter for decode?</summary><p>Mostly in GDDR6 (6.2 GB SRAM vs 140 GB of weights), so decode is limited by GDDR bandwidth, unlike a Cerebras deployment that pins weights in SRAM.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const r = $("#riscv");
+  const cores = [["BRISC", "data movement", "blu"], ["NCRISC", "data movement", "blu"], ["TRISC0", "unpack", "amb"], ["TRISC1", "math", "amb"], ["TRISC2", "pack", "amb"]];
+  cores.forEach(([n, d, c], i) => { const x = 40 + i * 106;
+    el("rect", { x, y: 140, width: 96, height: 80, rx: 8, class: c, "stroke-width": 1.4 }, r);
+    el("text", { x: x + 48, y: 172, "text-anchor": "middle", "font-weight": 700, "font-size": 13 }, r).textContent = n;
+    el("text", { x: x + 48, y: 190, "text-anchor": "middle", "font-size": 11, class: "muted" }, r).textContent = "RV32IM";
+    el("text", { x: x + 48, y: 207, "text-anchor": "middle", "font-size": 11 }, r).textContent = d; });
+  const t = $("#tcop");
+  [["2 unpackers", 60], ["matrix FPU", 185], ["SFPU 32-lane", 310], ["4 packers", 435]].forEach(([n, x]) => {
+    el("rect", { x, y: 286, width: 110, height: 40, rx: 6, class: "box", "stroke-width": 1.2 }, t);
+    el("text", { x: x + 55, y: 311, "text-anchor": "middle", "font-size": 12 }, t).textContent = n; });
+
+  function sim() {
+    const cap = +$("#cb-n").value, N = 8, tr = 3, tc = 3, tw = 2; // durations
+    // discrete event: reader can fetch tile k when cbIn has space; compute when tile in cbIn and space in cbOut; writer when tile in cbOut
+    let rd = [], cp = [], wr = [];
+    for (let k = 0; k < N; k++) {
+      const rStart = Math.max(k ? rd[k - 1][1] : 0, k >= cap ? cp[k - cap][0] : 0);
+      rd.push([rStart, rStart + tr]);
+      const cStart = Math.max(rd[k][1], k ? cp[k - 1][1] : 0, k >= cap ? wr[k - cap][0] : 0);
+      cp.push([cStart, cStart + tc]);
+      const wStart = Math.max(cp[k][1], k ? wr[k - 1][1] : 0);
+      wr.push([wStart, wStart + tw]);
+    }
+    const end = wr[N - 1][1], svg = $("#cb-svg"); svg.innerHTML = "";
+    const X = v => 90 + v * 560 / 60;
+    [["reader", rd, "--blue", 30], ["compute", cp, "--accent", 85], ["writer", wr, "--green", 140]].forEach(([n, arr, c, y]) => {
+      el("text", { x: 10, y: y + 22, "font-size": 12 }, svg).textContent = n;
+      arr.forEach(([a, b], k) => { el("rect", { x: X(a), y, width: X(b) - X(a) - 1, height: 34, rx: 3, fill: cssVar(c), opacity: .8 }, svg);
+        el("text", { x: (X(a) + X(b)) / 2, y: y + 22, "text-anchor": "middle", "font-size": 10, fill: "#fff" }, svg).textContent = k; });
+    });
+    el("line", { x1: X(end), x2: X(end), y1: 20, y2: 185, stroke: cssVar("--red"), "stroke-dasharray": "4 3" }, svg);
+    el("text", { x: X(end) + 4, y: 195, "font-size": 11 }, svg).textContent = `done at t=${end}`;
+    $("#cb-out").textContent = `CB size ${cap}: 8 tiles finish at t = ${end} (reader 3, compute 3, writer 2 time units per tile)\n` +
+      (cap === 1 ? "With one slot the reader cannot fetch tile k+1 until compute has consumed tile k: stages serialise." : "Extra slots let all three stages overlap; throughput is set by the slowest stage (compute).");
+  }
+  $("#cb-go").onclick = sim; $("#cb-n").onchange = sim; sim();
+})();
+</script>
+</body>
+</html>

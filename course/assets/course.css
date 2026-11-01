@@ -174,3 +174,4 @@ pre.output { background: #10141c; color: #d7e3f4; border-color: #10141c; }
 pre.output code { color: inherit; }
 .seq text { font-size: 12px; }
 pre, code, .code-tour, .readout { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+.grid2 > * { min-width: 0; }

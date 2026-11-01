@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NVIDIA GPUs, the Incumbent</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 14 · Part IV · Comparison</div>
+<h1>NVIDIA GPUs, the incumbent</h1>
+<p class="lede">A GPU solves the memory wall the opposite way from the wafer. It keeps a big, relatively slow memory (HBM) and hides its latency with caches and with tens of thousands of threads that take turns. Understanding that design is the clearest way to see what is unusual about Cerebras.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Describe an SM, the memory hierarchy, and the H100 → B200 → Rubin progression.</li>
+<li>Explain SIMT, warps, coalescing and occupancy, and why occupancy hides latency.</li>
+<li>Translate SAXPY between CUDA and CSL and name what each programmer must think about.</li>
+</ul>
+</div>
+
+<h2>Three generations</h2>
+<div class="table-wrap"><table>
+<tr><th></th><th>H100 SXM (2022)</th><th>B200 (2024–25)</th><th>Rubin (2026)</th></tr>
+<tr><td>Dies</td><td>1 reticle-size die, 132 SMs</td><td>2 dies joined by a 10 TB/s link</td><td>—</td></tr>
+<tr><td>Memory</td><td>80 GB HBM3, 3.35 TB/s</td><td>192 GB HBM3e (~180 usable), ~8 TB/s</td><td>288 GB HBM4, 19.2 TB/s (launch spec 22)</td></tr>
+<tr><td>Low-precision peak</td><td>~989 TF BF16 dense</td><td>~9 PF FP4 dense (18 sparse)</td><td>50 PF NVFP4 inference</td></tr>
+<tr><td>NVLink per GPU</td><td>900 GB/s</td><td>1.8 TB/s</td><td>3 TB/s (launch spec 3.6)</td></tr>
+<tr><td>Scale-up domain</td><td>8-GPU HGX</td><td>NVL72, ~130 TB/s</td><td>NVL72, ~216 TB/s (launch spec 260)</td></tr>
+</table></div>
+<p style="font-size:14px;color:var(--muted)">All <span class="tag vendor">Vendor</span>, many via secondary sources. Chips and Cheese measured ~3.8 TB/s aggregate L2 read bandwidth on H100 <span class="tag indep">Indep</span>.</p>
+<div class="callout warn">
+<strong>Specs are targets</strong>
+NVIDIA's Rubin page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink, down from 22 and 3.6 at launch; NVIDIA says the new figures "reflect what the system sustains at quality, volume production". Tenstorrent's firmware de-rating (Chapter 13) is the same story. Treat launch numbers from every vendor as provisional.
+</div>
+
+<h2>The memory hierarchy</h2>
+<figure>
+<svg viewBox="0 0 760 300" width="760" role="img" aria-label="GPU memory hierarchy">
+  <g id="hier"></g>
+</svg>
+<figcaption><b>H100: wide at the top, narrow at the bottom.</b> Per SM: 256 KB register file and 256 KB of combined L1/shared memory (up to 228 KB shared). Shared across the chip: 50 MB L2. Off-package: 80 GB HBM3 <span class="tag vendor">Vendor, Hopper whitepaper</span>. Total register + L1 ≈ 66 MB — compare with 44 GB of SRAM on a WSE-3.</figcaption>
+</figure>
+
+<h2>SIMT: one program, many threads</h2>
+<p>A CUDA kernel runs as a <strong>grid of thread blocks</strong>. Each block is assigned to one SM and can share that SM's shared memory. Threads execute in <strong>warps of 32</strong> in lockstep; if threads in a warp take different branches, the warp runs both paths with lanes masked off, so a fully divergent warp runs at 1/32 of peak. Two rules dominate performance:</p>
+<ul>
+<li><strong>Coalescing:</strong> thread <em>i</em> should read element <em>i</em>, so a warp's 32 loads merge into a few wide memory transactions.</li>
+<li><strong>Occupancy:</strong> keep enough warps resident that when one stalls on memory (hundreds of cycles), another is ready to run.</li>
+</ul>
+
+<div class="widget" id="occ">
+<h4>Latency hiding by occupancy</h4>
+<p class="hint">Each warp computes for C cycles, then waits L cycles for memory. The SM's scheduler issues from any ready warp. How many warps does it take to keep the math busy?</p>
+<div class="controls">
+<label>resident warps <input type="range" id="o-w" min="1" max="16" value="4"> <span id="o-wv" class="mono"></span></label>
+<label>compute C <input type="range" id="o-c" min="2" max="40" value="10"> <span id="o-cv" class="mono"></span></label>
+<label>memory latency L <input type="range" id="o-l" min="20" max="400" step="10" value="100"> <span id="o-lv" class="mono"></span></label>
+</div>
+<svg id="o-svg" viewBox="0 0 680 260" width="680" role="img" aria-label="Warp scheduling timeline"></svg>
+<div class="readout" id="o-out"></div>
+</div>
+<p>The wafer needs none of this: a PE's memory answers in one cycle, so there is nothing to hide. That is why a Cerebras PE runs a handful of tasks and 8 microthreads, while an H100 SM keeps up to 2,048 threads in flight.</p>
+
+<h2>SAXPY, twice</h2>
+<div class="grid2">
+<div>
+<div class="filename">CUDA</div>
+<pre><code><span class="k">__global__</span> <span class="n">void</span> saxpy(<span class="n">int</span> n, <span class="n">float</span> a,
+                      <span class="n">const float</span> *x, <span class="n">float</span> *y) {
+  <span class="n">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
+  <span class="k">if</span> (i &lt; n) y[i] = a * x[i] + y[i];
+}
+<span class="c">// host: cudaMemcpy x, y to HBM</span>
+saxpy&lt;&lt;&lt;(n + 255) / 256, 256&gt;&gt;&gt;(n, a, x, y);
+<span class="c">// cudaMemcpy y back</span></code></pre>
+<ul style="font-size:14.5px">
+<li>One thread per element; the hardware schedules them.</li>
+<li>Data lives in one shared address space (HBM).</li>
+<li>Think about: coalescing, block size, occupancy.</li>
+</ul>
+</div>
+<div>
+<div class="filename">CSL (program 01)</div>
+<pre><code><span class="k">var</span> x: [N]<span class="n">f32</span>;  <span class="k">var</span> y: [N]<span class="n">f32</span>;
+<span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>,
+  .{ .tensor_access = |i|{N} -> x[i] });
+<span class="k">const</span> y_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>,
+  .{ .tensor_access = |i|{N} -> y[i] });
+<span class="k">fn</span> saxpy(a: <span class="n">f32</span>) <span class="n">void</span> {
+  <span class="b">@fmacs</span>(y_dsd, y_dsd, x_dsd, a);
+  sys_mod.unblock_cmd_stream();
+}</code></pre>
+<ul style="font-size:14.5px">
+<li>One instruction per PE over its local slice.</li>
+<li>Each PE owns private memory; no shared address space.</li>
+<li>Think about: layout, which PE holds what, colors, tasks.</li>
+</ul>
+</div>
+</div>
+<p>For SAXPY the GPU version is simpler. The difference grows with communication: on a GPU, threads in different blocks share data through HBM and kernel boundaries; on the wafer, PEs share data only by sending wavelets on colors you routed (Labs 2 and 3). Tenstorrent sits between: explicit NoC transfers, but large per-core memory and DRAM behind it.</p>
+
+<h2>Scaling out</h2>
+<p>Beyond one GPU, NVIDIA combines a proprietary scale-up fabric (NVLink/NVSwitch, 72 GPUs at ~130–216 TB/s in an NVL72 rack) with a separate InfiniBand or Ethernet scale-out network, and splits models with tensor, pipeline and data parallelism. A GB200 NVL72 rack holds ~13.4 TB of HBM3e at 576 TB/s aggregate <span class="tag vendor">Vendor via secondary</span>. Its strength is capacity: a 70B FP16 model fits on one B200; on Cerebras it needs four wafers (Chapter 8).</p>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>A warp's threads read x[2*i]. What happens to bandwidth?</summary><p>The accesses are strided, so a warp touches twice as many memory segments as needed; effective bandwidth roughly halves.</p></details>
+<details><summary>Memory latency is 400 cycles and each warp computes 20 cycles between loads. How many warps hide it?</summary><p>About (C + L) / C = 420 / 20 = 21 warps per scheduler.</p></details>
+<details><summary>Why does the H100's 1,979 TF figure need care?</summary><p>It assumes 2:4 structured sparsity. Dense BF16 is ~989 TF — the same trap as Cerebras's sparse 125 PF.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const h = $("#hier");
+  const levels = [["registers", "256 KB / SM · ~1 cycle", 680, "--green"], ["L1 / shared memory", "256 KB / SM · tens of cycles", 560, "--green"],
+    ["L2 cache", "50 MB / chip · ~3.8 TB/s measured", 400, "--blue"], ["HBM3 (off-die)", "80 GB · 3.35 TB/s · hundreds of cycles", 260, "--amber"]];
+  levels.forEach(([n, d, w, c], i) => { const y = 20 + i * 66, x = 380 - w / 2;
+    el("rect", { x, y, width: w, height: 52, rx: 8, fill: cssVar(c), opacity: .22, stroke: cssVar(c), "stroke-width": 1.5 }, h);
+    el("text", { x: 380, y: y + 23, "text-anchor": "middle", "font-weight": 700 }, h).textContent = n;
+    el("text", { x: 380, y: y + 41, "text-anchor": "middle", "font-size": 12, class: "muted" }, h).textContent = d; });
+  el("text", { x: 20, y: 40, "font-size": 12, class: "muted" }, h).textContent = "fast, small";
+  el("text", { x: 20, y: 250, "font-size": 12, class: "muted" }, h).textContent = "slow, big";
+
+  function occ() {
+    const W = +$("#o-w").value, C = +$("#o-c").value, L = +$("#o-l").value;
+    $("#o-wv").textContent = W; $("#o-cv").textContent = C; $("#o-lv").textContent = L;
+    const T = 600, ready = new Array(W).fill(0), busy = []; let t = 0, issued = 0;
+    while (t < T) {
+      let w = -1, best = Infinity; for (let k = 0; k < W; k++) if (ready[k] <= t && ready[k] < best) { best = ready[k]; w = k; }
+      if (w < 0) { t = Math.min(...ready); continue; }
+      busy.push([w, t, Math.min(t + C, T)]); issued += Math.min(C, T - t); t += C; ready[w] = t + L;
+    }
+    const svg = $("#o-svg"); svg.innerHTML = "";
+    const X = v => 70 + v * 590 / T, rows = Math.min(W, 16), rh = Math.min(13, 200 / rows);
+    for (let k = 0; k < rows; k++) el("text", { x: 60, y: 20 + k * rh + rh - 2, "text-anchor": "end", "font-size": 9, class: "muted" }, svg).textContent = `warp ${k}`;
+    busy.forEach(([w, a, b]) => { if (w < rows) el("rect", { x: X(a), y: 20 + w * rh, width: Math.max(1, X(b) - X(a)), height: rh - 2, fill: cssVar("--accent") }, svg); });
+    busy.forEach(([w, a, b]) => el("rect", { x: X(a), y: 230, width: Math.max(1, X(b) - X(a)), height: 14, fill: cssVar("--green") }, svg));
+    el("text", { x: 60, y: 241, "text-anchor": "end", "font-size": 10 }, svg).textContent = "SM busy";
+    const util = issued / T, need = Math.ceil((C + L) / C);
+    $("#o-out").textContent = `math-unit utilisation ≈ ${(100 * util).toFixed(0)}%   (model: min(1, W·C/(C+L)) = ${(100 * Math.min(1, W * C / (C + L))).toFixed(0)}%)\n` +
+      `warps needed to hide latency: ⌈(C+L)/C⌉ = ${need}` + (W >= need ? "  ✓ latency hidden" : `  — add ${need - W} more warps`);
+  }
+  ["#o-w", "#o-c", "#o-l"].forEach(s => $(s).oninput = occ); occ();
+})();
+</script>
+</body>
+</html>

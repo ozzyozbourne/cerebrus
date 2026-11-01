@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Head to Head</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 15 · Part IV · Comparison</div>
+<h1>Head to head</h1>
+<p class="lede">Three answers to the memory wall. NVIDIA keeps a big off-chip memory and hides its latency. Tenstorrent puts large SRAM in each core, cheap DRAM beside it, and Ethernet everywhere. Cerebras removes off-chip memory from the wafer and puts every byte one cycle from its core. This chapter compares them on the axes that matter and states plainly what the evidence does and does not show.</p>
+
+<div class="widget" id="cmp">
+<h4>Compare one number at a time</h4>
+<p class="hint">Per device: one CS-3 system, one Blackhole p150 card, one H100 SXM, one B200. Log scale. Tags show provenance.</p>
+<div class="controls"><label>Metric <select id="c-m"></select></label></div>
+<svg id="c-svg" viewBox="0 0 680 230" width="680" role="img" aria-label="Comparison bars"></svg>
+<div class="readout" id="c-out"></div>
+</div>
+
+<h2>Architecture and memory</h2>
+<div class="table-wrap"><table>
+<tr><th></th><th>Cerebras WSE-3 / CS-3</th><th>Tenstorrent Blackhole p150</th><th>NVIDIA H100 / B200</th></tr>
+<tr><td>Compute unit</td><td>~900k tiny PEs (~0.05 mm²), 8-wide FP16 SIMD</td><td>120 Tensix (32×32 tile matrix FPU + 32-lane SFPU)</td><td>132 SMs with Tensor Cores (H100)</td></tr>
+<tr><td>Die</td><td>one 46,225 mm² wafer</td><td>conventional die</td><td>reticle die; B200 = 2 dies + 10 TB/s link</td></tr>
+<tr><td>Local memory per unit</td><td>48 KB, code + data</td><td>1,464 KiB L1</td><td>256 KB registers + 256 KB L1/shared</td></tr>
+<tr><td>Total on-chip SRAM</td><td>44 GB</td><td>180 MB</td><td>~50 MB L2 + ~66 MB RF/L1 (H100)</td></tr>
+<tr><td>Off-chip memory</td><td>none on wafer; MemoryX for training</td><td>32 GB GDDR6, ~512 GB/s</td><td>80 GB @ 3.35 TB/s / 192 GB @ ~8 TB/s</td></tr>
+<tr><td>Caches</td><td>none (512 B software cache)</td><td>none</td><td>hardware L1 + L2</td></tr>
+<tr><td>On-chip network</td><td>2-D mesh, 32-bit wavelets, 24 static colors</td><td>two 2-D tori, 32 B flits, ≤ 8 KiB packets</td><td>crossbar to L2</td></tr>
+<tr><td>Power</td><td>~23 kW per system</td><td>300 W per card</td><td>~700 W+ per GPU (not verified here)</td></tr>
+</table></div>
+
+<h2>Programming model</h2>
+<figure>
+<svg viewBox="0 0 760 260" width="760" role="img" aria-label="Three programming models">
+  <g id="pm"></g>
+</svg>
+<figcaption><b>Time-multiplexed vs spatial.</b> CUDA runs many threads over shared hardware and memory. TT-Metalium runs three cooperating kernels per core around explicit buffers. CSL places a program on every PE and moves data only as messages on routes you declared.</figcaption>
+</figure>
+<div class="table-wrap"><table>
+<tr><th></th><th>CUDA</th><th>CSL (Cerebras SDK)</th><th>TT-Metalium</th></tr>
+<tr><td>Execution</td><td>SIMT: grid → blocks → warps of 32</td><td>spatial dataflow: tasks fire on wavelet arrival or activation</td><td>per-core MIMD: reader / compute / writer on 5 RISC-Vs</td></tr>
+<tr><td>Data movement</td><td>loads/stores through caches; tiling into shared memory</td><td>wavelets on statically routed colors; fabric DSDs; memcpy</td><td>explicit NoC DMA, DRAM ↔ L1 and core ↔ core</td></tr>
+<tr><td>Synchronisation</td><td><code>__syncthreads</code>, kernel boundaries</td><td>task activation, <code>@block</code>/<code>@unblock</code>, async-op completion</td><td>circular-buffer push/pop</td></tr>
+<tr><td>Latency hiding</td><td>occupancy (many warps)</td><td>not needed for local memory; pipelining through the fabric</td><td>double-buffered circular buffers</td></tr>
+<tr><td>Work partitioning</td><td><code>blockIdx</code>/<code>threadIdx</code></td><td>layout params or <code>&lt;layout&gt;</code> coordinates</td><td>runtime args per core</td></tr>
+<tr><td>Simulator</td><td>—</td><td>cycle-level fabric simulator (used for every lab here)</td><td>ttsim ISA simulator</td></tr>
+<tr><td>Openness</td><td>proprietary, dominant ecosystem</td><td>public SDK, closed compiler</td><td>open source, public ISA</td></tr>
+</table></div>
+
+<h2>Scaling</h2>
+<p><strong>NVIDIA:</strong> NVLink/NVSwitch scale-up (72 GPUs per rack) plus InfiniBand/Ethernet scale-out; tensor, pipeline and data parallelism. <strong>Tenstorrent:</strong> one commodity Ethernet fabric on every die for both scale-up and scale-out, wired into switchless meshes — cheaper, lower bandwidth per link. <strong>Cerebras:</strong> "scale-up" happens on the wafer itself (it behaves like a rack of chips joined by on-silicon wires); between wafers it uses MemoryX/SwarmX for training (to 2,048 CS-3s) and pipelined placement over Ethernet for inference, with Direct Wafer Links arriving in CS-4 <span class="tag vendor">Vendor</span>.</p>
+
+<h2>What the evidence shows</h2>
+<div class="table-wrap"><table>
+<tr><th>Claim</th><th>Tag</th></tr>
+<tr><td>Cerebras serves Kimi K2.6 (~1T params) at 981 tok/s, 6.7× the fastest GPU cloud (May 2026)</td><td><span class="tag indep">Indep</span> Artificial Analysis</td></tr>
+<tr><td>Llama 3.3-70B at 2,314 tok/s, 170 ms TTFT on Cerebras</td><td><span class="tag indep">Indep</span> via interview</td></tr>
+<tr><td>gpt-oss-120B: ~3,000 tok/s claimed vs ~1,700 measured</td><td><span class="tag vendor">Vendor</span> vs <span class="tag indep">Indep</span></td></tr>
+<tr><td>WSE-2 molecular dynamics: 270,097 timesteps/s vs 1,530 on Frontier (179×)</td><td><span class="tag indep">Peer-reviewed</span> (Sandia/LLNL/LANL + Cerebras)</td></tr>
+<tr><td>Batched H100 inference ~$0.10–0.25 per M tokens vs Cerebras $0.60 (Llama 70B)</td><td><span class="tag analyst">Analyst</span></td></tr>
+<tr><td>Tenstorrent Galaxy: 72.5 tok/s/user on Llama 70B (Wormhole), ~350 on DeepSeek-R1 (Blackhole)</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>MLPerf results from Cerebras or Tenstorrent</td><td>none found</td></tr>
+</table></div>
+
+<div class="callout key">
+<strong>The fair reading</strong>
+Cerebras's independently confirmed advantage is <em>per-user tokens per second</em> and <em>strong scaling on problems that fit on the wafer</em>. The MD authors themselves cautioned that the result "doesn't mean the chip is faster overall than exascale systems like Frontier". GPUs win on <em>throughput per dollar at high batch</em> and <em>capacity per device</em>. Tenstorrent's case is cost and openness; no independent benchmark shows it beating GPUs on a headline metric. There is no independent three-way cost or energy-per-token study.
+</div>
+
+<h2>Strengths and matching weaknesses</h2>
+<div class="table-wrap"><table>
+<tr><th></th><th>Strength</th><th>Matching weakness</th></tr>
+<tr><td>Cerebras</td><td>21 PB/s local SRAM bandwidth; one-cycle memory; native sparsity; on-wafer fabric; cycle-level simulator</td><td>44 GB per wafer (4+ systems for 70B FP16); ~23 kW per system; per-token price; 48 KB per PE for code and data; 24 colors minus 4 for the runtime; narrow host I/O; WSE-2/3 portability traps; low-level CSL</td></tr>
+<tr><td>Tenstorrent</td><td>low price; open stack; Ethernet on every chip; large per-core SRAM</td><td>~512 GB/s DRAM per card; decode "bound by time to read model weights from DRAM"; de-rated shipping hardware; maturing software; vendor-only benchmarks</td></tr>
+<tr><td>NVIDIA</td><td>capacity per device; CUDA ecosystem; NVL72 scale-up</td><td>decode stays below the ridge point even at batch 64; FLOP/byte gap widening each generation; rack power; lock-in; spec slippage</td></tr>
+</table></div>
+
+<h2>What programming the wafer taught us</h2>
+<p>Writing and validating five programs for this course made the trade-offs concrete:</p>
+<ul>
+<li><strong>The hard part is resources, not arithmetic.</strong> Every bug was a mutability flag, a command-stream race, or a microthread clash. None was a wrong formula.</li>
+<li><strong>Communication is cheap but not free.</strong> The stencil's ~88-cycle fixed cost per step (four one-word transfers plus task overhead) outweighed the compute until each PE held dozens of cells.</li>
+<li><strong>Weak scaling is effortless; capacity is not.</strong> Going from 8 to 16 PEs cost nothing per step. But every PE holds at most ~46 KB, and data enters through a ~7 Gb/s-per-channel door.</li>
+<li><strong>The simulator is a real asset.</strong> Repeatable, cycle-counted runs (totals varied by at most 2 cycles between reruns) let us find a race by recording state and pin per-step cost to within a cycle. That is harder to get on a GPU.</li>
+</ul>
+
+<h2>Choosing</h2>
+<figure>
+<svg viewBox="0 0 760 250" width="760" role="img" aria-label="Decision guide">
+  <g id="dg"></g>
+</svg>
+<figcaption><b>A rough guide, not a verdict.</b> Real decisions depend on price, availability, software maturity for your model, and power.</figcaption>
+</figure>
+
+<div class="quiz">
+<h3>Final check</h3>
+<details><summary>Explain in two sentences why Cerebras is fast at single-user decode.</summary><p>Decode reads every weight per token and does ~1 FLOP per byte, so it is limited by memory bandwidth. With weights pinned in on-wafer SRAM spread across ~900k PEs, the wafer reads them far faster than any HBM.</p></details>
+<details><summary>Why might a provider still serve that model on GPUs?</summary><p>With large batches GPUs reuse each weight across many requests, reaching better cost per token, and a single GPU holds far more memory than one wafer.</p></details>
+<details><summary>Which of the three programming models is closest to CSL?</summary><p>TT-Metalium: both use explicit, software-scheduled data movement between cores with private SRAM and no caches. CSL is finer-grained (words, not tiles) and has no DRAM behind it.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const dev = ["Cerebras CS-3 (WSE-3)", "Tenstorrent p150", "NVIDIA H100 SXM", "NVIDIA B200"];
+  const cols = ["--accent", "--green", "--blue", "--purple"];
+  const M = {
+    "On-chip SRAM (bytes)": [[44e9, 180e6, 116e6, null], "WSE-3 Vendor; p150 Vendor; H100 = 50 MB L2 + ~66 MB RF/L1 Derived; B200 not compiled here"],
+    "Main memory capacity (bytes)": [[44e9, 32e9, 80e9, 192e9], "Cerebras main memory = on-wafer SRAM; others = DRAM/HBM. All Vendor"],
+    "Main memory bandwidth (B/s)": [[21e15, 0.512e12, 3.35e12, 8e12], "WSE-3 is aggregate local SRAM bandwidth (Vendor) — not directly comparable to DRAM/HBM"],
+    "Peak low-precision compute (FLOP/s)": [[15.6e15, 664e12, 989e12, 9e15], "WSE-3 dense FP16 Analyst est.; p150 BlockFP8 Vendor; H100 BF16 dense Vendor; B200 FP4 dense Vendor — formats differ"],
+    "Compute units": [[900e3, 120, 132, null], "PEs / Tensix cores / SMs. Units are not comparable in size"],
+    "Power (W)": [[23e3, 300, 700, 1000], "CS-3 system Vendor; p150 card Vendor; H100/B200 typical board power, not verified in this course's research"],
+  };
+  const sel = $("#c-m"); Object.keys(M).forEach(k => sel.add(new Option(k, k)));
+  function fmt(v) { const unit = { "bytes": "B", "B/s": "B/s", "FLOP/s": "FLOP/s", "W": "W" }[(sel.value.match(/\(([^)]*)\)/) || [])[1]] || "";
+    const u = [["P", 1e15], ["T", 1e12], ["G", 1e9], ["M", 1e6], ["k", 1e3]]; for (const [s, d] of u) if (v >= d) return +(v / d).toPrecision(3) + " " + s + unit; return v + (unit ? " " + unit : ""); }
+  function draw() {
+    const [vals, note] = M[sel.value], svg = $("#c-svg"); svg.innerHTML = "";
+    const present = vals.filter(v => v), lo = Math.floor(Math.log10(Math.min(...present))) - 0.3, hi = Math.ceil(Math.log10(Math.max(...present)));
+    const X = v => 200 + (Math.log10(v) - lo) / (hi - lo) * 450;
+    dev.forEach((d, i) => { const y = 20 + i * 50;
+      el("text", { x: 190, y: y + 20, "text-anchor": "end", "font-size": 12 }, svg).textContent = d;
+      if (!vals[i]) { el("text", { x: 205, y: y + 20, "font-size": 12, class: "muted" }, svg).textContent = "n/a"; return; }
+      el("rect", { x: 200, y: y + 4, width: X(vals[i]) - 200, height: 26, rx: 4, fill: cssVar(cols[i]), opacity: .85 }, svg);
+      el("text", { x: X(vals[i]) + 6, y: y + 22, "font-size": 12, "font-weight": 600 }, svg).textContent = fmt(vals[i]); });
+    $("#c-out").textContent = note;
+  }
+  sel.onchange = draw; draw();
+
+  // programming model figure
+  const pm = $("#pm");
+  const box = (x, y, w, h, cls, t, s) => { el("rect", { x, y, width: w, height: h, rx: 8, class: cls, "stroke-width": 1.4 }, pm);
+    el("text", { x: x + w / 2, y: y + h / 2 - (s ? 3 : -4), "text-anchor": "middle", "font-size": 12, "font-weight": 600 }, pm).textContent = t;
+    if (s) el("text", { x: x + w / 2, y: y + h / 2 + 13, "text-anchor": "middle", "font-size": 10, class: "muted" }, pm).textContent = s; };
+  el("text", { x: 130, y: 20, "text-anchor": "middle", "font-weight": 700 }, pm).textContent = "CUDA";
+  for (let i = 0; i < 4; i++) box(30, 34 + i * 34, 200, 28, "blu", `warp ${i} … (thousands)`);
+  box(30, 180, 200, 50, "amb", "shared HBM", "all threads see it");
+  el("text", { x: 380, y: 20, "text-anchor": "middle", "font-weight": 700 }, pm).textContent = "TT-Metalium";
+  box(270, 40, 220, 34, "blu", "reader kernel (NoC 0)"); box(270, 96, 220, 34, "acc", "compute kernel"); box(270, 152, 220, 34, "grn", "writer kernel (NoC 1)");
+  el("text", { x: 380, y: 88, "text-anchor": "middle", "font-size": 10, class: "muted" }, pm).textContent = "CB_in"; el("text", { x: 380, y: 144, "text-anchor": "middle", "font-size": 10, class: "muted" }, pm).textContent = "CB_out";
+  box(270, 200, 220, 30, "amb", "GDDR6 behind");
+  el("text", { x: 630, y: 20, "text-anchor": "middle", "font-weight": 700 }, pm).textContent = "CSL";
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) { el("rect", { x: 540 + c * 50, y: 34 + r * 48, width: 38, height: 36, rx: 5, class: "acc", "stroke-width": 1.2 }, pm);
+    if (c < 3) el("line", { x1: 578 + c * 50, x2: 590 + c * 50, y1: 52 + r * 48, y2: 52 + r * 48, stroke: cssVar("--blue"), "stroke-width": 2 }, pm); }
+  el("text", { x: 630, y: 240, "text-anchor": "middle", "font-size": 11, class: "muted" }, pm).textContent = "program per PE · private 48 KB · colors";
+
+  // decision guide
+  const dg = $("#dg");
+  const rows = [["Lowest latency per user on a model that fits in a few wafers", "Cerebras", "--accent"],
+    ["Stencil / particle science that fits on one wafer, needing strong scaling", "Cerebras", "--accent"],
+    ["Highest throughput per dollar, big batches, huge models, mature tools", "NVIDIA", "--blue"],
+    ["Low cost, open stack, willingness to work close to the hardware", "Tenstorrent", "--green"]];
+  rows.forEach(([q, a, c], i) => { const y = 20 + i * 56;
+    el("rect", { x: 20, y, width: 560, height: 44, rx: 8, class: "box" }, dg);
+    el("text", { x: 34, y: y + 27, "font-size": 13 }, dg).textContent = q;
+    el("rect", { x: 600, y, width: 140, height: 44, rx: 8, fill: cssVar(c), opacity: .9 }, dg);
+    el("text", { x: 670, y: y + 27, "text-anchor": "middle", "font-weight": 700, fill: "#fff" }, dg).textContent = a; });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wafer-Scale Computing</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main class="wide">
+<div class="kicker">A 15-chapter visual course</div>
+<h1>Wafer-Scale Computing</h1>
+<p class="lede">How the Cerebras Wafer-Scale Engine works, from a single 48 KB processing element up to multi-wafer clusters; how to program it in CSL, with five original programs compiled and validated on the Cerebras SDK 2.10.1 simulator; and how it compares with Tenstorrent and NVIDIA GPUs.</p>
+
+<figure>
+<svg viewBox="0 0 980 150" width="980" role="img" aria-label="Course map">
+  <g id="map"></g>
+</svg>
+<figcaption><b>Course map.</b> Part I explains why the wafer exists, Part II takes it apart, Part III programs it, Part IV compares it.</figcaption>
+</figure>
+
+<div class="stat-row">
+  <div class="stat"><div class="v">15</div><div class="l">chapters, each with diagrams</div></div>
+  <div class="stat"><div class="v">15</div><div class="l">interactive widgets</div></div>
+  <div class="stat"><div class="v">5 / 5</div><div class="l">programs pass on WSE-3 and WSE-2 <span class="tag measured">Measured</span></div></div>
+  <div class="stat"><div class="v">4</div><div class="l">real problems hit while writing the programs, explained</div></div>
+</div>
+
+<div id="toc"></div>
+
+<h2>How to use this course</h2>
+<ul>
+<li>Read in order the first time: each chapter builds on the previous one. Every chapter ends with "Check yourself" questions.</li>
+<li>Every number carries a provenance tag: <span class="tag vendor">Vendor</span> <span class="tag indep">Indep</span> <span class="tag analyst">Analyst</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span>. Web figures were gathered largely from search extracts of primary sources; check them against the primary document before relying on them.</li>
+<li>To run the programs: set up the SDK with <code>.claude/skills/cerebras-sdk/scripts/setup.sh</code>, then <code>source /home/user/cerebras-sdk/env.sh</code> and <code>bash course/programs/run_all.sh</code>.</li>
+<li>The research behind the course is in <code>reports/</code> and <code>research_notes/</code> in this repository.</li>
+</ul>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const blurbs = [
+    "Rooflines, ridge points, and why LLM decode is starved for bandwidth.",
+    "Reticles, stitching, specs by generation, and surviving defects.",
+    "48 KB SRAM, registers, DSRs, SIMD, microthreads, no caches.",
+    "Wavelets, 24 colors, static routes, multicast, checkerboards.",
+    "Data, local and control tasks; WSE-2 vs WSE-3; a real hang.",
+    "Data structure descriptors: one instruction, a whole loop.",
+    "memcpy halos, copy vs streaming, the command stream, a real race.",
+    "Weight streaming, MemoryX/SwarmX, inference across wafers, CS-4.",
+    "Language, program anatomy, cslc, the simulator, debugging, setup.",
+    "SAXPY and wavelet-triggered tasks, validated on the simulator.",
+    "Systolic row reduction and multicast broadcast across PEs.",
+    "1-D heat equation with halo exchange; cycles per step measured.",
+    "Tensix cores, five RISC-Vs, NoCs, reader/compute/writer kernels.",
+    "SMs, HBM, SIMT, occupancy; SAXPY in CUDA vs CSL.",
+    "Architecture, programming, scaling, evidence, and when to choose which.",
+  ];
+  const toc = document.getElementById("toc"); let part = "";
+  let grid;
+  CHAPTERS.forEach(([href, title, p], i) => {
+    if (p !== part) { part = p; const h = document.createElement("div"); h.className = "part-title"; h.textContent = p; toc.appendChild(h);
+      grid = document.createElement("div"); grid.className = "cards"; toc.appendChild(grid); }
+    const a = document.createElement("a"); a.className = "card"; a.href = href;
+    a.innerHTML = `<div class="num">${String(i + 1).padStart(2, "0")}</div><h3>${title}</h3><p>${blurbs[i]}</p>`;
+    grid.appendChild(a);
+  });
+  const map = $("#map");
+  const parts = [["I · Why", 0, 2, "--amber"], ["II · The machine", 2, 8, "--accent"], ["III · Programming", 8, 12, "--blue"], ["IV · Comparison", 12, 15, "--green"]];
+  parts.forEach(([n, a, b, c]) => {
+    el("rect", { x: 10 + a * 64, y: 20, width: (b - a) * 64 - 6, height: 26, rx: 6, fill: cssVar(c), opacity: .9 }, map);
+    el("text", { x: 10 + a * 64 + 8, y: 38, "font-size": 12, "font-weight": 700, fill: "#fff" }, map).textContent = n;
+  });
+  CHAPTERS.forEach(([href, title], i) => {
+    const g = el("a", { href }, map);
+    el("rect", { x: 10 + i * 64, y: 60, width: 58, height: 58, rx: 8, class: "box", "stroke-width": 1.2 }, g);
+    el("text", { x: 39 + i * 64, y: 96, "text-anchor": "middle", "font-size": 18, "font-weight": 700 }, g).textContent = i + 1;
+    const short = ["Memory wall", "The wafer", "The PE", "Fabric", "Tasks", "DSDs", "Host I/O", "Systems", "CSL", "Lab 1", "Lab 2", "Lab 3", "Tenstorrent", "GPUs", "Compare"][i];
+    el("text", { x: 39 + i * 64, y: 136, "text-anchor": "middle", "font-size": 10, class: "muted" }, g).textContent = short;
+  });
+})();
+</script>
+</body>
+</html>
