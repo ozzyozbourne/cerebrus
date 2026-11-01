@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 3: Heat Stencil</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 12 · Part III · Programming</div>
+<h1>Lab 3: a heat stencil, measured</h1>
+<p class="lede">The capstone program simulates heat flowing along a rod split across a row of PEs. It needs everything from Part II: two-way neighbour traffic on four colors, asynchronous transfers, completion tasks counted into a step, and an iterative state machine. Then we measure what each timestep really costs inside the simulator.</p>
+
+<div class="objectives">
+<h4>After this lab you can</h4>
+<ul>
+<li>Decompose a grid over PEs with ghost cells and a halo exchange.</li>
+<li>Drive an iterative algorithm entirely from tasks.</li>
+<li>Measure kernel cost in the simulator by differencing runs, and fit a simple performance model.</li>
+</ul>
+</div>
+
+<h2>The problem</h2>
+<p>Explicit finite differences for the 1-D heat equation: every timestep, each cell moves toward the average of its neighbours,</p>
+<pre><code>u'[i] = u[i] + α · (u[i-1] − 2·u[i] + u[i+1])        α = 0.25, ends held at 1.0 and 0.0</code></pre>
+<p>The rod has P × n cells. PE <em>k</em> owns cells <em>k·n … k·n+n−1</em> and stores them in <code>u[1..n]</code>, with ghost cells <code>u[0]</code> and <code>u[n+1]</code> holding copies of its neighbours' edge cells. Each step, every PE sends its first cell west and its last cell east, receives the neighbours' edge cells into its ghosts, then updates.</p>
+
+<figure>
+<svg viewBox="0 0 760 210" width="760" role="img" aria-label="Domain decomposition with ghost cells">
+  <defs>
+    <marker id="h0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
+    <marker id="h1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-pur"/></marker>
+  </defs>
+  <g id="dec"></g>
+</svg>
+<figcaption><b>Ghost cells and halo exchange.</b> Orange arrows travel east on colors E0/E1; purple arrows travel west on W0/W1. Four colors, because each PE both sends and receives in both directions and neighbours alternate by parity.</figcaption>
+</figure>
+
+<h2>The code</h2>
+{{code:programs/04-heat-stencil/layout.csl}}
+{{code:programs/04-heat-stencil/pe_program.csl}}
+{{code:programs/04-heat-stencil/run.py}}
+{{out:programs/04-heat-stencil/expected_output.txt}}
+<p>The device result matches a numpy reference doing the same f32 arithmetic to within 1e-5 relative error, on both WSE-3 and WSE-2.</p>
+
+<div class="callout bug">
+<strong>The hang</strong>
+The first version used output queues 2/3 and input queues 2/3. It compiled, then stalled with no progress at cycle 1,894 and had to be killed. On WSE-3, async fabric operations run on the microthread with their queue's ID, so the east send and the west receive both claimed microthread 2. Moving the input queues to 4/5 made all four operations independent. The comment in <code>pe_program.csl</code> records why. Rule: <em>give every concurrently active fabric operation its own queue number</em>.
+</div>
+
+<div class="widget" id="heat">
+<h4>Watch the rod</h4>
+<p class="hint">This runs the same algorithm in your browser with Float32 arithmetic. Colored bands show which PE owns which cells. Defaults match the validated run (8 PEs × 16 cells, α = 0.25).</p>
+<div class="controls">
+<label>PEs <input type="range" id="h-p" min="2" max="16" value="8"> <span id="h-pv" class="mono"></span></label>
+<label>cells/PE <input type="range" id="h-n" min="4" max="32" value="16"> <span id="h-nv" class="mono"></span></label>
+<label>α <input type="range" id="h-a" min="0.05" max="0.5" step="0.05" value="0.25"> <span id="h-av" class="mono"></span></label>
+<button class="btn" id="h-go" type="button">Play</button>
+<button class="btn secondary" id="h-reset" type="button">Reset</button>
+</div>
+<svg id="h-svg" viewBox="0 0 680 260" width="680" role="img" aria-label="Temperature profile"></svg>
+<div class="readout" id="h-out"></div>
+</div>
+
+<h2>Measuring a timestep</h2>
+<p><code>sim_stats.json</code> reports total cycles for the whole run, including host transfers. To isolate the kernel, run the same program with 0 and 100 timesteps and subtract; the host transfers are identical, so the difference is 100 timesteps of pure device work <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>Config (WSE-3)</th><th>0 steps</th><th>100 steps</th><th>Cycles per step</th></tr>
+<tr><td>P = 8, n = 4</td><td>3,105</td><td>12,905</td><td><strong>98</strong></td></tr>
+<tr><td>P = 8, n = 16</td><td>3,991</td><td>16,791</td><td><strong>128</strong></td></tr>
+<tr><td>P = 8, n = 64</td><td>7,364</td><td>32,164</td><td><strong>248</strong></td></tr>
+<tr><td>P = 2, n = 16</td><td>3,713</td><td>13,585</td><td><strong>99</strong></td></tr>
+<tr><td>P = 16, n = 16</td><td>4,371</td><td>17,219</td><td><strong>128.5</strong></td></tr>
+<tr><td>P = 8, n = 16, <em>WSE-2</em></td><td>3,628</td><td>16,105</td><td><strong>125</strong></td></tr>
+</table></div>
+<p>Also measured at 10 and 50 steps (5,071 and 10,291 cycles at P = 8, n = 16): the cost is linear in steps, ~130 cycles each.</p>
+
+<h3>What the numbers say</h3>
+<ul>
+<li><strong>A fixed ~88 cycles per step, plus ~2.5 cycles per cell.</strong> The three points fit <code>cycles/step ≈ 88 + 2.5·n</code> exactly (n = 4 → 98, 16 → 128, 64 → 248). The 2.5 cycles per cell covers three vector instructions, under one cycle per element per instruction. The fixed part is the halo exchange — four single-wavelet async transfers, their completion tasks, and task scheduling.</li>
+<li><strong>Weak scaling is flat.</strong> 8 PEs and 16 PEs cost the same per step. Every PE only talks to its neighbours, so adding PEs adds no work to anyone. This is the property that lets a stencil use all ~900k PEs.</li>
+<li><strong>P = 2 is cheaper</strong> because both PEs are edge PEs with only one neighbour: two transfers per step instead of four.</li>
+<li><strong>WSE-2 vs WSE-3 is a wash for this kernel</strong> (125 vs 128). f32 work does not benefit from WSE-3's wider FP16 SIMD.</li>
+</ul>
+
+<div class="widget" id="model">
+<h4>Use the model</h4>
+<p class="hint">Extrapolate <code>88 + 2.5·n</code> cycles per step. The 850 MHz clock is the SDK benchmarks' own assumption; no official clock is published.</p>
+<div class="controls">
+<label>cells per PE n <input type="range" id="m-n" min="1" max="5000" step="1" value="16"> <span id="m-nv" class="mono"></span></label>
+</div>
+<svg id="m-svg" viewBox="0 0 680 230" width="680" role="img" aria-label="Cycles per step model"></svg>
+<div class="readout" id="m-out"></div>
+</div>
+<p>The lesson is surface-to-volume. With 16 cells per PE, two-thirds of each step is communication and synchronisation. With thousands of cells per PE (memory allows about 5,000 f32 cells plus the scratch array), compute dominates. On a real wafer you would also go to 2-D domains and overlap the halo exchange with the interior update — the SDK's 7-point and 25-point stencil benchmarks do both.</p>
+
+<h3>Exercises</h3>
+<ol>
+<li>Overlap communication with compute: update the interior cells <code>u[2..n-1]</code> while the halo transfers are in flight, and only the two edge cells after. Re-measure: does the fixed 88 shrink?</li>
+<li>Run 1,000 steps and confirm the profile approaches the straight line between the two boundary temperatures.</li>
+<li>Switch the arrays to <code>f16</code> and the builtins to their half-precision forms. Compare WSE-2 and WSE-3 cycles per step.</li>
+</ol>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  // decomposition diagram
+  const d = $("#dec");
+  for (let k = 0; k < 3; k++) {
+    const x0 = 30 + k * 250;
+    el("text", { x: x0 + 100, y: 30, "text-anchor": "middle", "font-weight": 700 }, d).textContent = `PE ${k}`;
+    for (let i = 0; i < 6; i++) {
+      const ghost = i === 0 || i === 5;
+      el("rect", { x: x0 + i * 34, y: 50, width: 30, height: 34, rx: 4, class: ghost ? "box" : "grn", "stroke-width": 1.3, "stroke-dasharray": ghost ? "4 3" : "" }, d);
+      el("text", { x: x0 + i * 34 + 15, y: 72, "text-anchor": "middle", "font-size": 10 }, d).textContent = `u${i}`;
+    }
+    if (k < 2) {
+      el("path", { d: `M${x0 + 4 * 34 + 15} 88 C ${x0 + 200} 140, ${x0 + 260} 140, ${x0 + 250 + 15} 88`, fill: "none", stroke: cssVar("--accent"), "stroke-width": 2, "marker-end": "url(#h0)" }, d);
+      el("path", { d: `M${x0 + 250 + 34 + 15} 48 C ${x0 + 290} 0, ${x0 + 220} 0, ${x0 + 5 * 34 + 15} 46`, fill: "none", stroke: cssVar("--purple"), "stroke-width": 2, "marker-end": "url(#h1)" }, d);
+    }
+  }
+  el("text", { x: 380, y: 170, "text-anchor": "middle", "font-size": 12, class: "muted" }, d).textContent = "n = 4 shown · dashed = ghost cells · ends of the rod keep fixed ghosts (Dirichlet boundary)";
+  el("text", { x: 380, y: 192, "text-anchor": "middle", "font-size": 12, class: "muted" }, d).textContent = "per step: send u[n] east + u[1] west, receive u[0] and u[n+1], then 3 DSD instructions";
+
+  // heat sim
+  const svg = $("#h-svg"); let u, step, timer = null, P, n, a;
+  function init() {
+    P = +$("#h-p").value; n = +$("#h-n").value; a = Math.fround(+$("#h-a").value);
+    $("#h-pv").textContent = P; $("#h-nv").textContent = n; $("#h-av").textContent = a.toFixed(2);
+    const L = P * n; u = new Float32Array(L + 2); u[0] = 1;
+    for (let i = 1 + Math.floor(L / 2) - 2; i < 1 + Math.floor(L / 2) + 2; i++) u[i] = 5;
+    step = 0; draw();
+  }
+  function advance() {
+    const L = u.length - 2, lap = new Float32Array(L);
+    for (let i = 0; i < L; i++) lap[i] = Math.fround(Math.fround(u[i] + u[i + 2]) + Math.fround(-2 * u[i + 1]));
+    for (let i = 0; i < L; i++) u[i + 1] = Math.fround(u[i + 1] + Math.fround(a * lap[i]));
+    step++;
+  }
+  function draw() {
+    svg.innerHTML = "";
+    const L = u.length - 2, W = 620, X0 = 40, Y0 = 220, H = 190, ymax = 5;
+    for (let k = 0; k < P; k++) el("rect", { x: X0 + k * n * W / L, y: Y0 - H, width: n * W / L, height: H, fill: cssVar(k % 2 ? "--blue-soft" : "--surface-2") }, svg);
+    for (let v = 0; v <= 5; v++) { el("text", { x: X0 - 6, y: Y0 - v / ymax * H + 4, "text-anchor": "end", "font-size": 10, class: "muted" }, svg).textContent = v; }
+    const pts = []; for (let i = 0; i < L; i++) pts.push(`${X0 + (i + .5) * W / L},${Y0 - Math.min(u[i + 1], ymax) / ymax * H}`);
+    el("polyline", { points: pts.join(" "), fill: "none", stroke: cssVar("--accent"), "stroke-width": 2.5 }, svg);
+    el("text", { x: X0, y: 245, "font-size": 11, class: "muted" }, svg).textContent = "hot end (1.0)";
+    el("text", { x: X0 + W, y: 245, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = "cold end (0.0)";
+    el("text", { x: X0 + W / 2, y: 245, "text-anchor": "middle", "font-size": 11 }, svg).textContent = `step ${step}`;
+    $("#h-out").textContent = `${P} PEs × ${n} cells, step ${step}` + (P === 8 && n === 16 && Math.abs(a - 0.25) < 1e-6 && step === 50 ? "  ← same state the device returned (validated)" : "") +
+      `\nmax temperature ${Math.max(...u.slice(1, -1)).toFixed(4)} · stable while α ≤ 0.5`;
+  }
+  $("#h-go").onclick = () => { if (timer) { clearInterval(timer); timer = null; return; }
+    timer = setInterval(() => { advance(); draw(); if (step === 50 || step >= 2000) { clearInterval(timer); timer = null; } }, 60); };
+  $("#h-reset").onclick = () => { if (timer) clearInterval(timer); timer = null; init(); };
+  ["#h-p", "#h-n", "#h-a"].forEach(s => $(s).oninput = () => { if (timer) clearInterval(timer); timer = null; init(); });
+  init();
+
+  // model
+  const ms = $("#m-svg");
+  const meas = [[4, 98], [16, 128], [64, 248]];
+  function model() {
+    const nn = +$("#m-n").value; $("#m-nv").textContent = nn;
+    ms.innerHTML = "";
+    const X0 = 50, Y0 = 200, W = 600, H = 170, nmax = 128, cmax = 420;
+    const X = v => X0 + v / nmax * W, Y = c => Y0 - c / cmax * H;
+    for (let c = 0; c <= cmax; c += 100) { el("line", { x1: X0, x2: X0 + W, y1: Y(c), y2: Y(c), class: "line" }, ms); el("text", { x: X0 - 6, y: Y(c) + 4, "text-anchor": "end", "font-size": 10, class: "muted" }, ms).textContent = c; }
+    for (let v = 0; v <= nmax; v += 16) el("text", { x: X(v), y: Y0 + 16, "text-anchor": "middle", "font-size": 10, class: "muted" }, ms).textContent = v;
+    el("text", { x: X0 + W / 2, y: 228, "text-anchor": "middle", "font-size": 11 }, ms).textContent = "cells per PE (n)";
+    el("text", { x: X0, y: 14, "font-size": 11 }, ms).textContent = "cycles per step";
+    el("line", { x1: X(0), y1: Y(88), x2: X(nmax), y2: Y(88 + 2.5 * nmax), stroke: cssVar("--blue"), "stroke-width": 2 }, ms);
+    el("line", { x1: X(0), y1: Y(88), x2: X(nmax), y2: Y(88), stroke: cssVar("--purple"), "stroke-dasharray": "5 4", "stroke-width": 1.5 }, ms);
+    el("text", { x: X(nmax) - 4, y: Y(88) - 6, "text-anchor": "end", "font-size": 11, class: "f-pur" }, ms).textContent = "fixed: halo exchange + tasks ≈ 88";
+    meas.forEach(([x, c]) => { el("circle", { cx: X(x), cy: Y(c), r: 5, fill: cssVar("--accent") }, ms); el("text", { x: X(x) + 8, y: Y(c) + 4, "font-size": 11 }, ms).textContent = `measured ${c}`; });
+    if (nn <= nmax) el("line", { x1: X(nn), x2: X(nn), y1: Y0, y2: 20, stroke: cssVar("--red"), "stroke-dasharray": "3 3" }, ms);
+    const cyc = 88 + 2.5 * nn, comp = 2.5 * nn / cyc, us = cyc / 850;
+    const maxN = Math.floor((46 * 1024) / 8) - 2;
+    $("#m-out").textContent = `n = ${nn}: ≈ ${cyc.toFixed(0)} cycles/step → ${(us * 1000).toFixed(0)} ns at 850 MHz; compute share ${(100 * comp).toFixed(0)}%` +
+      (nn > maxN ? `\n⚠ n > ~${maxN}: u and lap no longer fit in ~46 KB of usable SRAM` : `\nmemory: u + lap = ${((2 * nn + 2) * 4 / 1024).toFixed(1)} KB of 48 KB`) +
+      `\nmeasured points: n=4 → 98, n=16 → 128, n=64 → 248 (WSE-3, 8 PEs)`;
+  }
+  $("#m-n").oninput = model; model();
+})();
+</script>
+</body>
+</html>

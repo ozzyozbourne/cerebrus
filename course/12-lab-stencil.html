@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 3: Heat Stencil</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 12 · Part III · Programming</div>
+<h1>Lab 3: a heat stencil, measured</h1>
+<p class="lede">The capstone program simulates heat flowing along a rod split across a row of PEs. It needs everything from Part II: two-way neighbour traffic on four colors, asynchronous transfers, completion tasks counted into a step, and an iterative state machine. Then we measure what each timestep really costs inside the simulator.</p>
+
+<div class="objectives">
+<h4>After this lab you can</h4>
+<ul>
+<li>Decompose a grid over PEs with ghost cells and a halo exchange.</li>
+<li>Drive an iterative algorithm entirely from tasks.</li>
+<li>Measure kernel cost in the simulator by differencing runs, and fit a simple performance model.</li>
+</ul>
+</div>
+
+<h2>The problem</h2>
+<p>Explicit finite differences for the 1-D heat equation: every timestep, each cell moves toward the average of its neighbours,</p>
+<pre><code>u'[i] = u[i] + α · (u[i-1] − 2·u[i] + u[i+1])        α = 0.25, ends held at 1.0 and 0.0</code></pre>
+<p>The rod has P × n cells. PE <em>k</em> owns cells <em>k·n … k·n+n−1</em> and stores them in <code>u[1..n]</code>, with ghost cells <code>u[0]</code> and <code>u[n+1]</code> holding copies of its neighbours' edge cells. Each step, every PE sends its first cell west and its last cell east, receives the neighbours' edge cells into its ghosts, then updates.</p>
+
+<figure>
+<svg viewBox="0 0 760 210" width="760" role="img" aria-label="Domain decomposition with ghost cells">
+  <defs>
+    <marker id="h0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
+    <marker id="h1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-pur"/></marker>
+  </defs>
+  <g id="dec"></g>
+</svg>
+<figcaption><b>Ghost cells and halo exchange.</b> Orange arrows travel east on colors E0/E1; purple arrows travel west on W0/W1. Four colors, because each PE both sends and receives in both directions and neighbours alternate by parity.</figcaption>
+</figure>
+
+<h2>The code</h2>
+<div class="filename">course/programs/04-heat-stencil/layout.csl</div>
+<pre><code><span class="c">// 04-heat-stencil: explicit 1-D heat equation  u&#x27; = u + alpha * (u[i-1] - 2u[i] + u[i+1])</span>
+<span class="c">// on a rod split across P PEs (n cells each). Every timestep each PE swaps its</span>
+<span class="c">// edge cells with both neighbours (halo exchange), then updates its cells.</span>
+<span class="c">// Teaches: bidirectional neighbour traffic, 4 colors, async-op completion</span>
+<span class="c">// counting with local tasks, iterative task-driven control flow.</span>
+<span class="k">param</span> P: <span class="n">i16</span>;
+<span class="k">param</span> n: <span class="n">i16</span>;
+
+<span class="c">// Eastward traffic uses E0/E1, westward W0/W1, alternating by column parity.</span>
+<span class="k">const</span> E0: <span class="n">color</span> = <span class="b">@get_color</span>(0);
+<span class="k">const</span> E1: <span class="n">color</span> = <span class="b">@get_color</span>(1);
+<span class="k">const</span> W0: <span class="n">color</span> = <span class="b">@get_color</span>(2);
+<span class="k">const</span> W1: <span class="n">color</span> = <span class="b">@get_color</span>(3);
+
+<span class="k">const</span> memcpy = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/get_params&gt;&quot;</span>, .{ .width = P, .height = 1 });
+
+<span class="k">layout</span> {
+  <span class="b">@set_rectangle</span>(P, 1);
+  <span class="k">for</span> (<span class="b">@range</span>(<span class="n">i16</span>, P)) |x| {
+    <span class="k">const</span> even = (x % 2 == 0);
+    <span class="k">const</span> send_e = <span class="k">if</span> (even) E0 <span class="k">else</span> E1;   <span class="c">// I send my last cell EAST on this</span>
+    <span class="k">const</span> recv_w = <span class="k">if</span> (even) E1 <span class="k">else</span> E0;   <span class="c">// my west neighbour&#x27;s send_e</span>
+    <span class="k">const</span> send_w = <span class="k">if</span> (even) W0 <span class="k">else</span> W1;   <span class="c">// I send my first cell WEST on this</span>
+    <span class="k">const</span> recv_e = <span class="k">if</span> (even) W1 <span class="k">else</span> W0;   <span class="c">// my east neighbour&#x27;s send_w</span>
+    <span class="k">const</span> has_w = x &gt; 0;
+    <span class="k">const</span> has_e = x &lt; P - 1;
+
+    <span class="b">@set_tile_code</span>(x, 0, <span class="s">&quot;pe_program.csl&quot;</span>, .{
+      .memcpy_params = memcpy.get_params(x), .n = n, .has_w = has_w, .has_e = has_e,
+      .send_e = send_e, .recv_w = recv_w, .send_w = send_w, .recv_e = recv_e });
+
+    <span class="k">if</span> (has_e) {
+      <span class="b">@set_color_config</span>(x, 0, send_e, .{ .routes = .{ .rx = .{RAMP}, .tx = .{EAST} } });
+      <span class="b">@set_color_config</span>(x, 0, recv_e, .{ .routes = .{ .rx = .{EAST}, .tx = .{RAMP} } });
+    }
+    <span class="k">if</span> (has_w) {
+      <span class="b">@set_color_config</span>(x, 0, send_w, .{ .routes = .{ .rx = .{RAMP}, .tx = .{WEST} } });
+      <span class="b">@set_color_config</span>(x, 0, recv_w, .{ .routes = .{ .rx = .{WEST}, .tx = .{RAMP} } });
+    }
+  }
+  <span class="b">@export_name</span>(<span class="s">&quot;u&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;run&quot;</span>, <span class="k">fn</span>(<span class="n">u32</span>, <span class="n">f32</span>)<span class="n">void</span>);    <span class="c">// (timesteps, alpha)</span>
+}</code></pre>
+<div class="filename">course/programs/04-heat-stencil/pe_program.csl</div>
+<pre><code><span class="k">param</span> memcpy_params;
+<span class="k">param</span> n: <span class="n">i16</span>;
+<span class="k">param</span> has_w: <span class="n">bool</span>;
+<span class="k">param</span> has_e: <span class="n">bool</span>;
+<span class="k">param</span> send_e: <span class="n">color</span>;
+<span class="k">param</span> recv_w: <span class="n">color</span>;
+<span class="k">param</span> send_w: <span class="n">color</span>;
+<span class="k">param</span> recv_e: <span class="n">color</span>;
+
+<span class="k">const</span> sys_mod = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/memcpy&gt;&quot;</span>, memcpy_params);
+
+<span class="c">// u[0] and u[n+1] are ghost cells holding the neighbours&#x27; edge values</span>
+<span class="c">// (or the fixed boundary temperature at the two ends of the rod).</span>
+<span class="k">var</span> u: [n + 2]<span class="n">f32</span>;
+<span class="k">var</span> u_ptr: [*]<span class="n">f32</span> = &amp;u;
+<span class="k">var</span> lap: [n]<span class="n">f32</span>;
+
+<span class="k">const</span> left  = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -&gt; u[i] });
+<span class="k">const</span> mid   = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -&gt; u[i + 1] });
+<span class="k">const</span> right = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -&gt; u[i + 2] });
+<span class="k">const</span> lap_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -&gt; lap[i] });
+
+<span class="k">const</span> first_cell = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{1} -&gt; u[1] });
+<span class="k">const</span> last_cell  = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{1} -&gt; u[n] });
+<span class="k">const</span> ghost_w    = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{1} -&gt; u[0] });
+<span class="k">const</span> ghost_e    = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{1} -&gt; u[n + 1] });
+
+<span class="c">// One hardware queue per direction (WSE-3 binds each queue to one color).</span>
+<span class="c">// All four IDs differ: on WSE-3 an async fabric op runs on the microthread</span>
+<span class="c">// with its queue&#x27;s ID, and two concurrent ops must not share a microthread</span>
+<span class="c">// (output queue 2 + input queue 2 would both use microthread 2 -&gt; hang).</span>
+<span class="k">const</span> oq_e = <span class="b">@get_output_queue</span>(2);
+<span class="k">const</span> oq_w = <span class="b">@get_output_queue</span>(3);
+<span class="k">const</span> iq_w = <span class="b">@get_input_queue</span>(4);
+<span class="k">const</span> iq_e = <span class="b">@get_input_queue</span>(5);
+
+<span class="k">fn</span> fabout(<span class="k">comptime</span> q: <span class="n">output_queue</span>, <span class="k">comptime</span> c: <span class="n">color</span>) <span class="n">fabout_dsd</span> {
+  <span class="k">return</span> <span class="b">@get_dsd</span>(<span class="n">fabout_dsd</span>, <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">&quot;wse3&quot;</span>)) .{ .extent = 1, .<span class="n">output_queue</span> = q }
+                              <span class="k">else</span> .{ .extent = 1, .<span class="n">output_queue</span> = q, .fabric_color = c });
+}
+<span class="k">const</span> to_e   = fabout(oq_e, send_e);
+<span class="k">const</span> to_w   = fabout(oq_w, send_w);
+<span class="k">const</span> from_w = <span class="b">@get_dsd</span>(<span class="n">fabin_dsd</span>, .{ .extent = 1, .<span class="n">input_queue</span> = iq_w });
+<span class="k">const</span> from_e = <span class="b">@get_dsd</span>(<span class="n">fabin_dsd</span>, .{ .extent = 1, .<span class="n">input_queue</span> = iq_e });
+
+<span class="c">// Each async op activates its own local task when it completes. (Activating</span>
+<span class="c">// one task several times before it runs would collapse into a single run,</span>
+<span class="c">// so we use one task per op and count.)</span>
+<span class="k">const</span> done_se: <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(10);
+<span class="k">const</span> done_sw: <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(11);
+<span class="k">const</span> done_rw: <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(12);
+<span class="k">const</span> done_re: <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(13);
+
+<span class="k">const</span> ops_per_step: <span class="n">i16</span> = (<span class="k">if</span> (has_e) 2 <span class="k">else</span> 0) + (<span class="k">if</span> (has_w) 2 <span class="k">else</span> 0);
+<span class="k">var</span> pending: <span class="n">i16</span> = 0;
+<span class="k">var</span> steps: <span class="n">u32</span> = 0;
+<span class="k">var</span> step: <span class="n">u32</span> = 0;
+<span class="k">var</span> alpha: <span class="n">f32</span> = 0.0;
+
+<span class="k">fn</span> start_step() <span class="n">void</span> {
+  pending = ops_per_step;
+  <span class="k">if</span> (pending == 0) { update(); <span class="k">return</span>; }            <span class="c">// P == 1: no neighbours</span>
+  <span class="k">if</span> (has_e) {
+    <span class="b">@fmovs</span>(to_e, last_cell, .{ .async = true, .activate = done_se });   <span class="c">// send u[n] east</span>
+    <span class="b">@fmovs</span>(ghost_e, from_e, .{ .async = true, .activate = done_re });   <span class="c">// recv u[n+1]</span>
+  }
+  <span class="k">if</span> (has_w) {
+    <span class="b">@fmovs</span>(to_w, first_cell, .{ .async = true, .activate = done_sw });  <span class="c">// send u[1] west</span>
+    <span class="b">@fmovs</span>(ghost_w, from_w, .{ .async = true, .activate = done_rw });   <span class="c">// recv u[0]</span>
+  }
+}
+
+<span class="k">fn</span> update() <span class="n">void</span> {
+  <span class="c">// lap = u[i-1] + u[i+1] - 2 u[i];   u[i] += alpha * lap   (3 vector instructions)</span>
+  <span class="b">@fadds</span>(lap_dsd, left, right);
+  <span class="b">@fmacs</span>(lap_dsd, lap_dsd, mid, -2.0);
+  <span class="b">@fmacs</span>(mid, mid, lap_dsd, alpha);
+  step += 1;
+  <span class="k">if</span> (step &lt; steps) start_step() <span class="k">else</span> sys_mod.unblock_cmd_stream();
+}
+
+<span class="k">fn</span> op_done() <span class="n">void</span> {
+  pending -= 1;
+  <span class="k">if</span> (pending == 0) update();      <span class="c">// all 4 halo transfers finished -&gt; compute</span>
+}
+<span class="k">task</span> t_se() <span class="n">void</span> { op_done(); }
+<span class="k">task</span> t_sw() <span class="n">void</span> { op_done(); }
+<span class="k">task</span> t_rw() <span class="n">void</span> { op_done(); }
+<span class="k">task</span> t_re() <span class="n">void</span> { op_done(); }
+
+<span class="k">fn</span> run(T: <span class="n">u32</span>, a: <span class="n">f32</span>) <span class="n">void</span> {
+  steps = T; step = 0; alpha = a;
+  <span class="k">if</span> (steps == 0) { sys_mod.unblock_cmd_stream(); } <span class="k">else</span> { start_step(); }
+}
+
+<span class="k">comptime</span> {
+  <span class="b">@bind_local_task</span>(t_se, done_se);
+  <span class="b">@bind_local_task</span>(t_sw, done_sw);
+  <span class="b">@bind_local_task</span>(t_rw, done_rw);
+  <span class="b">@bind_local_task</span>(t_re, done_re);
+  <span class="k">if</span> (has_e) {
+    <span class="b">@initialize_queue</span>(oq_e, <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">&quot;wse3&quot;</span>)) .{ .<span class="n">color</span> = send_e } <span class="k">else</span> .{});
+    <span class="b">@initialize_queue</span>(iq_e, .{ .<span class="n">color</span> = recv_e });
+  }
+  <span class="k">if</span> (has_w) {
+    <span class="b">@initialize_queue</span>(oq_w, <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">&quot;wse3&quot;</span>)) .{ .<span class="n">color</span> = send_w } <span class="k">else</span> .{});
+    <span class="b">@initialize_queue</span>(iq_w, .{ .<span class="n">color</span> = recv_w });
+  }
+  <span class="b">@export_symbol</span>(u_ptr, <span class="s">&quot;u&quot;</span>);
+  <span class="b">@export_symbol</span>(run);
+}</code></pre>
+<div class="filename">course/programs/04-heat-stencil/run.py</div>
+<pre><code>#!/usr/bin/env cs_python
+<span class="k">import</span> argparse, json
+<span class="k">import</span> numpy as np
+<span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder  <span class="c"># pylint: disable=no-name-in-module</span>
+
+p = argparse.ArgumentParser(); p.add_argument(&#x27;--name&#x27;); p.add_argument(&#x27;--cmaddr&#x27;)
+p.add_argument(&#x27;--steps&#x27;, type=int, default=50); p.add_argument(&#x27;--alpha&#x27;, type=float, default=0.25)
+args = p.parse_args()
+prm = json.load(open(f<span class="s">&quot;{args.name}/out.json&quot;</span>))[&#x27;params&#x27;]
+P, n = int(prm[&#x27;P&#x27;]), int(prm[&#x27;n&#x27;])
+L = P * n
+
+<span class="c"># Global rod with fixed boundary temperatures: g[0] = 1.0 (hot end), g[L+1] = 0.0</span>
+g = np.zeros(L + 2, dtype=np.float32); g[0] = 1.0
+g[1 + L <span class="c">// 2 - 2 : 1 + L // 2 + 2] = 5.0                 # a hot spot in the middle</span>
+
+<span class="c"># Each PE gets its n cells plus the two neighbouring cells as ghosts.</span>
+local = np.stack([g[x * n : x * n + n + 2] <span class="k">for</span> x in range(P)]).astype(np.float32)
+
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr)
+us = rt.get_id(&#x27;u&#x27;)
+rt.load(); rt.run()
+kw = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
+rt.memcpy_h2d(us, local.ravel(), 0, 0, P, 1, n + 2, **kw)
+rt.launch(&#x27;run&#x27;, np.uint32(args.steps), np.float32(args.alpha), nonblock=<span class="k">False</span>)
+res = np.zeros(P * (n + 2), dtype=np.float32)
+rt.memcpy_d2h(res, us, 0, 0, P, 1, n + 2, **kw)
+rt.stop()
+device = res.reshape(P, n + 2)[:, 1:-1].ravel()
+
+<span class="c"># Reference: identical f32 arithmetic on the host</span>
+ref = g.copy(); a = np.float32(args.alpha)
+<span class="k">for</span> _ in range(args.steps):
+    lap = (ref[:-2] + ref[2:]) + np.float32(-2.0) * ref[1:-1]
+    ref[1:-1] = ref[1:-1] + a * lap
+np.testing.assert_allclose(device, ref[1:-1], rtol=1e-5, atol=1e-6)
+print(f<span class="s">&quot;{P} PEs x {n} cells, {args.steps} steps; temperature profile (every {max(1, L // 16)}th cell):&quot;</span>)
+print(np.array2string(device[:: max(1, L <span class="c">// 16)], precision=3))</span>
+print(<span class="s">&quot;SUCCESS!&quot;</span>)</code></pre>
+<div class="filename">course/programs/04-heat-stencil/expected_output.txt</div>
+<pre class="output"><code>8 PEs x 16 cells, 50 steps; temperature profile (every 8th cell):
+[8.424e-01 7.276e-02 6.412e-04 3.723e-07 2.791e-09 3.100e-05 1.557e-02
+ 5.359e-01 1.546e+00 3.954e-01 8.336e-03 1.159e-05 6.745e-10 6.351e-16
+ 6.577e-25 0.000e+00]
+SUCCESS!
+[10291 simulated cycles, WSE-3]</code></pre>
+<p>The device result matches a numpy reference doing the same f32 arithmetic to within 1e-5 relative error, on both WSE-3 and WSE-2.</p>
+
+<div class="callout bug">
+<strong>The hang</strong>
+The first version used output queues 2/3 and input queues 2/3. It compiled, then stalled with no progress at cycle 1,894 and had to be killed. On WSE-3, async fabric operations run on the microthread with their queue's ID, so the east send and the west receive both claimed microthread 2. Moving the input queues to 4/5 made all four operations independent. The comment in <code>pe_program.csl</code> records why. Rule: <em>give every concurrently active fabric operation its own queue number</em>.
+</div>
+
+<div class="widget" id="heat">
+<h4>Watch the rod</h4>
+<p class="hint">This runs the same algorithm in your browser with Float32 arithmetic. Colored bands show which PE owns which cells. Defaults match the validated run (8 PEs × 16 cells, α = 0.25).</p>
+<div class="controls">
+<label>PEs <input type="range" id="h-p" min="2" max="16" value="8"> <span id="h-pv" class="mono"></span></label>
+<label>cells/PE <input type="range" id="h-n" min="4" max="32" value="16"> <span id="h-nv" class="mono"></span></label>
+<label>α <input type="range" id="h-a" min="0.05" max="0.5" step="0.05" value="0.25"> <span id="h-av" class="mono"></span></label>
+<button class="btn" id="h-go" type="button">Play</button>
+<button class="btn secondary" id="h-reset" type="button">Reset</button>
+</div>
+<svg id="h-svg" viewBox="0 0 680 260" width="680" role="img" aria-label="Temperature profile"></svg>
+<div class="readout" id="h-out"></div>
+</div>
+
+<h2>Measuring a timestep</h2>
+<p><code>sim_stats.json</code> reports total cycles for the whole run, including host transfers. To isolate the kernel, run the same program with 0 and 100 timesteps and subtract; the host transfers are identical, so the difference is 100 timesteps of pure device work <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>Config (WSE-3)</th><th>0 steps</th><th>100 steps</th><th>Cycles per step</th></tr>
+<tr><td>P = 8, n = 4</td><td>3,105</td><td>12,905</td><td><strong>98</strong></td></tr>
+<tr><td>P = 8, n = 16</td><td>3,991</td><td>16,791</td><td><strong>128</strong></td></tr>
+<tr><td>P = 8, n = 64</td><td>7,364</td><td>32,164</td><td><strong>248</strong></td></tr>
+<tr><td>P = 2, n = 16</td><td>3,713</td><td>13,585</td><td><strong>99</strong></td></tr>
+<tr><td>P = 16, n = 16</td><td>4,371</td><td>17,219</td><td><strong>128.5</strong></td></tr>
+<tr><td>P = 8, n = 16, <em>WSE-2</em></td><td>3,628</td><td>16,105</td><td><strong>125</strong></td></tr>
+</table></div>
+<p>Also measured at 10 and 50 steps (5,071 and 10,291 cycles at P = 8, n = 16): the cost is linear in steps, ~130 cycles each.</p>
+
+<h3>What the numbers say</h3>
+<ul>
+<li><strong>A fixed ~88 cycles per step, plus ~2.5 cycles per cell.</strong> The three points fit <code>cycles/step ≈ 88 + 2.5·n</code> exactly (n = 4 → 98, 16 → 128, 64 → 248). The 2.5 cycles per cell covers three vector instructions, under one cycle per element per instruction. The fixed part is the halo exchange — four single-wavelet async transfers, their completion tasks, and task scheduling.</li>
+<li><strong>Weak scaling is flat.</strong> 8 PEs and 16 PEs cost the same per step. Every PE only talks to its neighbours, so adding PEs adds no work to anyone. This is the property that lets a stencil use all ~900k PEs.</li>
+<li><strong>P = 2 is cheaper</strong> because both PEs are edge PEs with only one neighbour: two transfers per step instead of four.</li>
+<li><strong>WSE-2 vs WSE-3 is a wash for this kernel</strong> (125 vs 128). f32 work does not benefit from WSE-3's wider FP16 SIMD.</li>
+</ul>
+
+<div class="widget" id="model">
+<h4>Use the model</h4>
+<p class="hint">Extrapolate <code>88 + 2.5·n</code> cycles per step. The 850 MHz clock is the SDK benchmarks' own assumption; no official clock is published.</p>
+<div class="controls">
+<label>cells per PE n <input type="range" id="m-n" min="1" max="5000" step="1" value="16"> <span id="m-nv" class="mono"></span></label>
+</div>
+<svg id="m-svg" viewBox="0 0 680 230" width="680" role="img" aria-label="Cycles per step model"></svg>
+<div class="readout" id="m-out"></div>
+</div>
+<p>The lesson is surface-to-volume. With 16 cells per PE, two-thirds of each step is communication and synchronisation. With thousands of cells per PE (memory allows about 5,000 f32 cells plus the scratch array), compute dominates. On a real wafer you would also go to 2-D domains and overlap the halo exchange with the interior update — the SDK's 7-point and 25-point stencil benchmarks do both.</p>
+
+<h3>Exercises</h3>
+<ol>
+<li>Overlap communication with compute: update the interior cells <code>u[2..n-1]</code> while the halo transfers are in flight, and only the two edge cells after. Re-measure: does the fixed 88 shrink?</li>
+<li>Run 1,000 steps and confirm the profile approaches the straight line between the two boundary temperatures.</li>
+<li>Switch the arrays to <code>f16</code> and the builtins to their half-precision forms. Compare WSE-2 and WSE-3 cycles per step.</li>
+</ol>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  // decomposition diagram
+  const d = $("#dec");
+  for (let k = 0; k < 3; k++) {
+    const x0 = 30 + k * 250;
+    el("text", { x: x0 + 100, y: 30, "text-anchor": "middle", "font-weight": 700 }, d).textContent = `PE ${k}`;
+    for (let i = 0; i < 6; i++) {
+      const ghost = i === 0 || i === 5;
+      el("rect", { x: x0 + i * 34, y: 50, width: 30, height: 34, rx: 4, class: ghost ? "box" : "grn", "stroke-width": 1.3, "stroke-dasharray": ghost ? "4 3" : "" }, d);
+      el("text", { x: x0 + i * 34 + 15, y: 72, "text-anchor": "middle", "font-size": 10 }, d).textContent = `u${i}`;
+    }
+    if (k < 2) {
+      el("path", { d: `M${x0 + 4 * 34 + 15} 88 C ${x0 + 200} 140, ${x0 + 260} 140, ${x0 + 250 + 15} 88`, fill: "none", stroke: cssVar("--accent"), "stroke-width": 2, "marker-end": "url(#h0)" }, d);
+      el("path", { d: `M${x0 + 250 + 34 + 15} 48 C ${x0 + 290} 0, ${x0 + 220} 0, ${x0 + 5 * 34 + 15} 46`, fill: "none", stroke: cssVar("--purple"), "stroke-width": 2, "marker-end": "url(#h1)" }, d);
+    }
+  }
+  el("text", { x: 380, y: 170, "text-anchor": "middle", "font-size": 12, class: "muted" }, d).textContent = "n = 4 shown · dashed = ghost cells · ends of the rod keep fixed ghosts (Dirichlet boundary)";
+  el("text", { x: 380, y: 192, "text-anchor": "middle", "font-size": 12, class: "muted" }, d).textContent = "per step: send u[n] east + u[1] west, receive u[0] and u[n+1], then 3 DSD instructions";
+
+  // heat sim
+  const svg = $("#h-svg"); let u, step, timer = null, P, n, a;
+  function init() {
+    P = +$("#h-p").value; n = +$("#h-n").value; a = Math.fround(+$("#h-a").value);
+    $("#h-pv").textContent = P; $("#h-nv").textContent = n; $("#h-av").textContent = a.toFixed(2);
+    const L = P * n; u = new Float32Array(L + 2); u[0] = 1;
+    for (let i = 1 + Math.floor(L / 2) - 2; i < 1 + Math.floor(L / 2) + 2; i++) u[i] = 5;
+    step = 0; draw();
+  }
+  function advance() {
+    const L = u.length - 2, lap = new Float32Array(L);
+    for (let i = 0; i < L; i++) lap[i] = Math.fround(Math.fround(u[i] + u[i + 2]) + Math.fround(-2 * u[i + 1]));
+    for (let i = 0; i < L; i++) u[i + 1] = Math.fround(u[i + 1] + Math.fround(a * lap[i]));
+    step++;
+  }
+  function draw() {
+    svg.innerHTML = "";
+    const L = u.length - 2, W = 620, X0 = 40, Y0 = 220, H = 190, ymax = 5;
+    for (let k = 0; k < P; k++) el("rect", { x: X0 + k * n * W / L, y: Y0 - H, width: n * W / L, height: H, fill: cssVar(k % 2 ? "--blue-soft" : "--surface-2") }, svg);
+    for (let v = 0; v <= 5; v++) { el("text", { x: X0 - 6, y: Y0 - v / ymax * H + 4, "text-anchor": "end", "font-size": 10, class: "muted" }, svg).textContent = v; }
+    const pts = []; for (let i = 0; i < L; i++) pts.push(`${X0 + (i + .5) * W / L},${Y0 - Math.min(u[i + 1], ymax) / ymax * H}`);
+    el("polyline", { points: pts.join(" "), fill: "none", stroke: cssVar("--accent"), "stroke-width": 2.5 }, svg);
+    el("text", { x: X0, y: 245, "font-size": 11, class: "muted" }, svg).textContent = "hot end (1.0)";
+    el("text", { x: X0 + W, y: 245, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = "cold end (0.0)";
+    el("text", { x: X0 + W / 2, y: 245, "text-anchor": "middle", "font-size": 11 }, svg).textContent = `step ${step}`;
+    $("#h-out").textContent = `${P} PEs × ${n} cells, step ${step}` + (P === 8 && n === 16 && Math.abs(a - 0.25) < 1e-6 && step === 50 ? "  ← same state the device returned (validated)" : "") +
+      `\nmax temperature ${Math.max(...u.slice(1, -1)).toFixed(4)} · stable while α ≤ 0.5`;
+  }
+  $("#h-go").onclick = () => { if (timer) { clearInterval(timer); timer = null; return; }
+    timer = setInterval(() => { advance(); draw(); if (step === 50 || step >= 2000) { clearInterval(timer); timer = null; } }, 60); };
+  $("#h-reset").onclick = () => { if (timer) clearInterval(timer); timer = null; init(); };
+  ["#h-p", "#h-n", "#h-a"].forEach(s => $(s).oninput = () => { if (timer) clearInterval(timer); timer = null; init(); });
+  init();
+
+  // model
+  const ms = $("#m-svg");
+  const meas = [[4, 98], [16, 128], [64, 248]];
+  function model() {
+    const nn = +$("#m-n").value; $("#m-nv").textContent = nn;
+    ms.innerHTML = "";
+    const X0 = 50, Y0 = 200, W = 600, H = 170, nmax = 128, cmax = 420;
+    const X = v => X0 + v / nmax * W, Y = c => Y0 - c / cmax * H;
+    for (let c = 0; c <= cmax; c += 100) { el("line", { x1: X0, x2: X0 + W, y1: Y(c), y2: Y(c), class: "line" }, ms); el("text", { x: X0 - 6, y: Y(c) + 4, "text-anchor": "end", "font-size": 10, class: "muted" }, ms).textContent = c; }
+    for (let v = 0; v <= nmax; v += 16) el("text", { x: X(v), y: Y0 + 16, "text-anchor": "middle", "font-size": 10, class: "muted" }, ms).textContent = v;
+    el("text", { x: X0 + W / 2, y: 228, "text-anchor": "middle", "font-size": 11 }, ms).textContent = "cells per PE (n)";
+    el("text", { x: X0, y: 14, "font-size": 11 }, ms).textContent = "cycles per step";
+    el("line", { x1: X(0), y1: Y(88), x2: X(nmax), y2: Y(88 + 2.5 * nmax), stroke: cssVar("--blue"), "stroke-width": 2 }, ms);
+    el("line", { x1: X(0), y1: Y(88), x2: X(nmax), y2: Y(88), stroke: cssVar("--purple"), "stroke-dasharray": "5 4", "stroke-width": 1.5 }, ms);
+    el("text", { x: X(nmax) - 4, y: Y(88) - 6, "text-anchor": "end", "font-size": 11, class: "f-pur" }, ms).textContent = "fixed: halo exchange + tasks ≈ 88";
+    meas.forEach(([x, c]) => { el("circle", { cx: X(x), cy: Y(c), r: 5, fill: cssVar("--accent") }, ms); el("text", { x: X(x) + 8, y: Y(c) + 4, "font-size": 11 }, ms).textContent = `measured ${c}`; });
+    if (nn <= nmax) el("line", { x1: X(nn), x2: X(nn), y1: Y0, y2: 20, stroke: cssVar("--red"), "stroke-dasharray": "3 3" }, ms);
+    const cyc = 88 + 2.5 * nn, comp = 2.5 * nn / cyc, us = cyc / 850;
+    const maxN = Math.floor((46 * 1024) / 8) - 2;
+    $("#m-out").textContent = `n = ${nn}: ≈ ${cyc.toFixed(0)} cycles/step → ${(us * 1000).toFixed(0)} ns at 850 MHz; compute share ${(100 * comp).toFixed(0)}%` +
+      (nn > maxN ? `\n⚠ n > ~${maxN}: u and lap no longer fit in ~46 KB of usable SRAM` : `\nmemory: u + lap = ${((2 * nn + 2) * 4 / 1024).toFixed(1)} KB of 48 KB`) +
+      `\nmeasured points: n=4 → 98, n=16 → 128, n=64 → 248 (WSE-3, 8 PEs)`;
+  }
+  $("#m-n").oninput = model; model();
+})();
+</script>
+</body>
+</html>
