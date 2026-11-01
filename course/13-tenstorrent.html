@@ -5,147 +5,882 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tenstorrent, the Middle Path</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .tabs button { font: 600 13px var(--mono); padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
+  .tabs button.on { background: var(--accent); border-color: var(--accent); }
+  .codepane[hidden] { display: none; }
+  .codepane pre { margin-top: 0; }
+  .p150 { background: var(--accent-soft); }
+  .gl dt { font-weight: 700; margin-top: 6px; }
+  .gl dd { margin: 0 0 0 16px; }
+  .widget svg text.on-fill { fill: #1b1e25; }
+  .widget svg .tile-hit { cursor: pointer; }
+  .widget svg .tile-hit:hover { stroke-width: 2.4; }
+  .readout { white-space: pre-wrap; }
+  .controls .btn + .btn { margin-left: 0; }
+</style>
 </head>
 <body>
 <main>
 <div class="kicker">Chapter 13 · Part IV · Comparison</div>
 <h1>Tenstorrent, the middle path</h1>
-<p class="lede">Tenstorrent builds conventional-size chips out of a grid of "Tensix" cores, each with 1.4 MiB of SRAM and five small RISC-V processors that orchestrate a matrix engine. Cheap GDDR6 sits beside the chip and Ethernet ports on every die link chips into meshes. It shares the wafer's spatial, explicit-data-movement philosophy, at a very different scale and price.</p>
+<p class="lede">Tenstorrent builds conventional-size chips out of a grid of "Tensix" cores. Each core has about 1.5 MiB of SRAM (1,464 KiB on Wormhole, 1,536 KiB on Blackhole) and five small RISC-V processors that steer a matrix engine. Cheap GDDR6 sits beside the chip. Ethernet ports built into the die (on Wormhole and most Blackhole products) link chips into meshes. Tenstorrent shares the wafer's idea of spatial, explicitly scheduled data movement, but at a very different scale and price.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
 <ul>
-<li>Draw a Tensix core and explain what each of its five RISC-V cores does.</li>
-<li>Explain the reader / compute / writer kernel model and circular buffers.</li>
-<li>Compare Tensix and the Cerebras PE on memory, network and programming model.</li>
+<li>Sketch a Blackhole chip and a Tensix core, and explain why one compute kernel runs on three RISC-V cores.</li>
+<li>Read the reader / compute / writer kernels of a real TT-Metalium op, and explain how circular buffers synchronise them and why two slots are enough.</li>
+<li>Route a packet on NoC 0 and NoC 1, and explain multicast with its semaphore handshake.</li>
+<li>Explain how a matmul is split across the core grid, and why decode keeps weights DRAM-sharded.</li>
+<li>Lay out a 70B model on a 32-chip Galaxy and estimate its decode ceiling from memory bandwidth.</li>
+<li>Translate CSL concepts into Metalium terms and compare a Tensix core with a Cerebras PE.</li>
 </ul>
 </div>
 
 <h2>The product line</h2>
 <div class="table-wrap"><table>
-<tr><th></th><th>Grayskull e150</th><th>Wormhole n300</th><th>Blackhole p150</th><th>Galaxy Blackhole</th></tr>
-<tr><td>Status</td><td>legacy</td><td>older</td><td>current</td><td>current</td></tr>
-<tr><td>Process</td><td>12nm</td><td>12nm</td><td>TSMC 6nm</td><td>32 × Blackhole</td></tr>
-<tr><td>Tensix cores</td><td>120</td><td>128 (2 dies)</td><td>120 (140 before Feb 2026)</td><td>~4,000</td></tr>
-<tr><td>On-chip SRAM</td><td>120 MB</td><td>~1.43 MiB / core</td><td>180 MB</td><td>6.2 GB</td></tr>
-<tr><td>Off-chip memory</td><td>8 GB LPDDR4, 118 GB/s</td><td>24 GB GDDR6, 576 GB/s</td><td>32 GB GDDR6, ~512 GB/s</td><td>1 TB GDDR6, 16 TB/s</td></tr>
-<tr><td>Peak (vendor)</td><td>332 TF FP8</td><td>466 TF FP8</td><td>664–774 TF BlockFP8</td><td>23 PF BlockFP8</td></tr>
-<tr><td>Scale-out</td><td>—</td><td>16 × 100 GbE</td><td>14 × 400 GbE (paired as 800G)</td><td>8 × 4 mesh</td></tr>
-<tr><td>Power / price</td><td>200 W, $799</td><td>300 W</td><td>300 W</td><td>~12 kW, $110k+</td></tr>
+<tr><th></th><th>Grayskull e150</th><th>Wormhole n300</th><th class="p150">Blackhole p150</th><th>Galaxy Blackhole</th></tr>
+<tr><td>Status</td><td>legacy</td><td>older</td><td class="p150">current · <b>used in the rest of this chapter</b></td><td>current</td></tr>
+<tr><td>Process</td><td>12nm</td><td>12nm</td><td class="p150">TSMC 6nm</td><td>32 × Blackhole</td></tr>
+<tr><td>Tensix cores</td><td>120</td><td>128 (2 dies × 64)</td><td class="p150">120 (140 before Feb 2026)</td><td>~3,840–4,480 <span class="tag derived">32 × 120–140</span></td></tr>
+<tr><td>L1 per core</td><td>~1 MB <span class="tag derived">120 MB / 120</span></td><td>1,464 KiB <span class="tag vendor">ISA docs</span></td><td class="p150">1,536 KiB <span class="tag vendor">ISA docs</span></td><td>1,536 KiB</td></tr>
+<tr><td>On-chip SRAM (total)</td><td>120 MB</td><td>~192 MB <span class="tag derived">128 × 1,464 KiB</span></td><td class="p150">180 MB (210 before)</td><td>6.2 GB</td></tr>
+<tr><td>Off-chip memory</td><td>8 GB LPDDR4, 118 GB/s</td><td>24 GB GDDR6, 576 GB/s</td><td class="p150">32 GB GDDR6, 512 GB/s <span class="tag vendor">8 ch × 64 GB/s, tt-metal CCL report</span></td><td>1 TB GDDR6, 16 TB/s</td></tr>
+<tr><td>Peak (vendor)</td><td>332 TF FP8</td><td>466 TF FP8</td><td class="p150">664 TF BlockFP8 (774 before)</td><td>23 PF BlockFP8 (TT-Fabric report: 24 PF)</td></tr>
+<tr><td>Ethernet ports</td><td>—</td><td>16 × 100 GbE tiles per die; 2 × QSFP-DD on the card <span class="tag vendor">ISA docs</span></td><td class="p150">4 × 800 GbE QSFP-DD (8 of the die's 14 × 400 GbE tiles wired) <span class="tag vendor">ISA docs</span></td><td>chips linked inside the box</td></tr>
+<tr><td>Topology</td><td>single card</td><td>2 chips; the second is reached over Ethernet</td><td class="p150">card, or 4 in a QuietBox</td><td>32 chips in a 2-D Ethernet mesh/torus (Wormhole Galaxy: 8 × 4 mesh <span class="tag vendor">tt-metal</span>)</td></tr>
+<tr><td>Power / price</td><td>200 W, $799</td><td>300 W</td><td class="p150">300 W</td><td>~12 kW <span class="tag analyst">Flopper</span>, from $110k</td></tr>
 </table></div>
-<p style="font-size:14px;color:var(--muted)">All <span class="tag vendor">Vendor</span>, mostly from search extracts of spec pages. A February 2026 firmware update cut the published p150 from 140 to 120 cores, 210 to 180 MB SRAM and 774 to 664 TFLOPS; Tenstorrent says it costs 1–2% performance. Peak figures from different sources conflict (745 / 774 / 664).</p>
+<p style="font-size:14px;color:var(--muted)">Figures are <span class="tag vendor">Vendor</span> unless tagged otherwise, mostly from search extracts of spec pages and tt-metal / tt-isa-documentation on GitHub. A February 2026 firmware update cut the published p150 from 140 to 120 cores, 210 to 180 MB SRAM and 774 to 664 TFLOPS. Tenstorrent says this costs 1–2% performance. The ISA documentation still lists 140 Tensix tiles on a p150 board. "BlockFP8" is a block-floating-point format (see the glossary). It is not the FP8 E4M3 format used on GPUs.</p>
+
+<div class="callout key">
+<p><strong>The peaks follow one formula.</strong> A Tensix matrix engine computes an 8×16 · 16×16 product every cycle: 2 × 8 × 16 × 16 = 4,096 FLOP per cycle per core at the lowest fidelity (LoFi) <span class="tag vendor">tt-metal matrix_engine / GEMM_FLOPS reports</span>. Blackhole runs at 1.35 GHz <span class="tag vendor">GEMM_FLOPS</span>.</p>
+<ul>
+<li>140 cores × 4,096 × 1.35 GHz = <b>774 TF</b>, the launch p150 figure <span class="tag derived">Derived</span>.</li>
+<li>120 cores × 4,096 × 1.35 GHz = <b>664 TF</b>, the figure after the firmware update <span class="tag derived">Derived</span>.</li>
+<li>The Hot Chips 2024 figure of 745 TF equals 140 cores at 1.30 GHz. That is consistent with an earlier clock target, but this is our inference <span class="tag derived">Derived</span>.</li>
+<li>HiFi2 halves the rate and HiFi4 quarters it: 332 TF and 166 TF on 120 cores <span class="tag derived">Derived</span>.</li>
+<li>A tuned BFP4 / LoFi matmul measured 581 TF on a 13 × 10 grid. That is 81% of the 130-core peak <span class="tag vendor">vendor-measured, GEMM_FLOPS</span>.</li>
+<li>Galaxy: 32 × 745–774 TF = 23.8–24.8 PF, so the 23–24 PF figures predate the core cut <span class="tag derived">Derived</span>.</li>
+</ul>
+<p>The Wormhole and Grayskull marketing peaks do not fit this formula cleanly. For example, 128 × 4,096 × 1 GHz = 524 TF, not 466 TF. We leave them as published.</p>
+</div>
+
+<h2>The chip: a grid on two tori</h2>
+<p>A Blackhole die is a 17 × 12 grid of <em>tiles</em> (grid locations). There are 140 Tensix tiles, 24 DRAM tiles (each group of three shares one 4 GiB GDDR6 channel), 14 Ethernet tiles, 2 PCIe tiles, 4 L2CPU tiles (each a cluster of four 64-bit SiFive x280 cores that can run Linux), and one ARC and one security tile <span class="tag vendor">tt-isa-documentation BlackholeA0; tt-metal blackhole_140_arch.yaml</span>. Every tile has a router on each of two <strong>networks-on-chip (NoCs)</strong>. Each NoC is a 2-D <em>torus</em>: the left and right edges, and the top and bottom edges, are wired together. NoC 0 only flows right and down. NoC 1 connects the same tiles but only flows left and up <span class="tag vendor">ISA docs, RoutingPaths</span>.</p>
+<ul>
+<li><strong>Routing is fixed by the addresses.</strong> On NoC 0 a packet travels right, turns at most once, then travels down. On NoC 1 it travels up first, then left. Routers are cut-through ("wormhole switching"). Two packets only contend if they need the same link; crossing inside a router is free <span class="tag vendor">ISA docs</span>.</li>
+<li><strong>Packets and flits.</strong> A packet is one header flit plus up to 256 data flits. A Blackhole flit is 64 B, so a packet carries up to 16 KiB; Wormhole flits are 32 B, so its packets carry up to 8 KiB. The NoC clock went from 1 GHz to 1.35 GHz <span class="tag vendor">ISA docs, BlackholeA0 NoC</span>.</li>
+<li><strong>Cost per hop.</strong> A router-to-router hop takes 9 cycles, and the NIU (network interface unit) to router step about 5 cycles at each end. Each link carries one flit per cycle <span class="tag vendor">ISA docs</span>. That is 64 B × 1.35 GHz ≈ <b>86 GB/s</b> per link per NoC on Blackhole, against 32 GB/s on Wormhole <span class="tag derived">Derived</span>.</li>
+<li><strong>Multicast.</strong> A write or an atomic can target a <em>rectangle</em> of Tensix tiles; other tile types opt out. The packet follows a tree: along the major axis, then the minor axis, then along the major axis again. Broadcast packets have their own virtual-channel class, so they cannot deadlock against unicasts <span class="tag vendor">ISA docs</span>.</li>
+</ul>
+
+<div class="widget" id="chip">
+<h4>Blackhole floorplan: route a packet</h4>
+<p class="hint">Schematic of the NoC grid at its real coordinates. Click a source tile, then a destination tile; for multicast, click a source and then two corners of a rectangle. Links used by more than one drawn route turn red (congestion). The presets reproduce the DRAM-reader placement study from tt-metal on Blackhole geometry.</p>
+<div class="controls">
+<label>NoC <select id="chip-noc"><option value="0">NoC 0 (right, then down)</option><option value="1">NoC 1 (up, then left)</option></select></label>
+<label>Mode <select id="chip-mode"><option value="u">unicast</option><option value="m">multicast to a rectangle</option></select></label>
+<button class="btn secondary" id="chip-pa" type="button">Preset: readers far from banks</button>
+<button class="btn secondary" id="chip-pb" type="button">Preset: readers beside banks</button>
+<button class="btn" id="chip-clr" type="button">Clear</button>
+</div>
+<svg id="chip-svg" viewBox="0 0 760 470" width="760" role="img" aria-label="Blackhole NoC grid with routes"></svg>
+<div class="readout" id="chip-out"></div>
+</div>
+<p>Since 2026 the firmware enables 120 of the 140 Tensix tiles <span class="tag vendor">Vendor</span>. The diagram does not show which 20 are switched off, because that is not documented. Chips with defective cores are "harvested" in the same way: the bad rows or columns are fused off and software sees a smaller grid. The tt-metal GEMM benchmark ran on a 13 × 10 compute grid <span class="tag vendor">GEMM_FLOPS</span>.</p>
+
+<div class="callout">
+<p><strong>"Tile" means two things.</strong> Tenstorrent documents use it both for a 32 × 32 block of data and for a grid location on the chip (Tensix tile, DRAM tile). From here on, this chapter says <em>core</em> or <em>grid tile</em> for the location and <em>tile</em> for the data block.</p>
+</div>
 
 <h2>Inside a Tensix core</h2>
 <figure>
-<svg viewBox="0 0 760 380" width="760" role="img" aria-label="Tensix core anatomy">
-  <defs><marker id="t1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
-  <rect x="20" y="20" width="560" height="340" rx="14" fill="none" class="s-muted" stroke-dasharray="6 4" stroke-width="1.5"/>
-  <text x="36" y="44" font-weight="700">One Tensix core</text>
-  <rect x="40" y="60" width="520" height="56" rx="8" class="grn" stroke-width="1.5"/>
-  <text x="300" y="84" text-anchor="middle" font-weight="700">L1 SRAM · 1464 KiB · software-managed, no caches</text>
-  <text x="300" y="102" text-anchor="middle" font-size="12" class="muted">holds circular buffers of 32×32 tiles</text>
+<svg viewBox="0 0 780 480" width="780" role="img" aria-label="Tensix core anatomy with data and control paths">
+  <defs>
+    <marker id="ta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
+    <marker id="tb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
+  </defs>
+  <rect x="16" y="16" width="640" height="448" rx="14" fill="none" class="s-muted" stroke-dasharray="6 4" stroke-width="1.5"/>
+  <text x="140" y="40" font-weight="700">One Tensix core</text>
+  <rect x="32" y="56" width="86" height="392" rx="8" class="grn" stroke-width="1.5"/>
+  <text x="75" y="150" text-anchor="middle" font-weight="700">L1</text>
+  <text x="75" y="170" text-anchor="middle" font-weight="700">SRAM</text>
+  <text x="75" y="196" text-anchor="middle" font-size="12">1536 KiB</text>
+  <text x="75" y="212" text-anchor="middle" font-size="12">(WH: 1464)</text>
+  <text x="75" y="240" text-anchor="middle" font-size="11" class="muted">plain RAM,</text>
+  <text x="75" y="254" text-anchor="middle" font-size="11" class="muted">no cache</text>
+  <text x="75" y="280" text-anchor="middle" font-size="11" class="muted">holds code,</text>
+  <text x="75" y="294" text-anchor="middle" font-size="11" class="muted">CBs, shards,</text>
+  <text x="75" y="308" text-anchor="middle" font-size="11" class="muted">semaphores</text>
   <g id="riscv"></g>
-  <rect x="40" y="250" width="520" height="90" rx="8" class="acc" stroke-width="1.5"/>
-  <text x="300" y="272" text-anchor="middle" font-weight="700">Tensix coprocessor</text>
+  <!-- NoC lanes -->
+  <path d="M118 150 H596" class="s-blu" stroke-width="2.5" fill="none" marker-start="url(#tb)" marker-end="url(#tb)"/>
+  <path d="M118 178 H596" class="s-blu" stroke-width="2.5" fill="none" marker-start="url(#tb)" marker-end="url(#tb)"/>
+  <rect x="600" y="138" width="120" height="24" rx="6" class="blu" stroke-width="1.5"/><text x="660" y="155" text-anchor="middle" font-size="12" font-weight="600">NoC 0 router</text>
+  <rect x="600" y="166" width="120" height="24" rx="6" class="blu" stroke-width="1.5"/><text x="660" y="183" text-anchor="middle" font-size="12" font-weight="600">NoC 1 router</text>
+  <text x="728" y="148" font-size="11" class="muted">→ ↓</text>
+  <text x="728" y="182" font-size="11" class="muted">← ↑</text>
+  <text x="356" y="146" text-anchor="middle" font-size="11" class="muted">BRISC: reads in over NoC 0 (convention)</text>
+  <text x="356" y="196" text-anchor="middle" font-size="11" class="muted">NCRISC: writes out over NoC 1 (convention)</text>
+  <!-- coprocessor -->
+  <rect x="140" y="210" width="500" height="238" rx="8" class="acc" stroke-width="1.5"/>
+  <text x="390" y="230" text-anchor="middle" font-weight="700">Tensix coprocessor</text>
+  <text x="390" y="246" text-anchor="middle" font-size="11" class="muted">3 in-order frontends (one per TRISC) feed 9 shared backend units</text>
   <g id="tcop"></g>
-  <rect x="610" y="60" width="130" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="675" y="86" text-anchor="middle" font-weight="600">NoC 0</text><text x="675" y="104" text-anchor="middle" font-size="11" class="muted">reads (convention)</text>
-  <rect x="610" y="140" width="130" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="675" y="166" text-anchor="middle" font-weight="600">NoC 1</text><text x="675" y="184" text-anchor="middle" font-size="11" class="muted">writes (convention)</text>
-  <path d="M560 90 H606" class="s-blu" stroke-width="2" marker-end="url(#t1)"/><path d="M560 170 H606" class="s-blu" stroke-width="2" marker-end="url(#t1)"/>
-  <text x="675" y="240" text-anchor="middle" font-size="12" class="muted">two 2-D torus</text>
-  <text x="675" y="256" text-anchor="middle" font-size="12" class="muted">networks, opposite</text>
-  <text x="675" y="272" text-anchor="middle" font-size="12" class="muted">directions</text>
+  <!-- legend -->
+  <line x1="668" y1="262" x2="700" y2="262" class="s-acc" stroke-width="2.5"/><text x="706" y="266" font-size="11">data</text>
+  <line x1="668" y1="282" x2="700" y2="282" class="s-muted" stroke-width="1.5" stroke-dasharray="4 3"/><text x="706" y="286" font-size="11">control</text>
+  <line x1="668" y1="302" x2="700" y2="302" class="s-blu" stroke-width="2.5"/><text x="706" y="306" font-size="11">NoC</text>
 </svg>
-<figcaption><b>Five little CPUs that issue work, not compute it.</b> BRISC and NCRISC move data; TRISC0/1/2 drive the unpack → math → pack pipeline <span class="tag vendor">tt-isa-documentation, METALIUM_GUIDE</span>.</figcaption>
+<figcaption><b>Five small CPUs that issue work rather than compute it.</b> BRISC and NCRISC program the NoC. TRISC0, TRISC1 and TRISC2 each push custom 32-bit instructions into their own in-order frontend, which feeds the unpackers, the matrix FPU and SFPU, and the packers. Data flows L1 → unpack → SrcA/SrcB → FPU → Dst → pack → L1 <span class="tag vendor">tt-isa-documentation, METALIUM_GUIDE</span>. The RISC-V cores are RV32IM on Wormhole. Blackhole adds the bit-manipulation and atomics extensions and parts of F, Zfh and V, at 1.35 GHz <span class="tag vendor">ISA docs, BabyRISCV</span>.</figcaption>
 </figure>
+<p><strong>Why three cores for one compute kernel?</strong> Most of the FLOPs come from the FPU, and the FPU can start only one instruction per cycle. The intended pattern is that one thread feeds the FPU, another keeps the unpackers loading the next operands, and the third keeps the packers draining results. Unpack, math and pack then overlap like stages of a hardware pipeline <span class="tag vendor">ISA docs</span>. You still write one compute source file. Metalium compiles it three times, and each binary keeps only the code sections for its own core. The cores are deliberately simple: single-threaded, in-order, and with no caches, "closer to a MIPS R3000 than a phone CPU" <span class="tag vendor">METALIUM_GUIDE</span>. A MOP expander and a replay buffer in each frontend turn one pushed instruction into many, so the backend can receive an instruction every cycle without the RISC-V core issuing one every cycle <span class="tag vendor">ISA docs</span>.</p>
 <ul>
-<li><strong>Everything is a 32 × 32 tile.</strong> A BF16 tile is 2,048 bytes; tensors are padded to tile boundaries. The math engine's destination register holds 8 BF16 tiles or 4 FP32 tiles.</li>
-<li><strong>Two engines.</strong> A matrix FPU for tile matmuls and a 32-lane FP32 SFPU vector unit for element-wise and transcendental ops.</li>
-<li><strong>Block floating point.</strong> bfloat8_b and bfloat4_b share an exponent across a block; LoFi/HiFi2/HiFi4 fidelity knobs trade accuracy for throughput.</li>
+<li><strong>Everything is a 32 × 32 tile.</strong> A BF16 tile is 2,048 bytes. In memory it is stored as four 16 × 16 <em>faces</em>, face 0 to face 3, each in row-major order, because the engine works on 16 × 16 faces <span class="tag vendor">tensor_layouts report</span>. Tensors are padded up to tile boundaries, so a 48 × 1024 matrix is stored as 64 × 1024 <span class="tag vendor">METALIUM_GUIDE</span>. Tilize and untilize run on the device.</li>
+<li><strong>Registers.</strong> SrcA and SrcB each hold 2 banks × 64 rows × 16 columns of 19-bit data. The unpackers fill one bank while the FPU reads the other. Dst holds 1,024 rows × 16 columns of 16-bit data, or 512 rows of 32-bit data <span class="tag vendor">ISA docs</span>. That is 16 BF16 tiles. In the default half-sync mode, Math fills one half (8 BF16 tiles, or 4 FP32 tiles) while Pack drains the other <span class="tag vendor">matrix_engine; LLM report (Wormhole)</span>. The Dst size therefore caps how many output tiles a kernel can accumulate before it packs them.</li>
+<li><strong>Two engines.</strong> The matrix FPU does matmul, reduction and element-wise ops directly on SrcA/SrcB. The 32-lane FP32 SFPU does transcendental and other element-wise functions, and it works on data in Dst <span class="tag vendor">METALIUM_GUIDE</span>. An operand smaller than 8 rows wastes the FPU: a 1 × 16 input still costs a full 8 × 16 cycle, so it runs at 1/8 of the rate <span class="tag vendor">matrix_engine</span>.</li>
+<li><strong>Fidelity.</strong> The multipliers are 5-bit × 7-bit. LoFi uses the hidden bit plus the top 4 mantissa bits of SrcA and the top 6 of SrcB. HiFi2, HiFi3 and HiFi4 make 2, 3 or 4 passes over different mantissa slices, at 16, 32, 48 or 64 cycles per tile <span class="tag vendor">matrix_engine, GEMM_FLOPS</span>.</li>
+<li><strong>Block floating point.</strong> bfloat8_b, bfloat4_b and bfloat2_b store one shared 8-bit exponent per 16 values, rounding to nearest-even after normalising to the shared exponent <span class="tag vendor">data_formats report</span>. A bfloat8_b tile is therefore 1,024 B of sign+mantissa plus 64 B of exponents = <b>1,088 B</b>, about half a BF16 tile <span class="tag derived">Derived</span>. Decode is limited by reading weights, so this halving matters directly.</li>
 </ul>
 
+<div class="callout">
+<p><strong>Glossary for reading Tenstorrent material</strong></p>
+<dl class="gl">
+<dt>NoC, NIU, flit</dt><dd>On-chip network; the network interface unit in each grid tile that turns reads and writes into packets; a flit is the 32 B (WH) or 64 B (BH) unit that crosses one link per cycle.</dd>
+<dt>CB (circular buffer)</dt><dd>A FIFO of fixed-size pages in L1 with producer and consumer counters. There are up to 32 per core on Wormhole and 64 on Blackhole <span class="tag vendor">tt-metal circular_buffer_constants.h</span>. Index c_0 is usually the first input and c_16 the output. tt-metal plans to replace CBs with "dataflow buffers".</dd>
+<dt>Unpack / pack</dt><dd>Unpackers copy tiles from L1 into SrcA/SrcB, converting the format on the way. Packers write Dst back to L1 and convert to the output format.</dd>
+<dt>Interleaved / sharded</dt><dd>Interleaved: a tensor's pages are spread round-robin across all banks. Sharded: each core or bank owns one contiguous piece. See the layout section below.</dd>
+<dt>Software stack</dt><dd>TT-Metalium is the low-level C++ kernel and host API. TT-NN is a Python/C++ op library on top of it. TT-Forge and other compilers sit above TT-NN <span class="tag vendor">tt-metal README</span>. Most users never write kernels.</dd>
+</dl>
+</div>
+
+<h2>One tile through the core</h2>
+<p>Here is element-wise <code>C = A + B</code>, one tile at a time. Step through it to see which of the five cores is active and which API call it is running. The calls are the ones in the next section's code.</p>
+<div class="widget" id="pipe">
+<h4>Follow tile i of A from DRAM back to DRAM</h4>
+<p class="hint">Step or Play. The highlighted RISC-V core is the one issuing work. Switch the format to see how the byte and flit counts change.</p>
+<div class="controls">
+<button class="btn secondary" id="pipe-back" type="button">◀ Back</button>
+<button class="btn" id="pipe-step" type="button">Step ▶</button>
+<button class="btn secondary" id="pipe-play" type="button">Play</button>
+<label>Format <select id="pipe-fmt"><option value="bf16">BF16 (2,048 B/tile)</option><option value="bfp8">bfloat8_b (1,088 B/tile)</option></select></label>
+</div>
+<svg id="pipe-svg" viewBox="0 0 760 250" width="760" role="img" aria-label="Tile pipeline stepper"></svg>
+<div class="readout" id="pipe-out"></div>
+</div>
+
 <h2>Programming: reader, compute, writer</h2>
-<p>TT-Metalium is an open-source, OpenCL-like C++ host API. A typical operation compiles three kernels per core: a <strong>reader</strong> that pulls tiles from DRAM or other cores over NoC 0 into a circular buffer, a <strong>compute</strong> kernel (compiled into the three TRISC binaries) that consumes input buffers and produces output buffers, and a <strong>writer</strong> that pushes results out over NoC 1. Circular buffers (up to 32 per core) synchronise them; sizing one for two tiles gives double buffering. There is no global thread ID: the host hands each core explicit runtime arguments.</p>
+<p>TT-Metalium is an open-source C++ host API in the style of OpenCL. A typical operation runs three kernels per core:</p>
+<ul>
+<li>a <strong>reader</strong> on BRISC that pulls tiles from DRAM or from other cores into circular buffers;</li>
+<li>a <strong>compute</strong> kernel, compiled into the three TRISC binaries, that consumes input CBs and fills output CBs;</li>
+<li>a <strong>writer</strong> on NCRISC that pushes results out.</li>
+</ul>
+<p>There is no global thread ID. The host gives each core explicit runtime arguments. The code below is the vector-add example from Tenstorrent's guide, lightly trimmed, plus the single-core matmul compute kernel and the host-side work split <span class="tag vendor">METALIUM_GUIDE; tt-metal programming_examples</span>.</p>
+<div class="tabs" id="code-tabs">
+<button type="button" data-p="0" class="on">reader.cpp</button><button type="button" data-p="1">compute.cpp</button><button type="button" data-p="2">writer.cpp</button><button type="button" data-p="3">mm.cpp</button><button type="button" data-p="4">host</button>
+</div>
+<div class="codepane"><div class="filename">reader kernel · runs on BRISC (RISC-V 0), uses NoC 0</div>
+<pre><code><span class="k">void</span> kernel_main() {
+    <span class="k">const</span> <span class="n">uint32_t</span> a_addr  = get_arg_val&lt;<span class="n">uint32_t</span>&gt;(<span class="b">0</span>);   <span class="c">// runtime args from the host</span>
+    <span class="k">const</span> <span class="n">uint32_t</span> b_addr  = get_arg_val&lt;<span class="n">uint32_t</span>&gt;(<span class="b">1</span>);
+    <span class="k">const</span> <span class="n">uint32_t</span> n_tiles = get_arg_val&lt;<span class="n">uint32_t</span>&gt;(<span class="b">2</span>);
+    <span class="k">constexpr auto</span> cb_in0 = tt::CBIndex::c_0, cb_in1 = tt::CBIndex::c_1;
+    <span class="k">const</span> <span class="n">uint32_t</span> tile_bytes = get_tile_size(cb_in0);
+    <span class="k">const auto</span> a = TensorAccessor(TensorAccessorArgs&lt;<span class="b">0</span>&gt;(), a_addr, tile_bytes);  <span class="c">// knows the interleaving</span>
+    <span class="k">const auto</span> b = TensorAccessor(<span class="c">/* next args */</span>, b_addr, tile_bytes);
+
+    <span class="k">for</span> (<span class="n">uint32_t</span> i = <span class="b">0</span>; i &lt; n_tiles; i++) {
+        cb_reserve_back(cb_in0, <span class="b">1</span>);  cb_reserve_back(cb_in1, <span class="b">1</span>);   <span class="c">// block until a slot is free</span>
+        noc_async_read_page(i, a, get_write_ptr(cb_in0));          <span class="c">// DMA tile i from its DRAM bank</span>
+        noc_async_read_page(i, b, get_write_ptr(cb_in1));
+        noc_async_read_barrier();                                   <span class="c">// wait for both reads to land</span>
+        cb_push_back(cb_in0, <span class="b">1</span>);  cb_push_back(cb_in1, <span class="b">1</span>);         <span class="c">// hand the tiles to compute</span>
+    }
+}</code></pre></div>
+<div class="codepane" hidden><div class="filename">compute kernel · one source, compiled for TRISC0 (Unpack), TRISC1 (Math), TRISC2 (Pack)</div>
+<pre><code><span class="k">void</span> kernel_main() {
+    <span class="k">const</span> <span class="n">uint32_t</span> n_tiles = get_arg_val&lt;<span class="n">uint32_t</span>&gt;(<span class="b">0</span>);
+    <span class="k">constexpr auto</span> cb_in0 = tt::CBIndex::c_0, cb_in1 = tt::CBIndex::c_1, cb_out = tt::CBIndex::c_16;
+    <span class="k">constexpr</span> <span class="n">uint32_t</span> dst = <span class="b">0</span>;
+                                                        <span class="c">// runs on:</span>
+    compute_kernel_hw_startup(cb_in0, cb_in1, cb_out);   <span class="c">// Unpack, Math, Pack</span>
+    add_init(cb_in0, cb_in1, <span class="k">false</span>);                    <span class="c">// Unpack, Math</span>
+    <span class="k">for</span> (<span class="n">uint32_t</span> i = <span class="b">0</span>; i &lt; n_tiles; i++) {
+        cb_wait_front(cb_in0, <span class="b">1</span>); cb_wait_front(cb_in1, <span class="b">1</span>);  <span class="c">// Unpack: wait for the reader</span>
+        tile_regs_acquire();                             <span class="c">// Math: claim half of Dst</span>
+        add_tiles(cb_in0, cb_in1, <span class="b">0</span>, <span class="b">0</span>, dst);              <span class="c">// Unpack → SrcA/B, Math → Dst</span>
+        tile_regs_commit();                              <span class="c">// Math: hand Dst half to Pack</span>
+        cb_pop_front(cb_in0, <span class="b">1</span>); cb_pop_front(cb_in1, <span class="b">1</span>);    <span class="c">// Unpack: free the input slots</span>
+        cb_reserve_back(cb_out, <span class="b">1</span>);                      <span class="c">// Pack: room in the output CB?</span>
+        tile_regs_wait();                                <span class="c">// Pack: wait for Math</span>
+        pack_tile(dst, cb_out, <span class="b">0</span>);                       <span class="c">// Pack: Dst → L1, format convert</span>
+        tile_regs_release();                             <span class="c">// Pack: give the Dst half back</span>
+        cb_push_back(cb_out, <span class="b">1</span>);                         <span class="c">// Pack: hand the tile to the writer</span>
+    }
+}
+<span class="c">// SFPU ops need the tile in Dst first:  copy_tile(cb_in0, 0, dst); sin_tile(dst); pack_tile(dst, cb_out, 0);</span></code></pre></div>
+<div class="codepane" hidden><div class="filename">writer kernel · runs on NCRISC (RISC-V 1), uses NoC 1</div>
+<pre><code><span class="k">void</span> kernel_main() {
+    <span class="k">const</span> <span class="n">uint32_t</span> c_addr  = get_arg_val&lt;<span class="n">uint32_t</span>&gt;(<span class="b">0</span>);
+    <span class="k">const</span> <span class="n">uint32_t</span> n_tiles = get_arg_val&lt;<span class="n">uint32_t</span>&gt;(<span class="b">1</span>);
+    <span class="k">constexpr auto</span> cb_out = tt::CBIndex::c_16;
+    <span class="k">const auto</span> c = TensorAccessor(TensorAccessorArgs&lt;<span class="b">0</span>&gt;(), c_addr, get_tile_size(cb_out));
+    <span class="k">for</span> (<span class="n">uint32_t</span> i = <span class="b">0</span>; i &lt; n_tiles; i++) {
+        cb_wait_front(cb_out, <span class="b">1</span>);                          <span class="c">// wait for compute</span>
+        noc_async_write_page(i, c, get_read_ptr(cb_out));  <span class="c">// DMA the tile to its DRAM bank</span>
+        noc_async_write_barrier();                         <span class="c">// the slot must not be reused before the write leaves</span>
+        cb_pop_front(cb_out, <span class="b">1</span>);                           <span class="c">// free the slot</span>
+    }
+}</code></pre></div>
+<div class="codepane" hidden><div class="filename">matmul compute kernel (single core) · programming_examples/matmul_single_core/kernels/compute/mm.cpp</div>
+<pre><code>compute_kernel_hw_startup&lt;SrcOrder::Reverse&gt;(cb_in0, cb_in1, cb_out);
+matmul_init(cb_in0, cb_in1);
+<span class="k">for</span> (<span class="n">uint32_t</span> mt = <span class="b">0</span>; mt &lt; Mt; ++mt)
+  <span class="k">for</span> (<span class="n">uint32_t</span> nt = <span class="b">0</span>; nt &lt; Nt; ++nt) {
+    tile_regs_acquire();                       <span class="c">// zeroes the Dst tile: the accumulator</span>
+    <span class="k">for</span> (<span class="n">uint32_t</span> kt = <span class="b">0</span>; kt &lt; Kt; kt++) {
+      cb_wait_front(cb_in0, <span class="b">1</span>); cb_wait_front(cb_in1, <span class="b">1</span>);
+      matmul_tiles(cb_in0, cb_in1, <span class="b">0</span>, <span class="b">0</span>, <span class="b">0</span>);     <span class="c">// Dst[0] += A(mt,kt) · B(kt,nt)</span>
+      cb_pop_front(cb_in0, <span class="b">1</span>); cb_pop_front(cb_in1, <span class="b">1</span>);
+    }
+    tile_regs_commit(); tile_regs_wait();
+    cb_reserve_back(cb_out, <span class="b">1</span>);
+    pack_tile(<span class="b">0</span>, cb_out);  cb_push_back(cb_out, <span class="b">1</span>);
+    tile_regs_release();
+  }</code></pre></div>
+<div class="codepane" hidden><div class="filename">host · splitting work across cores (C++)</div>
+<pre><code><span class="k">auto</span> [num_cores, all_cores, group_1, group_2, tiles_1, tiles_2] =
+    tt::tt_metal::split_work_to_cores(grid_size, n_tiles);  <span class="c">// two groups when n_tiles doesn't divide</span>
+CreateKernel(program, <span class="s">"reader.cpp"</span>,  all_cores, DataMovementConfig{...});
+CreateKernel(program, <span class="s">"compute.cpp"</span>, all_cores, ComputeConfig{...});
+CreateKernel(program, <span class="s">"writer.cpp"</span>,  all_cores, DataMovementConfig{...});
+<span class="n">uint32_t</span> id = <span class="b">0</span>;
+<span class="k">for</span> (<span class="k">auto</span>&amp; [group, n] : {std::pair{group_1, tiles_1}, {group_2, tiles_2}})
+  <span class="k">for</span> (<span class="k">auto</span>&amp; range : group) <span class="k">for</span> (<span class="k">auto</span>&amp; core : range) {
+    SetRuntimeArgs(program, reader,  core, {a-&gt;address(), b-&gt;address(), n, id});
+    SetRuntimeArgs(program, compute, core, {n});
+    SetRuntimeArgs(program, writer,  core, {c-&gt;address(), n, id});
+    id += n;                          <span class="c">// the "thread ID" is just an argument</span>
+  }
+<span class="c">// A core that has a kernel but no runtime args is undefined behaviour (the guide's warning).</span></code></pre></div>
+
+<p>The handshake is the same in every kernel. The producer calls <code>cb_reserve_back</code>, writes, then <code>cb_push_back</code>; the consumer calls <code>cb_wait_front</code>, reads, then <code>cb_pop_front</code>. A slot becomes free only when the consumer <em>pops</em> it, which is after the consumer has finished with the tile. With one slot, the reader therefore cannot fetch tile k+1 while compute is still working on tile k. With two slots it can. That is double buffering, and it is why CBs are usually sized for two tiles <span class="tag vendor">METALIUM_GUIDE</span>.</p>
 
 <div class="widget" id="cb">
 <h4>Circular buffers and double buffering</h4>
-<p class="hint">Reader → CB_in → compute → CB_out → writer. With a 1-tile buffer, stages wait on each other; with 2 tiles, the reader fetches tile k+1 while compute works on tile k.</p>
+<p class="hint">Reader → CB_in → compute → CB_out → writer, for 8 tiles. A slot is freed only when its consumer pops it. Change the stage times to make a different stage the bottleneck, and turn on DRAM latency spikes to see where deeper buffers start to help.</p>
 <div class="controls">
 <label>CB size <select id="cb-n"><option value="1">1 tile</option><option value="2" selected>2 tiles</option><option value="4">4 tiles</option></select></label>
-<button class="btn" id="cb-go" type="button">Run 8 tiles</button>
+<label>reader <input type="range" id="cb-r" min="1" max="6" value="3"> <span id="cb-rv">3</span></label>
+<label>compute <input type="range" id="cb-c" min="1" max="6" value="3"> <span id="cb-cv">3</span></label>
+<label>writer <input type="range" id="cb-w" min="1" max="6" value="2"> <span id="cb-wv">2</span></label>
+<label><input type="checkbox" id="cb-jit"> DRAM latency spikes (tiles 2 and 6 take +6)</label>
 </div>
-<svg id="cb-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Pipeline timeline"></svg>
+<svg id="cb-svg" viewBox="0 0 680 250" width="680" role="img" aria-label="Pipeline timeline"></svg>
 <div class="readout" id="cb-out"></div>
 </div>
 
-<h2>Tensix vs the Cerebras PE</h2>
+<h2>Moving tiles between cores: multicast and semaphores</h2>
+<p>A NoC transfer is asynchronous. A receiving core cannot tell that data has arrived unless it is told, and Tenstorrent has no data-triggered tasks to do that. Kernels synchronise through <strong>semaphores</strong>, which are words in L1 updated by NoC atomics. The multicast matmul reader in tt-metal shows the full pattern, simplified here to one operand <span class="tag vendor">tt-metal reader_bmm_tile_layout_in0_sender/receiver</span>:</p>
+<div class="grid2">
+<div><div class="filename">sender (left-column core)</div>
+<pre><code>cb_reserve_back(cb_in0, block_tiles);
+<span class="c">// read the A block from DRAM</span>
+noc_async_read_page(tile_id, s0, l1_addr); ...
+noc_async_read_barrier();
+<span class="c">// wait until every receiver has said "I have space"</span>
+noc_semaphore_wait(sender_sem, num_dests);
+noc_semaphore_set(sender_sem, <span class="b">0</span>);
+noc_async_write_multicast(l1_addr,
+    get_noc_multicast_addr(x0, y0, x1, y1, l1_addr),
+    block_bytes, num_dests);
+<span class="k">#ifdef</span> ARCH_BLACKHOLE
+noc_async_writes_flushed();  <span class="c">// BH: keep data before flag</span>
+<span class="k">#endif</span>
+noc_semaphore_set_multicast(recv_sem,
+    recv_sem_mcast_addr, num_dests);  <span class="c">// "data is valid"</span>
+cb_push_back(cb_in0, block_tiles);</code></pre></div>
+<div><div class="filename">receiver (every other core in the row)</div>
+<pre><code>cb_reserve_back(cb_in0, block_tiles);
+noc_semaphore_set(recv_sem, INVALID);
+<span class="c">// atomic +1 on the sender's semaphore</span>
+noc_semaphore_inc(
+    get_noc_addr(sx, sy, sender_sem), <span class="b">1</span>);
+<span class="c">// spin until the sender flips our flag</span>
+noc_semaphore_wait(recv_sem, VALID);
+cb_push_back(cb_in0, block_tiles);
+<span class="c">// compute now sees the block in its CB,</span>
+<span class="c">// at the same L1 address on every core</span></code></pre></div>
+</div>
+<p>The Blackhole-only <code>noc_async_writes_flushed()</code> is there because Blackhole puts the two multicasts in separate command FIFOs, so they could otherwise leave out of order and the flag could arrive before the data <span class="tag vendor">tt-metal source comment</span>. Compare this with Cerebras: a wavelet's color decides its route at compile time, and its arrival <em>is</em> the signal that starts a task (Chapters 4 and 5). On Tenstorrent each packet carries its destination address, and "the data is here" is a separate flag that you write yourself.</p>
+
+<h2>Anatomy of a matmul</h2>
+<p>The general-purpose TT-NN matmul ("matmul 2D", <code>MatmulMultiCoreReuseMultiCastProgramConfig</code>) maps the output C = A·B onto a <code>cores_x × cores_y</code> grid <span class="tag vendor">tt-metal LLM report §4.3.2</span>:</p>
+<ul>
+<li>M is split over <code>cores_y</code> and N over <code>cores_x</code>. Each core owns <code>per_core_M = ⌈M/32/cores_y⌉</code> × <code>per_core_N = ⌈N/32/cores_x⌉</code> output tiles.</li>
+<li>K is streamed in blocks of <code>in0_block_w</code> tiles.</li>
+<li>Outputs are accumulated in sub-blocks of <code>out_subblock_h × out_subblock_w</code> tiles. That product must fit in the Dst half: 8 tiles in BF16, 4 in FP32.</li>
+<li>The left-column core of each row reads that row's A block from DRAM and <strong>multicasts</strong> it across the row. The top-row core of each column reads the B block and multicasts it down the column. Each operand therefore leaves DRAM once per row or column, not once per core. The program uses four reader variants (sender or receiver for each operand) and four semaphores <span class="tag vendor">matmul_multicore_reuse_mcast</span>. In effect this is a systolic array built in software.</li>
+</ul>
+<p>The other two LLM variants are matmul 1D, which parallelises over N only and multicasts the width-sharded activation, and the DRAM-sharded matmul used for decode, covered in the next section <span class="tag vendor">LLM report</span>.</p>
+
+<div class="widget" id="mm">
+<h4>Map a matmul onto the grid</h4>
+<p class="hint">Pick a problem and a grid. Click a core to see its output block. The K-step slider moves the block of K that is in flight: the left column multicasts A across rows (orange) and the top row multicasts B down columns (blue). The numbers use the GEMM_FLOPS ideal-cycle formula, BF16 tiles and <code>in0_block_w = 2</code>.</p>
+<div class="controls">
+<label>M <select id="mm-m"><option>256</option><option>1024</option><option selected>2048</option><option>4096</option><option>8192</option></select></label>
+<label>K <select id="mm-k"><option>1024</option><option selected>2048</option><option>4096</option><option>8192</option></select></label>
+<label>N <select id="mm-n"><option>1024</option><option selected>2048</option><option>4096</option><option>8192</option></select></label>
+<label>grid <select id="mm-g"><option value="4,4">4 × 4</option><option value="8,8" selected>8 × 8 (Wormhole n150)</option><option value="13,10">13 × 10 (Blackhole p150)</option></select></label>
+<label>fidelity <select id="mm-f"><option value="16">LoFi</option><option value="32" selected>HiFi2</option><option value="64">HiFi4</option></select></label>
+<label>K-step <input type="range" id="mm-ks" min="0" max="31" value="0"> <span id="mm-ksv">0</span></label>
+</div>
+<svg id="mm-svg" viewBox="0 0 760 420" width="760" role="img" aria-label="Matmul grid mapping"></svg>
+<div class="readout" id="mm-out"></div>
+</div>
+<p>On tuned matmuls Tenstorrent measured about 190 TFLOPS on Wormhole n150 and about 580 TFLOPS on Blackhole p150. Peak utilisation was 93% on Wormhole and 96% on Blackhole, and BFP8 at HiFi2 ran 1.5–1.8× faster than BF16 at HiFi4 <span class="tag vendor">vendor-measured, GEMM_FLOPS</span>.</p>
+
+<h2>Where tensors live: interleaved and sharded</h2>
+<p>A TT-NN tensor is a 2-D buffer of <em>pages</em>. A page is one row (row-major layout) or one 32 × 32 tile (tiled layout). It lives in DRAM or in L1, and its pages are either <strong>interleaved</strong> or <strong>sharded</strong> <span class="tag vendor">tensor_layouts report</span>.</p>
+<ul>
+<li><strong>Interleaved.</strong> Pages are dealt round-robin over all banks, and every allocation starts at bank 0. In DRAM there are 12 banks on Wormhole and 8 on Blackhole. In L1 there is one bank per core.</li>
+<li><strong>Sharded.</strong> The tensor is cut into height, width or block shards, one per core <span class="tag vendor">tensor_sharding report</span>. Sharded activations can stay in a core's L1 from one op to the next with no DRAM round trip. The FlashAttention report calls this "a form of op fusion specific to our framework" <span class="tag vendor">FlashAttention report</span>.</li>
+</ul>
+<div class="widget" id="shard">
+<h4>One 256 × 256 BF16 tensor, five ways</h4>
+<p class="hint">The tensor is 8 × 8 = 64 tiles. Each colour marks the bank or core that owns a tile.</p>
+<div class="controls">
+<label>Layout <select id="sh-mode">
+<option value="dram">interleaved over 8 DRAM banks (Blackhole)</option>
+<option value="l1">interleaved over the L1 of 16 cores</option>
+<option value="h">height-sharded on 8 cores</option>
+<option value="w">width-sharded on 8 cores</option>
+<option value="b">block-sharded on 4 × 4 cores</option>
+</select></label>
+</div>
+<svg id="sh-svg" viewBox="0 0 760 300" width="760" role="img" aria-label="Interleaved and sharded layouts"></svg>
+<div class="readout" id="sh-out"></div>
+</div>
+<p><strong>Why decode keeps its weights DRAM-sharded.</strong> In decode, a batch of up to 32 users each contributes one token, so the activations are a single 32-row tile height. The matmuls are bound by how fast they can read weights <span class="tag vendor">LLM report</span>. With interleaved weights, every core reads from every bank and the routes cross the whole NoC and collide. The DRAM-sharded matmul instead splits the weights by width across the banks. It places one reader core next to each bank, so each response travels one hop, and gives readers in the same row different virtual channels. On Wormhole this reached 267 of 288 GB/s (92%) in a microbenchmark and 239–260 GB/s (82–90%) in Llama-3-70B and Mixtral decode matmuls <span class="tag vendor">vendor-measured, Saturating_DRAM_bandwidth</span>. Try the two presets in the floorplan widget to see the same effect on Blackhole. The decode recipe is: activations width-sharded in L1, weights width-sharded in DRAM, weights in BFP8 or BFP4 <span class="tag vendor">LLM report</span>.</p>
+
+<h2>Scaling out: from NoC to fabric</h2>
+<p>Off the chip, Tenstorrent uses standard Ethernet, and the chips themselves act as the switches. <strong>TT-Fabric</strong> is firmware running on the Ethernet grid tiles' RISC-V cores. It turns NoC reads and writes into packets that are carried to another chip and executed there, so a remote write looks like a NoC write with a longer address (mesh ID, device ID, NoC x/y, offset) <span class="tag vendor">TT-Fabric report</span>.</p>
+<ul>
+<li><strong>Reliability.</strong> The link layer adds a header with sequence numbers and resends lost frames (Go-Back-N), so the layers above never see CRC errors.</li>
+<li><strong>Routing.</strong> Inside a mesh, packets are source-routed. At each mesh boundary, the entry router writes a new route for the next mesh.</li>
+<li><strong>Deadlock.</strong> Rings and tori use bubble flow control to avoid deadlock.</li>
+<li><strong>Routing planes.</strong> Wormhole has 4 Ethernet links per direction and Blackhole has 2. Each set forms its own routing plane.</li>
+<li><strong>Scale.</strong> The design targets up to 1,024 meshes of 256 devices <span class="tag vendor">TT-Fabric report</span>.</li>
+</ul>
+<p>Link line rate is 12.5 GB/s per direction on Wormhole (100 GbE) and 50 GB/s on Blackhole (400 GbE). The measured per-hop latency is 711 ns on Wormhole and 515 ns on Blackhole for the 1-D fabric <span class="tag vendor">vendor-measured, CCL bandwidth report</span>. These links are about 7× slower than one on-chip NoC link and about 10× slower than a chip's DRAM <span class="tag derived">Derived</span>, so how you split a model across chips matters a great deal.</p>
+
+<h2>70B on 32 chips</h2>
+<p>A Wormhole Galaxy ("TG") is an 8 × 4 mesh of 32 chips, with four Ethernet links between neighbouring chips <span class="tag vendor">Programming Mesh of Devices report</span>. Collectives can use 4 links along mesh axis 0 and 3 along axis 1 <span class="tag vendor">LLM report §3.3.1</span>. On TG, all five Llama matmuls (QKV, dense-out, FF1, FF2, FF3) use <strong>2-D weight fracturing</strong>. For FF1 and FF3, each chip holds a [K/4, N/8] block of the weight, and the partial sums are all-reduced across the 4 chips of axis 1. FF2 is the transpose: [K/8, N/4], all-reduced along axis 0 <span class="tag vendor">LLM report §2.5.5, §3.3.10</span>. The Llama 3.3 70B Galaxy demo runs in BFP8 <span class="tag vendor">llama3_70b_galaxy README</span>. On a torus-cabled Galaxy, its collectives use rings by default. On Blackhole Galaxy, the related demos select a 2-D torus fabric and address the box as the same "TG" mesh <span class="tag vendor">llama3_70b_galaxy README</span>.</p>
+<div class="widget" id="gal">
+<h4>Llama-3 70B weights on an 8 × 4 Galaxy</h4>
+<p class="hint">Click a chip to see which block of the weight it holds; the chips that join its all-reduce light up. Switch to four replicas to see the throughput layout.</p>
+<div class="controls">
+<label>Weight <select id="gal-w"><option value="ff1">FF1 / FF3 (8192 × 28672)</option><option value="ff2">FF2 (28672 × 8192)</option></select></label>
+<label>Layout <select id="gal-l"><option value="tp">1 replica, TP = 32</option><option value="dp">4 replicas, TP = 8 each (2 × 4 submeshes)</option></select></label>
+<label><input type="checkbox" id="gal-wrap"> show torus wrap links</label>
+</div>
+<svg id="gal-svg" viewBox="0 0 760 440" width="760" role="img" aria-label="Galaxy mesh weight layout"></svg>
+<div class="readout" id="gal-out"></div>
+</div>
 <div class="table-wrap"><table>
-<tr><th></th><th>Cerebras PE (WSE-3)</th><th>Tensix core (Blackhole)</th></tr>
-<tr><td>Count per device</td><td>~900,000</td><td>120</td></tr>
-<tr><td>Local memory</td><td>48 KB, code + data</td><td>1,464 KiB L1</td></tr>
-<tr><td>Off-chip memory</td><td>none on the wafer</td><td>32 GB GDDR6</td></tr>
-<tr><td>Data unit</td><td>32-bit wavelet</td><td>32×32 tile; 32-byte NoC flits, packets up to 8 KiB</td></tr>
-<tr><td>Network</td><td>2-D mesh, 24 static colors, ~1 cycle/hop</td><td>two 2-D tori, dynamic packets, ~9 cycles router-to-router</td></tr>
-<tr><td>Control</td><td>tasks triggered by arriving data</td><td>three kernels on five RISC-V cores, synchronised by circular buffers</td></tr>
-<tr><td>Scale-out</td><td>off-wafer (MemoryX/SwarmX, Ethernet)</td><td>Ethernet on every die, switchless meshes</td></tr>
+<tr><th>Same box, two layouts</th><th>Batch</th><th>tok/s per user</th><th>tok/s total</th></tr>
+<tr><td>Llama 3.3 70B, one replica, TP = 32 (128-token input; target 80 t/s/u; TTFT 53 ms)</td><td>32</td><td>72.5</td><td>2,269</td></tr>
+<tr><td>Llama 3.1 70B, four replicas, TP = 8 on 2 × 4 submeshes</td><td>128</td><td>14.3</td><td>1,836</td></tr>
+</table></div>
+<p style="font-size:14px;color:var(--muted)">Both rows are Wormhole Galaxy, <span class="tag vendor">vendor-measured</span> (tt-metal README v0.65.0-rc7 table; Programming Mesh of Devices §8.2), from different software releases. Tensor parallelism buys speed per user; replicas over submeshes buy throughput.</p>
+
+<div class="callout key">
+<p><strong>Back-of-envelope: the decode ceiling</strong> <span class="tag derived">Derived</span></p>
+<ul>
+<li>Weights: 70B parameters × 1,088/1,024 B per parameter in BFP8 ≈ 74 GB, or 2.3 GB per chip.</li>
+<li>Wormhole: at 288 GB/s per chip (the DRAM specification, from Saturating_DRAM_bandwidth), one pass over the weights takes 8.1 ms, so the ceiling is about 124 tok/s per user. The measured 72.5 is 58% of that. The rest goes to KV-cache reads, collectives over 12.5 GB/s links and the gaps between ops.</li>
+<li>Blackhole Galaxy: 16 TB/s / 32 = 512 GB/s per chip, which gives a ceiling of about 220 tok/s per user.</li>
+<li>BFP4 for some MLP weights raises both ceilings.</li>
+</ul>
+<p>This is the memory wall from Chapter 1 again: "decode is bound by time to read model weights from DRAM" <span class="tag vendor">LLM report</span>.</p>
+</div>
+
+<h2>Tensix vs the Cerebras PE</h2>
+<p>Both designs reject the GPU recipe of caches and massive multithreading in favour of explicit, software-scheduled data movement. Tenstorrent's guide compares its design to IBM's CELL. The difference is grain. A Cerebras PE handles a few kilobytes and communicates word by word over routes fixed at compile time. A Tensix core handles about a megabyte and a half, communicates in 2 KiB tiles over addressed packets, and has DRAM behind it. The widget runs one decode-style GEMV, y = W·x with BF16 weights, on both machines.</p>
+<div class="widget" id="vs">
+<h4>Same GEMV, two grains</h4>
+<p class="hint">Move the slider to change the n × n matrix. Left: Blackhole p150, W streamed from GDDR6 as tiles. Right: WSE-3, W resident in PE SRAM, x broadcast along rows as wavelets and partial sums reduced along columns (the pattern from Labs 2 and 3).</p>
+<div class="controls">
+<label>n <input type="range" id="vs-n" min="10" max="14" value="12"> <span id="vs-nv">4096</span></label>
+</div>
+<svg id="vs-svg" viewBox="0 0 760 300" width="760" role="img" aria-label="GEMV on Tensix vs Cerebras"></svg>
+<div class="readout" id="vs-out"></div>
+</div>
+<div class="table-wrap"><table>
+<tr><th></th><th>Cerebras PE (WSE-3)</th><th>Tensix core (Blackhole p150)</th></tr>
+<tr><td>Count per device</td><td>~900,000 <span class="tag vendor">Vendor</span></td><td>120 <span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Local memory</td><td>48 KB, code + data <span class="tag vendor">Vendor</span></td><td>1,536 KiB L1 (Wormhole: 1,464 KiB) <span class="tag vendor">ISA docs</span></td></tr>
+<tr><td>Total on-chip SRAM</td><td>44 GB <span class="tag vendor">Vendor</span></td><td>180 MB per card; 6.2 GB per Galaxy <span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Off-chip memory</td><td>none on the wafer; MemoryX streams weights for training (Ch. 8)</td><td>32 GB GDDR6, 512 GB/s <span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Data unit</td><td>32-bit wavelet <span class="tag sdk">SDK</span></td><td>32 × 32 tile; 64 B NoC flits, packets up to 16 KiB (Wormhole: 32 B / 8 KiB) <span class="tag vendor">ISA docs</span></td></tr>
+<tr><td>Network</td><td>2-D mesh, 24 static colors, ~1 cycle/hop <span class="tag sdk">SDK</span></td><td>two 2-D tori, dimension-order routing, each packet addressed; 9 cycles router-to-router <span class="tag vendor">ISA docs</span>; ~86 GB/s per link <span class="tag derived">Derived</span></td></tr>
+<tr><td>Control</td><td>tasks triggered by arriving data</td><td>three kernels on five RISC-V cores, synchronised by CB counters and L1 semaphores</td></tr>
+<tr><td>Scale-out</td><td>off-wafer (MemoryX/SwarmX; pipelined placement over Ethernet for inference)</td><td>on-die Ethernet (not on p100), switchless meshes, TT-Fabric</td></tr>
 <tr><td>Openness</td><td>public SDK, closed compiler</td><td>open-source stack, public ISA docs</td></tr>
 </table></div>
-<p>Both reject the GPU recipe of caches and massive multithreading in favour of explicit, software-scheduled data movement — Tenstorrent's guide compares its design to IBM's CELL. The difference is grain: a Cerebras PE handles a few kilobytes and communicates word by word; a Tensix core handles megabytes and communicates tile by tile, with DRAM behind it.</p>
+
+<h3>CSL ↔ Metalium, concept by concept</h3>
+<div class="table-wrap"><table>
+<tr><th>In CSL (Chapters 4–12)</th><th>In TT-Metalium</th></tr>
+<tr><td>color + route set in <code>layout.csl</code> (static path)</td><td>destination NoC x/y in each packet; the path follows from NoC 0/1 routing</td></tr>
+<tr><td>wavelet (32 bits)</td><td>flit (32/64 B) inside a packet carrying one or more 2 KiB tiles</td></tr>
+<tr><td>data task activated when a wavelet arrives</td><td>kernel loop that blocks in <code>cb_wait_front</code> or <code>noc_semaphore_wait</code></td></tr>
+<tr><td>fabric DSD + <code>@fmovs</code> / <code>@fadds</code></td><td><code>noc_async_read_page</code> / <code>write_page</code> + unpack, <code>add_tiles</code>, pack</td></tr>
+<tr><td>multicast route (<code>rx NORTH → tx {RAMP, SOUTH}</code>)</td><td><code>noc_async_write_multicast</code> to a core rectangle + semaphore flag</td></tr>
+<tr><td><code>@set_rectangle</code>, per-PE params in layout</td><td><code>CoreRange</code> + <code>SetRuntimeArgs</code> per core</td></tr>
+<tr><td>host <code>memcpy</code> streams, <code>SdkRuntime</code></td><td><code>EnqueueWriteMeshBuffer</code> / <code>EnqueueReadMeshBuffer</code> on command queues</td></tr>
+<tr><td>cycle-level fabric simulator</td><td>ttsim ISA simulator</td></tr>
+</table></div>
 
 <h2>Performance and caveats</h2>
 <ul>
-<li>Wormhole Galaxy, Llama 3.3-70B: 72.5 tok/s per user (~2,269 tok/s total at batch 32) <span class="tag vendor">Vendor repo table</span>.</li>
-<li>Galaxy Blackhole, DeepSeek-R1 671B: ~350 tok/s per user (~308 at launch) <span class="tag vendor">Vendor</span>.</li>
-<li>No independent benchmark or MLPerf submission was found. A review described the software as "trapped in a software blackhole" (The Register, 2025). The firmware de-rating of shipped p150 cards is a reminder that early specs are targets.</li>
-<li>The tt-metal LLM report says decode is "bound by time to read model weights from DRAM" — the same memory wall as Chapter 1, met with ~512 GB/s per card.</li>
+<li>Wormhole Galaxy, Llama 3.3-70B (TP = 32, 128-token input): 72.5 tok/s per user and 2,269 tok/s total at batch 32, against a target of 80 <span class="tag vendor">tt-metal README table</span>.</li>
+<li>Galaxy Blackhole, DeepSeek-R1 671B: ~350 tok/s per user (~308 at launch) <span class="tag vendor">Vendor, via press extracts</span>.</li>
+<li><strong>Dispatch matters at this scale.</strong> Fast dispatch dedicates one RISC-V core per command queue, usually on an idle Ethernet grid tile. There are two in-order queues, by convention CQ0 for compute and CQ1 for I/O, synchronised with events <span class="tag vendor">METALIUM_GUIDE</span>. Ops in decode take microseconds, so tt-metal captures and replays <em>traces</em> to remove the host from the loop <span class="tag vendor">LLM report</span>.</li>
+<li><strong>Scheduling is your job.</strong> In causal FlashAttention, later query chunks do more work. tt-metal gives each core one "low" and one "high" chunk (Q0 with Qn−1, and so on) and measured a 1.6× speedup <span class="tag vendor">vendor-measured, FlashAttention report</span>. No hardware scheduler would do that for you.</li>
+<li>No independent benchmark or MLPerf submission was found. A 2025 review in The Register described the software as "trapped in a software blackhole" (headline only verified). The firmware de-rating of shipped p150 cards is a reminder that early specs are targets.</li>
 </ul>
 
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>What do BRISC and NCRISC do, and what do the TRISCs do?</summary><p>BRISC and NCRISC issue NoC data movement (reader/writer); TRISC0/1/2 issue unpack, math and pack instructions to the Tensix coprocessor.</p></details>
-<details><summary>Why size a circular buffer for two tiles?</summary><p>So the producer can fill one slot while the consumer works on the other — double buffering hides transfer time behind compute.</p></details>
-<details><summary>Where would a 70B model's weights live on a Galaxy, and why does that matter for decode?</summary><p>Mostly in GDDR6 (6.2 GB SRAM vs 140 GB of weights), so decode is limited by GDDR bandwidth, unlike a Cerebras deployment that pins weights in SRAM.</p></details>
+<details><summary>Why does one compute kernel need three RISC-V cores, and how do you program them?</summary><p>The FPU starts one instruction per cycle, so unpack (TRISC0), math (TRISC1) and pack (TRISC2) each get their own in-order instruction stream and overlap like pipeline stages. You write one source file; Metalium compiles it three times and keeps only each core's sections.</p></details>
+<details><summary>Your reader pushes one tile per iteration, but compute calls <code>cb_wait_front(cb, 2)</code> on a CB sized for one tile. What happens?</summary><p>It hangs. Two tiles can never be in a one-slot buffer, so compute waits forever and the reader blocks in <code>cb_reserve_back</code>. CB size must be at least the largest wait or reserve count, and twice that for double buffering.</p></details>
+<details><summary>A 48 × 1000 BF16 tensor in tiled layout: how many tiles, and how many bytes?</summary><p>It pads to 64 × 1024: 2 × 32 = 64 tiles × 2,048 B = 128 KiB, against 96,000 B of real data.</p></details>
+<details><summary>On Blackhole, which NoC gives the shorter path from core (3,2) to core (1,5)?</summary><p>NoC 0 goes right first: 3 → 16 → 0 → 1 is 15 hops with the wrap, then 3 hops down, 18 in all. NoC 1 goes up first: 2 → 1 → 0 → 11 → … → 5 is 9 hops with the wrap, then 2 hops left, 11 in all. NoC 1 wins. Kernels pick a NoC per transfer, so placement matters.</p></details>
+<details><summary>In an 8 × 8 matmul 2D, how many times does each block of A leave DRAM, with and without multicast?</summary><p>Without multicast, all 8 cores in the row read it: 8 times. With multicast, the left-column core reads it once and sends it across the row.</p></details>
+<details><summary>Where do a 70B model's weights live on a Galaxy, and what does that mean for decode?</summary><p>In GDDR6. Even in BFP8 they are about 74 GB, against 6.2 GB of SRAM. Decode is therefore capped by DRAM bandwidth, at about 124 tok/s/user on a Wormhole Galaxy. Cerebras inference instead keeps the weights in SRAM, but a 70B model then needs several wafers: four CS-3 systems at launch (Chapter 8).</p></details>
+<details><summary>A CSL program has a data task bound to a color that adds each arriving wavelet to an accumulator. What is the Metalium equivalent?</summary><p>A reader that DMAs tiles into a CB, and a compute loop that blocks in <code>cb_wait_front</code>, calls <code>add_tiles</code> (or accumulates in Dst), then pops. Arrival is not a trigger; the kernel polls a counter.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
 <script>
+/* ---------- shared bits ---------- */
+const SVGT = (p, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y }, a), p); t.textContent = s; return t; };
+
+/* ---------- Tensix anatomy ---------- */
 (function () {
   const r = $("#riscv");
-  const cores = [["BRISC", "data movement", "blu"], ["NCRISC", "data movement", "blu"], ["TRISC0", "unpack", "amb"], ["TRISC1", "math", "amb"], ["TRISC2", "pack", "amb"]];
-  cores.forEach(([n, d, c], i) => { const x = 40 + i * 106;
-    el("rect", { x, y: 140, width: 96, height: 80, rx: 8, class: c, "stroke-width": 1.4 }, r);
-    el("text", { x: x + 48, y: 172, "text-anchor": "middle", "font-weight": 700, "font-size": 13 }, r).textContent = n;
-    el("text", { x: x + 48, y: 190, "text-anchor": "middle", "font-size": 11, class: "muted" }, r).textContent = "RV32IM";
-    el("text", { x: x + 48, y: 207, "text-anchor": "middle", "font-size": 11 }, r).textContent = d; });
+  const cores = [["BRISC", "NoC reader", "blu"], ["NCRISC", "NoC writer", "blu"], ["TRISC0", "unpack", "amb"], ["TRISC1", "math", "amb"], ["TRISC2", "pack", "amb"]];
+  cores.forEach(([n, d, c], i) => { const x = 140 + i * 100;
+    el("rect", { x, y: 56, width: 92, height: 74, rx: 8, class: c, "stroke-width": 1.4 }, r);
+    SVGT(r, x + 46, 80, n, { "text-anchor": "middle", "font-weight": 700, "font-size": 13 });
+    SVGT(r, x + 46, 97, "RV32IM+", { "text-anchor": "middle", "font-size": 11, class: "muted" });
+    SVGT(r, x + 46, 116, d, { "text-anchor": "middle", "font-size": 12 });
+    if (i < 2) el("line", { x1: x + 46, y1: 130, x2: x + 46, y2: i ? 178 : 150, class: "s-muted", "stroke-width": 1.4, "stroke-dasharray": "4 3" }, r);
+    else el("line", { x1: x + 46, y1: 130, x2: x + 46, y2: 210, class: "s-muted", "stroke-width": 1.4, "stroke-dasharray": "4 3" }, r);
+  });
   const t = $("#tcop");
-  [["2 unpackers", 60], ["matrix FPU", 185], ["SFPU 32-lane", 310], ["4 packers", 435]].forEach(([n, x]) => {
-    el("rect", { x, y: 286, width: 110, height: 40, rx: 6, class: "box", "stroke-width": 1.2 }, t);
-    el("text", { x: x + 55, y: 311, "text-anchor": "middle", "font-size": 12 }, t).textContent = n; });
+  const box = (x, y, w, h, l1, l2, cls = "box") => { el("rect", { x, y, width: w, height: h, rx: 6, class: cls, "stroke-width": 1.2 }, t);
+    SVGT(t, x + w / 2, y + (l2 ? h / 2 - 2 : h / 2 + 4), l1, { "text-anchor": "middle", "font-size": 12, "font-weight": 600 });
+    if (l2) SVGT(t, x + w / 2, y + h / 2 + 13, l2, { "text-anchor": "middle", "font-size": 10.5, class: "muted" }); };
+  box(156, 266, 80, 54, "2 unpackers", "T0");
+  box(256, 258, 70, 28, "SrcA ×2", null); box(256, 292, 70, 28, "SrcB ×2", null);
+  box(346, 266, 80, 54, "Matrix FPU", "T1");
+  box(446, 266, 80, 54, "Dst", "1024×16 ×16b");
+  box(546, 266, 80, 54, "4 packers", "T2");
+  box(446, 350, 80, 42, "SFPU", "32 lanes · T1");
+  box(156, 350, 180, 42, "ThCon scalar · sync", "config · mover · misc");
+  const arrow = (d) => el("path", { d, class: "s-acc", "stroke-width": 2.2, fill: "none", "marker-end": "url(#ta)" }, t);
+  arrow("M118 293 H154"); arrow("M236 280 H254"); arrow("M236 306 H254");
+  arrow("M326 272 H344"); arrow("M326 306 H344"); arrow("M426 293 H444"); arrow("M526 293 H544");
+  el("path", { d: "M480 322 V348", class: "s-acc", "stroke-width": 2.2, fill: "none", "marker-end": "url(#ta)", "marker-start": "url(#ta)" }, t);
+  arrow("M586 320 V430 H120");
+  SVGT(t, 350, 424, "packers write results back to L1", { "text-anchor": "middle", "font-size": 11, class: "muted" });
+})();
 
-  function sim() {
-    const cap = +$("#cb-n").value, N = 8, tr = 3, tc = 3, tw = 2; // durations
-    // discrete event: reader can fetch tile k when cbIn has space; compute when tile in cbIn and space in cbOut; writer when tile in cbOut
-    let rd = [], cp = [], wr = [];
-    for (let k = 0; k < N; k++) {
-      const rStart = Math.max(k ? rd[k - 1][1] : 0, k >= cap ? cp[k - cap][0] : 0);
-      rd.push([rStart, rStart + tr]);
-      const cStart = Math.max(rd[k][1], k ? cp[k - 1][1] : 0, k >= cap ? wr[k - cap][0] : 0);
-      cp.push([cStart, cStart + tc]);
-      const wStart = Math.max(cp[k][1], k ? wr[k - 1][1] : 0);
-      wr.push([wStart, wStart + tw]);
-    }
-    const end = wr[N - 1][1], svg = $("#cb-svg"); svg.innerHTML = "";
-    const X = v => 90 + v * 560 / 60;
-    [["reader", rd, "--blue", 30], ["compute", cp, "--accent", 85], ["writer", wr, "--green", 140]].forEach(([n, arr, c, y]) => {
-      el("text", { x: 10, y: y + 22, "font-size": 12 }, svg).textContent = n;
-      arr.forEach(([a, b], k) => { el("rect", { x: X(a), y, width: X(b) - X(a) - 1, height: 34, rx: 3, fill: cssVar(c), opacity: .8 }, svg);
-        el("text", { x: (X(a) + X(b)) / 2, y: y + 22, "text-anchor": "middle", "font-size": 10, fill: "#fff" }, svg).textContent = k; });
-    });
-    el("line", { x1: X(end), x2: X(end), y1: 20, y2: 185, stroke: cssVar("--red"), "stroke-dasharray": "4 3" }, svg);
-    el("text", { x: X(end) + 4, y: 195, "font-size": 11 }, svg).textContent = `done at t=${end}`;
-    $("#cb-out").textContent = `CB size ${cap}: 8 tiles finish at t = ${end} (reader 3, compute 3, writer 2 time units per tile)\n` +
-      (cap === 1 ? "With one slot the reader cannot fetch tile k+1 until compute has consumed tile k: stages serialise." : "Extra slots let all three stages overlap; throughput is set by the slowest stage (compute).");
+/* ---------- Blackhole floorplan + NoC routing ---------- */
+(function () {
+  const W = 17, H = 12, X0 = 44, Y0 = 34, CW = 40, CH = 34;
+  const banks = {}; [[0,1,11],[2,10,3],[9,4,8],[5,7,6]].forEach((ys, b) => ys.forEach(y => { banks["0," + y] = b; banks["9," + y] = b + 4; }));
+  function kind(x, y) {
+    if (x === 0 || x === 9) return ["D" + banks[x + "," + y], "grn", "DRAM bank " + banks[x + "," + y]];
+    if (y === 0) { if (x === 8) return ["ARC", "pur", "ARC (management)"]; if (x === 2 || x === 11) return ["PCIe", "pur", x === 2 ? "PCIe (in use)" : "PCIe (idle)"]; return ["", "", "router only"]; }
+    if (y === 1) return x === 8 ? ["", "", "router only"] : ["E", "blu", "Ethernet"];
+    if (x === 8) { if (y === 2) return ["SEC", "pur", "security"]; if ([3,5,7,9].includes(y)) return ["CPU", "amb", "L2CPU (4 × x280)"]; return ["", "", "router only"]; }
+    return ["T", "acc", "Tensix"];
   }
-  $("#cb-go").onclick = sim; $("#cb-n").onchange = sim; sim();
+  const cx = x => X0 + x * CW + CW / 2, cy = y => Y0 + y * CH + CH / 2;
+  const svg = $("#chip-svg"), gT = el("g", {}, svg), gR = el("g", {}, svg), gM = el("g", {}, svg);
+  for (let x = 0; x < W; x++) SVGT(svg, cx(x), Y0 - 8, x, { "text-anchor": "middle", "font-size": 10, class: "muted" });
+  for (let y = 0; y < H; y++) SVGT(svg, X0 - 10, cy(y) + 4, y, { "text-anchor": "end", "font-size": 10, class: "muted" });
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const [lab, cls, name] = kind(x, y);
+    const r = el("rect", { x: X0 + x * CW + 2, y: Y0 + y * CH + 2, width: CW - 4, height: CH - 4, rx: 4, class: (cls || "box") + " tile-hit", "stroke-width": 1, opacity: cls ? 1 : .45 }, gT);
+    el("title", {}, r).textContent = `(${x},${y}) ${name}`;
+    if (lab) SVGT(gT, cx(x), cy(y) + 4, lab, { "text-anchor": "middle", "font-size": lab.length > 2 ? 9.5 : 11, "pointer-events": "none" });
+    r.addEventListener("click", () => click(x, y));
+  }
+  SVGT(svg, X0, Y0 + H * CH + 22, "T Tensix · D DRAM bank (3 grid tiles per GDDR6 channel) · E Ethernet · CPU L2CPU · faded = router only", { "font-size": 11, class: "muted" });
+  let routes = [], pend = [], msg = "";
+  const noc = () => +$("#chip-noc").value, mode = () => $("#chip-mode").value;
+  const isT = (x, y) => kind(x, y)[2] === "Tensix";
+  function uni(n, s, d) {
+    const p = [[s[0], s[1]]]; let [x, y] = s;
+    if (n === 0) { while (x !== d[0]) { x = (x + 1) % W; p.push([x, y]); } while (y !== d[1]) { y = (y + 1) % H; p.push([x, y]); } }
+    else { while (y !== d[1]) { y = (y + H - 1) % H; p.push([x, y]); } while (x !== d[0]) { x = (x + W - 1) % W; p.push([x, y]); } }
+    const L = []; for (let i = 1; i < p.length; i++) L.push([p[i - 1], p[i]]); return L;
+  }
+  function mcast(n, s, a, b) {
+    const x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
+    const dx = n === 0 ? 1 : W - 1, dy = n === 0 ? 1 : H - 1, L = [];
+    let x = s[0], y = s[1];
+    const inX = v => v >= x0 && v <= x1, inY = v => v >= y0 && v <= y1;
+    while (!inX(x)) { const nx = (x + dx) % W; L.push([[x, y], [nx, y]]); x = nx; }
+    const col = x, rows = new Set(), need = y1 - y0 + 1;
+    if (inY(y)) rows.add(y);
+    while (rows.size < need) { const ny = (y + dy) % H; L.push([[col, y], [col, ny]]); y = ny; if (inY(y)) rows.add(y); }
+    let recv = 0;
+    rows.forEach(ry => { let xx = col; const cols = new Set([col]);
+      while (cols.size < x1 - x0 + 1) { const nx = (xx + dx) % W; L.push([[xx, ry], [nx, ry]]); xx = nx; if (inX(xx)) cols.add(xx); }
+      for (let c = x0; c <= x1; c++) if (isT(c, ry)) recv++; });
+    return { L, recv, rect: [x0, y0, x1, y1] };
+  }
+  function draw() {
+    gR.innerHTML = ""; gM.innerHTML = "";
+    const use = {};
+    routes.forEach(r => r.L.forEach(([a, b]) => { const k = a + ">" + b + "@" + r.n; use[k] = (use[k] || 0) + 1; }));
+    routes.forEach(r => {
+      if (r.rect) { const [x0, y0, x1, y1] = r.rect; el("rect", { x: X0 + x0 * CW, y: Y0 + y0 * CH, width: (x1 - x0 + 1) * CW, height: (y1 - y0 + 1) * CH, fill: "none", class: "s-acc", "stroke-width": 2, "stroke-dasharray": "5 3", rx: 5 }, gR); }
+      r.L.forEach(([a, b]) => {
+        const hot = use[a + ">" + b + "@" + r.n] > 1, cls = hot ? "s-red" : (r.n ? "s-pur" : "s-blu"), sw = hot ? 4 : 2.6;
+        const wrapX = Math.abs(a[0] - b[0]) > 1, wrapY = Math.abs(a[1] - b[1]) > 1;
+        if (!wrapX && !wrapY) el("line", { x1: cx(a[0]), y1: cy(a[1]), x2: cx(b[0]), y2: cy(b[1]), class: cls, "stroke-width": sw, "stroke-linecap": "round" }, gR);
+        else { // wrap-around link: stub off one edge, stub in from the other
+          const ox = wrapX ? (b[0] > a[0] ? -1 : 1) : 0, oy = wrapY ? (b[1] > a[1] ? -1 : 1) : 0;
+          el("line", { x1: cx(a[0]), y1: cy(a[1]), x2: cx(a[0]) + ox * CW * .7, y2: cy(a[1]) + oy * CH * .7, class: cls, "stroke-width": sw, "stroke-dasharray": "4 3" }, gR);
+          el("line", { x1: cx(b[0]) - ox * CW * .7, y1: cy(b[1]) - oy * CH * .7, x2: cx(b[0]), y2: cy(b[1]), class: cls, "stroke-width": sw, "stroke-dasharray": "4 3" }, gR);
+        }
+      });
+      el("circle", { cx: cx(r.s[0]), cy: cy(r.s[1]), r: 6, class: "f-acc" }, gM);
+      if (r.d) el("circle", { cx: cx(r.d[0]), cy: cy(r.d[1]), r: 5, fill: "none", class: "s-acc", "stroke-width": 2.5 }, gM);
+    });
+    pend.forEach(p => el("circle", { cx: cx(p[0]), cy: cy(p[1]), r: 7, fill: "none", class: "s-red", "stroke-width": 2.5 }, gM));
+    const shared = Object.values(use).filter(v => v > 1).length, maxu = Math.max(0, ...Object.values(use));
+    let txt = msg;
+    if (routes.length) txt += `\n${routes.length} route(s) drawn · ${shared} link(s) shared · busiest link carries ${maxu} route(s)` + (shared ? " (red: those packets queue or interleave on that link)" : "");
+    if (pend.length) txt += `\nselected ${pend.map(p => "(" + p + ")").join(" → ")} … click ${mode() === "m" ? (pend.length === 1 ? "the first rectangle corner" : "the second corner") : "the destination"}`;
+    $("#chip-out").textContent = txt.trim() || "Click a source tile.";
+  }
+  function cyc(h, bytes) { const fl = Math.ceil(bytes / 64) + 1, c = 5 + 9 * h + 5 + fl; return `${c} cycles ≈ ${(c / 1.35).toFixed(0)} ns`; }
+  function click(x, y) {
+    pend.push([x, y]); const n = noc();
+    if (mode() === "u" && pend.length === 2) {
+      const [s, d] = pend, L = uni(n, s, d); pend = [];
+      if (!L.length) { msg = "Source and destination are the same tile."; draw(); return; }
+      routes.push({ n, s, d, L }); if (routes.length > 8) routes.shift();
+      msg = `NoC ${n}: (${s}) → (${d}) = ${L.length} hops. One 2 KiB BF16 tile = 1 header + 32 data flits of 64 B; ≈ 5 + 9×${L.length} + 5 + 33 = ${cyc(L.length, 2048)} at 1.35 GHz with no congestion [derived from ISA-doc hop costs].`;
+    } else if (mode() === "m" && pend.length === 3) {
+      const [s, a, b] = pend, m = mcast(n, s, a, b); pend = [];
+      routes.push({ n, s, L: m.L, rect: m.rect }); if (routes.length > 8) routes.shift();
+      const uc = []; for (let yy = m.rect[1]; yy <= m.rect[3]; yy++) for (let xx = m.rect[0]; xx <= m.rect[2]; xx++) if (isT(xx, yy)) uc.push(uni(n, s, [xx, yy]).length);
+      msg = `NoC ${n} multicast (X major) from (${s}) to rectangle (${m.rect[0]},${m.rect[1]})–(${m.rect[2]},${m.rect[3]}): ${m.recv} Tensix receivers (other tile types opt out), ${m.L.length} link traversals for one packet. Sending ${m.recv} unicasts instead would take ${uc.reduce((p, q) => p + q, 0)} link traversals and ${m.recv} × the injection time [derived].`;
+    }
+    draw();
+  }
+  const bankTile = [[0,11],[0,3],[0,8],[0,6],[9,11],[9,3],[9,8],[9,6]];
+  $("#chip-pa").onclick = () => { $("#chip-noc").value = "0"; routes = []; pend = [];
+    const readers = [[10,2],[11,2],[12,2],[13,2],[14,2],[15,2],[16,2],[7,2]];
+    bankTile.forEach((b, i) => routes.push({ n: 0, s: b, d: readers[i], L: uni(0, b, readers[i]) }));
+    msg = "8 DRAM readers on row 2, each pulling from its own bank. The read responses travel DRAM → reader on NoC 0 (right, then down), so routes from banks in the same row pile onto the same links. This is the congestion that capped DRAM bandwidth in tt-metal's experiments [vendor: Saturating_DRAM_bandwidth; geometry derived for Blackhole].";
+    draw(); };
+  $("#chip-pb").onclick = () => { $("#chip-noc").value = "0"; routes = []; pend = [];
+    bankTile.forEach(b => { const d = [b[0] + 1, b[1]]; routes.push({ n: 0, s: b, d, L: uni(0, b, d) }); });
+    msg = "Each reader sits right next to its DRAM bank, so every response is one hop and no link is shared. With weights sharded so that each reader only touches its own bank, tt-metal reached 92% of DRAM bandwidth on Wormhole [vendor-measured].";
+    draw(); };
+  $("#chip-clr").onclick = () => { routes = []; pend = []; msg = ""; draw(); };
+  $("#chip-mode").onchange = () => { pend = []; draw(); };
+  $("#chip-noc").onchange = () => { pend = []; draw(); };
+  draw();
+})();
+
+/* ---------- one tile through the core ---------- */
+(function () {
+  const ST = [["GDDR6", "bank i mod 8", "grn"], ["NoC 0", "", "blu"], ["L1 CB c_0", "", "grn"], ["Unpack", "", "amb"], ["SrcA/B", "19-bit", "box"], ["FPU", "", "acc"], ["Dst", "", "box"], ["Pack", "", "amb"], ["L1 CB c_16", "", "grn"], ["NoC 1", "", "blu"], ["GDDR6", "", "grn"]];
+  const CORES = ["BRISC", "NCRISC", "TRISC0", "TRISC1", "TRISC2"];
+  const STEPS = [
+    [0, -1, "host: SetRuntimeArgs(reader, core, {a_addr, b_addr, n_tiles})", "Tile i of A sits in DRAM. With an interleaved buffer, page i lives in bank i mod 8 on Blackhole. The host gave this core the buffer addresses and its tile range as runtime arguments."],
+    [1, 0, "cb_reserve_back(c_0,1); noc_async_read_page(i, a, get_write_ptr(c_0))", "BRISC waits for a free CB slot, then programs its NIU to read the page. The packet's path follows NoC 0 routing. B's tile is read the same way into c_1."],
+    [2, 0, "noc_async_read_barrier(); cb_push_back(c_0,1)", "Once both reads have landed, the reader bumps the CB's write counter. That is the only signal that compute can go."],
+    [3, 2, "cb_wait_front(c_0,1); [unpack half of] add_tiles(c_0, c_1, 0, 0, 0)", "TRISC0 waits on the counter, then pushes UNPACR instructions. The unpackers convert the L1 tiles into the FPU's source format."],
+    [4, 2, "(SrcA ← A, SrcB ← B)", "Each Src register has two banks, so the unpackers can load the next operands while the FPU reads this pair."],
+    [5, 3, "tile_regs_acquire(); [math half of] add_tiles(...)", "TRISC1 claims half of Dst and pushes the FPU instructions. Element-wise add runs 8 × 16 elements per cycle, so one tile takes 8 cycles [derived from matrix_engine]."],
+    [6, 3, "tile_regs_commit();   TRISC0: cb_pop_front(c_0,1)", "The result is in Dst. Math hands this Dst half to Pack. Unpack pops the inputs, which frees the CB slots for the reader."],
+    [7, 4, "cb_reserve_back(c_16,1); tile_regs_wait(); pack_tile(0, c_16, 0); tile_regs_release()", "TRISC2 waits for space in the output CB and for Math, then the packers write Dst to L1, converting the format on the way."],
+    [8, 4, "cb_push_back(c_16,1)", "The output tile is now visible to the writer."],
+    [9, 1, "cb_wait_front(c_16,1); noc_async_write_page(i, c, get_read_ptr(c_16)); noc_async_write_barrier()", "NCRISC sends the tile out on NoC 1 to page i of C (again bank i mod 8)."],
+    [10, 1, "cb_pop_front(c_16,1)", "Only after the write has left L1 can the writer free the slot. Done: one tile of C is in DRAM. In steady state all five cores are busy at once, each on a different tile."]
+  ];
+  const svg = $("#pipe-svg"); let k = 0, timer = null;
+  function draw() {
+    svg.innerHTML = "";
+    const fmt = $("#pipe-fmt").value, B = fmt === "bf16" ? 2048 : 1088, fl = Math.ceil(B / 64) + 1;
+    CORES.forEach((c, i) => { const on = STEPS[k][1] === i, x = 40 + i * 140;
+      el("rect", { x, y: 14, width: 124, height: 34, rx: 7, class: on ? (i < 2 ? "blu" : "amb") : "box", "stroke-width": on ? 2.5 : 1, opacity: on ? 1 : .6 }, svg);
+      SVGT(svg, x + 62, 36, c, { "text-anchor": "middle", "font-weight": on ? 700 : 500, "font-size": 13 }); });
+    SVGT(svg, 10, 36, k === 0 ? "host" : "", { "font-size": 11, class: "muted" });
+    const sx = i => 14 + i * 67.5;
+    ST.forEach(([n, sub, cls], i) => { const on = STEPS[k][0] === i;
+      el("rect", { x: sx(i), y: 92, width: 60, height: 58, rx: 6, class: cls, "stroke-width": on ? 2.8 : 1.1, opacity: i <= STEPS[k][0] ? 1 : .45 }, svg);
+      const parts = n.split(" ");
+      parts.forEach((p, j) => SVGT(svg, sx(i) + 30, 112 + j * 14 - (parts.length - 1) * 4, p, { "text-anchor": "middle", "font-size": 11, "font-weight": 600 }));
+      let s2 = sub;
+      if (i === 0 || i === 2 || i === 8 || i === 10) s2 = B + " B";
+      if (i === 1 || i === 9) s2 = fl + " flits";
+      if (i === 6) s2 = "½ = 8 tiles";
+      if (i === 5) s2 = "8 cyc/tile";
+      SVGT(svg, sx(i) + 30, 142, s2, { "text-anchor": "middle", "font-size": 9.5, class: "muted" });
+      if (i < ST.length - 1) el("line", { x1: sx(i) + 60, y1: 121, x2: sx(i) + 67.5, y2: 121, class: "s-muted", "stroke-width": 1.5 }, svg); });
+    // the tile glyph: 4 faces
+    const gx = sx(STEPS[k][0]) + 14, gy = 160;
+    for (let f = 0; f < 4; f++) el("rect", { x: gx + (f % 2) * 16, y: gy + Math.floor(f / 2) * 16, width: 15, height: 15, class: "acc", "stroke-width": 1.2 }, svg);
+    SVGT(svg, gx + 16, gy + 46, "tile i", { "text-anchor": "middle", "font-size": 10.5 });
+    SVGT(svg, 14, 232, `step ${k + 1} / ${STEPS.length}`, { "font-size": 12, class: "muted" });
+    SVGT(svg, 110, 232, fmt === "bf16" ? "BF16: 1024 × 2 B" : "bfloat8_b: 1024 × 1 B + 64 shared exponents", { "font-size": 12, class: "muted" });
+    $("#pipe-out").textContent = STEPS[k][2] + "\n" + STEPS[k][3] + (STEPS[k][0] === 1 || STEPS[k][0] === 9 ? `\nThis ${B} B tile fits in one packet: 1 header + ${fl - 1} data flits of 64 B on Blackhole [derived].` : "");
+  }
+  const stop = () => { clearInterval(timer); timer = null; $("#pipe-play").textContent = "Play"; };
+  $("#pipe-step").onclick = () => { stop(); k = (k + 1) % STEPS.length; draw(); };
+  $("#pipe-back").onclick = () => { stop(); k = (k + STEPS.length - 1) % STEPS.length; draw(); };
+  $("#pipe-play").onclick = () => { if (timer) return stop(); $("#pipe-play").textContent = "Pause";
+    timer = setInterval(() => { k = (k + 1) % STEPS.length; draw(); if (k === STEPS.length - 1) stop(); }, 1400); };
+  $("#pipe-fmt").onchange = draw; draw();
+})();
+
+/* ---------- circular buffer timeline ---------- */
+(function () {
+  function simulate(cap, R, C, Wd) {
+    const N = R.length, rd = [], cp = [], wr = [];
+    for (let k = 0; k < N; k++) {
+      // reader: cb_reserve_back waits until compute has POPPED tile k-cap, i.e. finished it
+      const rs = Math.max(k ? rd[k - 1][1] : 0, k >= cap ? cp[k - cap][1] : 0); rd.push([rs, rs + R[k]]);
+      // compute: needs tile k in CB_in and a free CB_out slot (writer finished tile k-cap)
+      const cs = Math.max(rd[k][1], k ? cp[k - 1][1] : 0, k >= cap ? wr[k - cap][1] : 0); cp.push([cs, cs + C[k]]);
+      const ws = Math.max(cp[k][1], k ? wr[k - 1][1] : 0); wr.push([ws, ws + Wd[k]]);
+    }
+    return { rd, cp, wr, end: wr[N - 1][1] };
+  }
+  function params() {
+    const r = +$("#cb-r").value, c = +$("#cb-c").value, w = +$("#cb-w").value, jit = $("#cb-jit").checked;
+    $("#cb-rv").textContent = r; $("#cb-cv").textContent = c; $("#cb-wv").textContent = w;
+    const R = Array.from({ length: 8 }, (_, k) => r + (jit && (k === 2 || k === 6) ? 6 : 0));
+    return { R, C: Array(8).fill(c), Wd: Array(8).fill(w) };
+  }
+  function sim() {
+    const cap = +$("#cb-n").value, { R, C, Wd } = params();
+    const all = [1, 2, 4].map(n => [n, simulate(n, R, C, Wd).end]);
+    const { rd, cp, wr, end } = simulate(cap, R, C, Wd);
+    const T = Math.max(...all.map(a => a[1])), svg = $("#cb-svg"); svg.innerHTML = "";
+    const X = v => 80 + v * 580 / T;
+    for (let t = 0; t <= T; t += T > 60 ? 10 : 5) { el("line", { x1: X(t), x2: X(t), y1: 26, y2: 222, class: "line", "stroke-width": .6 }, svg);
+      SVGT(svg, X(t), 238, t, { "font-size": 11, "text-anchor": "middle", class: "muted" }); }
+    [["reader", rd, "blu", 30], ["compute", cp, "acc", 84], ["writer", wr, "grn", 138]].forEach(([n, arr, c, y]) => {
+      SVGT(svg, 4, y + 22, n, { "font-size": 13 });
+      arr.forEach(([a, b], k) => {
+        if (k && a > arr[k - 1][1]) el("rect", { x: X(arr[k - 1][1]), y: y + 14, width: X(a) - X(arr[k - 1][1]), height: 6, class: "red", "stroke-width": .6 }, svg);
+        el("rect", { x: X(a), y, width: Math.max(1, X(b) - X(a) - 1), height: 34, rx: 3, class: c, "stroke-width": 1.2 }, svg);
+        SVGT(svg, (X(a) + X(b)) / 2, y + 22, k, { "text-anchor": "middle", "font-size": 12, "font-weight": 600 });
+      });
+    });
+    const strip = (y, prod, cons, lab) => { for (let t = 0; t < end; t++) {
+        const occ = prod.filter(([, e], k) => e <= t && cons[k][1] > t).length;
+        el("rect", { x: X(t), y, width: X(t + 1) - X(t), height: 10, class: occ >= cap ? "acc" : "box", "stroke-width": .4, opacity: occ ? 1 : .35 }, svg); }
+      SVGT(svg, 4, y + 9, lab, { "font-size": 11, class: "muted" }); };
+    strip(184, rd, cp, "CB_in"); strip(200, cp, wr, "CB_out");
+    el("line", { x1: X(end), x2: X(end), y1: 18, y2: 222, class: "s-red", "stroke-dasharray": "4 3", "stroke-width": 1.5 }, svg);
+    SVGT(svg, Math.min(X(end) + 4, 610), 14, `done t=${end}`, { "font-size": 12 });
+    const serial = R.concat(C, Wd).reduce((a, b) => a + b, 0), base = all[0][1];
+    const slow = Math.max(...R) > Math.max(C[0], Wd[0]) ? "reader" : C[0] >= Wd[0] ? "compute" : "writer";
+    $("#cb-out").textContent =
+      `CB size ${cap}: 8 tiles finish at t = ${end} (fully serial: ${serial}).\n` +
+      `All sizes: ${all.map(([n, e]) => `${n} slot${n > 1 ? "s" : ""} → ${e}${n > 1 ? ` (${(base / e).toFixed(2)}× vs 1)` : ""}`).join(" · ")}\n` +
+      (cap === 1 ? "One slot: the reader cannot reserve tile k+1 until compute pops tile k, so reading and computing take turns. Red bars are idle time."
+        : all[2][1] < all[1][1] ? "Two slots hide steady latency, but a DRAM spike still stalls compute; four slots absorb it."
+        : `Enough slots: the slowest stage (${slow}) never waits, so it sets the finish time. More slots would not help.`) +
+      "\nStrips: CB occupancy over time (orange = full).";
+  }
+  ["#cb-n", "#cb-jit"].forEach(s => $(s).onchange = sim);
+  ["#cb-r", "#cb-c", "#cb-w"].forEach(s => $(s).oninput = sim);
+  sim();
+})();
+
+/* ---------- matmul mapping ---------- */
+(function () {
+  let sel = [0, 0];
+  function draw() {
+    const M = +$("#mm-m").value, K = +$("#mm-k").value, N = +$("#mm-n").value, [gx, gy] = $("#mm-g").value.split(",").map(Number), cpt = +$("#mm-f").value;
+    const Mt = Math.ceil(M / 32), Kt = K / 32, Nt = N / 32, bw = 2, nb = Kt / bw;
+    const pM = Math.ceil(Mt / gy), pN = Math.ceil(Nt / gx), used_y = Math.ceil(Mt / pM), used_x = Math.ceil(Nt / pN);
+    const ks = $("#mm-ks"); ks.max = nb - 1; if (+ks.value > nb - 1) ks.value = nb - 1; const kb = +ks.value; $("#mm-ksv").textContent = `${kb} / ${nb - 1}`;
+    if (sel[0] >= gx || sel[1] >= gy) sel = [0, 0];
+    const svg = $("#mm-svg"); svg.innerHTML = "";
+    const GX = 170, GY = 90, S = Math.min(440 / gx, 300 / gy), cs = S - 4;
+    // A blocks on the left, B blocks on top
+    SVGT(svg, 20, GY - 12, "A (M × K)", { "font-size": 12, "font-weight": 600 });
+    SVGT(svg, GX, 20, "B (K × N)", { "font-size": 12, "font-weight": 600 });
+    for (let y = 0; y < gy; y++) { el("rect", { x: 30, y: GY + y * S + 2, width: 110, height: cs, rx: 3, class: "box", "stroke-width": .8 }, svg);
+      el("rect", { x: 30 + kb * 110 / nb, y: GY + y * S + 2, width: Math.max(2, 110 / nb), height: cs, class: "f-acc", opacity: y < used_y ? .9 : .2 }, svg); }
+    for (let x = 0; x < gx; x++) { el("rect", { x: GX + x * S + 2, y: 28, width: cs, height: 50, rx: 3, class: "box", "stroke-width": .8 }, svg);
+      el("rect", { x: GX + x * S + 2, y: 28 + kb * 50 / nb, width: cs, height: Math.max(2, 50 / nb), class: "f-blu", opacity: x < used_x ? .9 : .2 }, svg); }
+    for (let y = 0; y < gy; y++) for (let x = 0; x < gx; x++) {
+      const used = x < used_x && y < used_y, me = x === sel[0] && y === sel[1];
+      const r = el("rect", { x: GX + x * S + 2, y: GY + y * S + 2, width: cs, height: cs, rx: 3, class: (used ? (x === 0 || y === 0 ? "amb" : "box") : "box") + " tile-hit", "stroke-width": me ? 3 : 1, opacity: used ? 1 : .3 }, svg);
+      if (me) r.style.stroke = cssVar("--red");
+      r.addEventListener("click", () => { sel = [x, y]; draw(); });
+    }
+    // multicast arrows for the selected row/column
+    const ry = GY + sel[1] * S + S / 2, rx = GX + sel[0] * S + S / 2;
+    el("line", { x1: 142, y1: ry, x2: GX + (used_x - 1) * S + S / 2, y2: ry, class: "s-acc", "stroke-width": 3, opacity: .8 }, svg);
+    el("line", { x1: rx, y1: 80, x2: rx, y2: GY + (used_y - 1) * S + S / 2, class: "s-blu", "stroke-width": 3, opacity: .8 }, svg);
+    SVGT(svg, GX + gx * S + 10, GY + 14, "amber = sender", { "font-size": 11, class: "muted" });
+    SVGT(svg, GX + gx * S + 10, GY + 30, "(left col: A, top row: B)", { "font-size": 11, class: "muted" });
+    SVGT(svg, GX + gx * S + 10, GY + 52, "red outline = selected", { "font-size": 11, class: "muted" });
+    const cores = used_x * used_y, tile = 2048;
+    const noMc = cores * (pM * Kt + pN * Kt) * tile, mc = (used_y * pM * Kt + used_x * pN * Kt) * tile;
+    const cyc = Mt * Kt * Nt * cpt / (gx * gy), f = gx * gy === 130 ? 1.35 : 1.0, us = cyc / f / 1e3;
+    const l1 = (2 * pM * bw + 2 * pN * bw + pM * pN) * tile, L1 = gx * gy === 130 ? 1536 * 1024 : 1464 * 1024;
+    const [sx, sy] = sel;
+    $("#mm-out").textContent =
+      `Mt × Kt × Nt = ${Mt} × ${Kt} × ${Nt} tiles. per_core_M = ${pM}, per_core_N = ${pN}; ${cores} of ${gx * gy} cores have work.\n` +
+      `Core (${sx},${sy}) computes C tile rows ${sy * pM}–${Math.min(Mt, (sy + 1) * pM) - 1}, cols ${sx * pN}–${Math.min(Nt, (sx + 1) * pN) - 1}. K-step ${kb}: A tiles k=${kb * bw}–${kb * bw + bw - 1} arrive from core (0,${sy}), B from core (${sx},0).\n` +
+      `DRAM reads: ${(mc / 2 ** 20).toFixed(0)} MiB with multicast vs ${(noMc / 2 ** 20).toFixed(0)} MiB if every core read its own operands (${(noMc / mc).toFixed(1)}×) [derived].\n` +
+      `Ideal: ${Math.round(cyc).toLocaleString()} cycles ≈ ${us.toFixed(0)} µs at ${f} GHz → ${(2 * M * K * N / (us * 1e-6) / 1e12).toFixed(0)} TFLOPS if 100% utilised [derived, GEMM_FLOPS formula].\n` +
+      `L1 per core for double-buffered A, B blocks + output: ${(l1 / 1024).toFixed(0)} KiB of ${L1 / 1024} KiB` + (l1 > L1 * .85 ? " → too big: shrink in0_block_w or use more cores." : ".");
+  }
+  ["#mm-m", "#mm-k", "#mm-n", "#mm-g", "#mm-f"].forEach(s => $(s).onchange = draw);
+  $("#mm-ks").oninput = draw; draw();
+})();
+
+/* ---------- interleaved vs sharded ---------- */
+(function () {
+  const pal = n => Array.from({ length: n }, (_, i) => `hsl(${Math.round(i * 360 / n)}, 70%, 72%)`);
+  function draw() {
+    const m = $("#sh-mode").value, svg = $("#sh-svg"); svg.innerHTML = "";
+    let n, owner, oname, note;
+    if (m === "dram") { n = 8; owner = t => t % 8; oname = i => "DRAM bank " + i;
+      note = "Page t goes to bank t mod 8; every allocation starts at bank 0. 64 tiles / 8 banks = 8 per bank, but each reading core touches all 8 banks, so routes cross the whole NoC. This is the default, and is fine when the op is compute-bound."; }
+    else if (m === "l1") { n = 16; owner = t => t % 16; oname = i => "core " + i;
+      note = "The same round-robin over the L1 of 16 cores: 4 tiles each. The data is on-chip, but a core still has to fetch most of its operands from other cores."; }
+    else if (m === "h") { n = 8; owner = t => Math.floor(t / 8); oname = i => "core " + i;
+      note = "Height-sharded: each core owns a 32 × 256 band, one tile-row, 8 tiles = 16 KiB. Good for row-wise ops such as layernorm over the hidden dimension."; }
+    else if (m === "w") { n = 8; owner = t => t % 8; oname = i => "core " + i;
+      note = "Width-sharded: each core owns a 256 × 32 column band. Decode activations (32 × hidden) are width-sharded in L1, and DRAM-sharded weights are split the same way across banks."; }
+    else { n = 16; owner = t => Math.floor(Math.floor(t / 8) / 2) * 4 + Math.floor((t % 8) / 2); oname = i => `core (${i % 4},${Math.floor(i / 4)})`;
+      note = "Block-sharded on 4 × 4 cores: 64 × 64 per core = 2 × 2 tiles = 8 KiB, matching matmul 2D's output blocks."; }
+    const P = pal(n), S = 30, X0 = 30, Y0 = 34;
+    SVGT(svg, X0, 22, "tensor: 8 × 8 tiles (256 × 256 BF16)", { "font-size": 12, "font-weight": 600 });
+    for (let t = 0; t < 64; t++) { const x = t % 8, y = Math.floor(t / 8), o = owner(t);
+      const r = el("rect", { x: X0 + x * S, y: Y0 + y * S, width: S - 2, height: S - 2, rx: 3, "stroke-width": .8, class: "line" }, svg); r.style.fill = P[o];
+      SVGT(svg, X0 + x * S + S / 2 - 1, Y0 + y * S + S / 2 + 4, o, { "text-anchor": "middle", "font-size": 11, class: "on-fill" }); }
+    const cols = n === 16 ? 4 : 4, BW = 104, BH = 56, RX = 330;
+    SVGT(svg, RX, 22, m === "dram" ? "owners: DRAM banks" : "owners: cores (their L1)", { "font-size": 12, "font-weight": 600 });
+    for (let i = 0; i < n; i++) { const x = RX + (i % cols) * (BW + 8), y = Y0 + Math.floor(i / cols) * (BH + 8);
+      el("rect", { x, y, width: BW, height: BH, rx: 5, class: "box", "stroke-width": 1 }, svg);
+      SVGT(svg, x + 6, y + 15, oname(i), { "font-size": 11 });
+      let j = 0; for (let t = 0; t < 64; t++) if (owner(t) === i) { const r = el("rect", { x: x + 6 + (j % 8) * 11.5, y: y + 22 + Math.floor(j / 8) * 13, width: 10, height: 11, rx: 1.5, class: "line", "stroke-width": .5 }, svg); r.style.fill = P[i]; j++; }
+    }
+    $("#sh-out").textContent = note;
+  }
+  $("#sh-mode").onchange = draw; draw();
+})();
+
+/* ---------- Galaxy layout ---------- */
+(function () {
+  let sel = [0, 0]; // [row (axis 0, 0..7), col (axis 1, 0..3)]
+  function draw() {
+    const w = $("#gal-w").value, dp = $("#gal-l").value === "dp", wrap = $("#gal-wrap").checked, svg = $("#gal-svg"); svg.innerHTML = "";
+    const CX = 40, CY = 40, CWd = 66, CHt = 40, GXp = 14, GYp = 10;
+    const pos = (r, c) => [CX + c * (CWd + GXp), CY + r * (CHt + GYp)];
+    SVGT(svg, CX, 24, "8 × 4 mesh (axis 0 ↓ 8 chips, axis 1 → 4 chips)", { "font-size": 12, "font-weight": 600 });
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 4; c++) { const [x, y] = pos(r, c);
+      if (c < 3) el("line", { x1: x + CWd, y1: y + CHt / 2, x2: x + CWd + GXp, y2: y + CHt / 2, class: "s-blu", "stroke-width": 3 }, svg);
+      if (r < 7) el("line", { x1: x + CWd / 2, y1: y + CHt, x2: x + CWd / 2, y2: y + CHt + GYp, class: "s-blu", "stroke-width": 3 }, svg); }
+    if (wrap) { for (let r = 0; r < 8; r++) { const [x, y] = pos(r, 0); el("path", { d: `M${x} ${y + CHt / 2} h-14 M${x + 4 * (CWd + GXp) - GXp} ${y + CHt / 2} h14`, class: "s-blu", "stroke-width": 2, "stroke-dasharray": "3 3", fill: "none" }, svg); }
+      for (let c = 0; c < 4; c++) { const [x, y] = pos(0, c); el("path", { d: `M${x + CWd / 2} ${y} v-10 M${x + CWd / 2} ${y + 8 * (CHt + GYp) - GYp} v10`, class: "s-blu", "stroke-width": 2, "stroke-dasharray": "3 3", fill: "none" }, svg); } }
+    const ff1 = w === "ff1", K = ff1 ? 8192 : 28672, N = ff1 ? 28672 : 8192;
+    const kb = ff1 ? 4 : 8, nbk = ff1 ? 8 : 4; // number of K and N blocks
+    const kIdx = (r, c) => ff1 ? c : r, nIdx = (r, c) => ff1 ? r : c;
+    const inGroup = (r, c) => ff1 ? r === sel[0] : c === sel[1];  // all-reduce partners
+    const rep = r => Math.floor(r / 2);
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 4; c++) { const [x, y] = pos(r, c), me = r === sel[0] && c === sel[1];
+      const cls = dp ? ["acc", "blu", "grn", "pur"][rep(r)] : (inGroup(r, c) ? "acc" : "box");
+      const rr = el("rect", { x, y, width: CWd, height: CHt, rx: 6, class: cls + " tile-hit", "stroke-width": me ? 3.2 : 1.2 }, svg);
+      if (me) rr.style.stroke = cssVar("--red");
+      el("title", {}, rr).textContent = `chip (${r},${c})`;
+      SVGT(svg, x + CWd / 2, y + 16, dp ? `replica ${rep(r)}` : `(${r},${c})`, { "text-anchor": "middle", "font-size": 11, "pointer-events": "none" });
+      if (!dp) SVGT(svg, x + CWd / 2, y + 31, `K${kIdx(r, c)} · N${nIdx(r, c)}`, { "text-anchor": "middle", "font-size": 10.5, class: "muted", "pointer-events": "none" });
+      rr.addEventListener("click", () => { sel = [r, c]; draw(); }); }
+    // the weight matrix
+    const MX = 380, MY = 60, MW = 340, MH = ff1 ? 150 : 300;
+    SVGT(svg, MX, 40, `${ff1 ? "FF1" : "FF2"} weight: K = ${K} rows × N = ${N} cols`, { "font-size": 12, "font-weight": 600 });
+    for (let i = 0; i < kb; i++) for (let j = 0; j < nbk; j++) {
+      const mine = i === kIdx(sel[0], sel[1]) && j === nIdx(sel[0], sel[1]);
+      el("rect", { x: MX + j * MW / nbk, y: MY + i * MH / kb, width: MW / nbk - 2, height: MH / kb - 2, rx: 2, class: mine ? "acc" : "box", "stroke-width": mine ? 2.5 : .8 }, svg); }
+    SVGT(svg, MX - 6, MY + MH / 2, "K", { "text-anchor": "end", "font-size": 12 });
+    SVGT(svg, MX + MW / 2, MY + MH + 18, "N", { "text-anchor": "middle", "font-size": 12 });
+    SVGT(svg, MX, MY + MH + 40, `chip (${sel[0]},${sel[1]}) holds block [${K / kb} × ${N / nbk}]`, { "font-size": 12 });
+    // numbers
+    const bpp = 1088 / 1024, wchip = K * N * bpp / 32, links = ff1 ? 3 : 4, grp = ff1 ? 4 : 8;
+    const T = 32 * (N / nbk) * 2, ar = 2 * (grp - 1) / grp * T, tAr = ar / (links * 12.0e9) * 1e6, tW = wchip / 288e9 * 1e6;
+    $("#gal-out").textContent = dp
+      ? "Four replicas: each 2 × 4 submesh (8 chips) holds a full copy of the model with TP = 8, so each chip reads 4× more weight bytes per token. Per-user speed drops (14.3 vs 72.5 tok/s/u) but four batches run at once: 1,836 tok/s at batch 128 [vendor-measured]."
+      : `Chip (${sel[0]},${sel[1]}) holds K block ${kIdx(sel[0], sel[1])} of ${kb} and N block ${nIdx(sel[0], sel[1])} of ${nbk}: ${(wchip / 1e6).toFixed(1)} MB of this layer's weight in BFP8. Reading it at 288 GB/s takes ≈ ${tW.toFixed(0)} µs per layer per token.\n` +
+        `Its partial sums [32 users × ${N / nbk}] are all-reduced with the ${grp} highlighted chips along axis ${ff1 ? 1 : 0} over ${links} links: 2(n−1)/n × ${(T / 1024).toFixed(0)} KiB ≈ ${(ar / 1024).toFixed(0)} KiB per chip, ≈ ${tAr.toFixed(0)} µs at 12 GB/s payload per link, plus ~0.7 µs per hop and a few µs fixed cost [derived from vendor link figures].`;
+  }
+  ["#gal-w", "#gal-l", "#gal-wrap"].forEach(s => $(s).onchange = draw); draw();
+})();
+
+/* ---------- same GEMV on Tensix vs Cerebras ---------- */
+(function () {
+  function draw() {
+    const n = 2 ** +$("#vs-n").value; $("#vs-nv").textContent = n;
+    const Wb = 2 * n * n, tiles = (n / 32) ** 2, perCore = tiles / 120, tDram = Wb / 512e9 * 1e6;
+    const perPE = 24 * 1024, pes = Math.ceil(Wb / perPE), side = Math.ceil(Math.sqrt(pes));
+    const svg = $("#vs-svg"); svg.innerHTML = "";
+    // left: Blackhole
+    SVGT(svg, 20, 22, "Blackhole p150", { "font-weight": 700 });
+    el("rect", { x: 20, y: 40, width: 50, height: 200, rx: 6, class: "grn", "stroke-width": 1.2 }, svg);
+    SVGT(svg, 45, 140, "GDDR6", { "text-anchor": "middle", "font-size": 11, transform: "rotate(-90 45 140)" });
+    const bw = Math.max(2, Math.min(18, Math.log2(Wb / 2 ** 20 + 1) * 2.5));
+    el("line", { x1: 72, y1: 140, x2: 104, y2: 140, class: "s-acc", "stroke-width": bw }, svg);
+    for (let y = 0; y < 10; y++) for (let x = 0; x < 12; x++) el("rect", { x: 110 + x * 20, y: 40 + y * 20, width: 17, height: 17, rx: 2, class: "acc", "stroke-width": .7 }, svg);
+    SVGT(svg, 110, 262, `120 cores × ${perCore < 10 ? perCore.toFixed(1) : Math.round(perCore)} tiles of W each`, { "font-size": 12 });
+    SVGT(svg, 110, 280, `${(Wb / 2 ** 20).toFixed(0)} MiB crosses DRAM per token · ≥ ${tDram.toFixed(0)} µs`, { "font-size": 12 });
+    // right: WSE-3
+    SVGT(svg, 400, 22, "Cerebras WSE-3", { "font-weight": 700 });
+    el("rect", { x: 400, y: 40, width: 340, height: 200, rx: 10, class: "box", "stroke-width": 1 }, svg);
+    const frac = Math.min(1, pes / 900000), rs = Math.max(6, 200 * Math.sqrt(frac) * 1.6);
+    el("rect", { x: 410, y: 50, width: Math.min(320, rs * 1.6), height: Math.min(180, rs), class: "acc", "stroke-width": 1.2 }, svg);
+    const ww = Math.min(320, rs * 1.6), hh = Math.min(180, rs);
+    for (let i = 1; i < 5; i++) { el("line", { x1: 410, y1: 50 + i * hh / 5, x2: 410 + ww, y2: 50 + i * hh / 5, class: "s-blu", "stroke-width": .8 }, svg);
+      el("line", { x1: 410 + i * ww / 5, y1: 50, x2: 410 + i * ww / 5, y2: 50 + hh, class: "s-grn", "stroke-width": .8 }, svg); }
+    SVGT(svg, 400, 262, `${pes.toLocaleString()} PEs (~${side} × ${side}) hold W at ≤ 24 KB each`, { "font-size": 12 });
+    SVGT(svg, 400, 280, `only x and y cross the wafer edge: ${(4 * n / 1024).toFixed(0)} KiB per token`, { "font-size": 12 });
+    $("#vs-out").textContent =
+      `W = ${n} × ${n} BF16 = ${(Wb / 2 ** 20).toFixed(0)} MiB [derived].\n` +
+      `Tensix: W is ${Wb > 180e6 ? "larger than" : "smaller than"} the 180 MB of SRAM, but in decode it is streamed from GDDR6 anyway, ${tiles.toLocaleString()} tiles of 2 KiB. The bound is 512 GB/s → ≥ ${tDram.toFixed(0)} µs per token for this layer. Granule: a 2 KiB tile in a ≤ 16 KiB packet.\n` +
+      `WSE-3: W stays in place across ${(100 * pes / 900000).toFixed(pes < 9000 ? 2 : 1)}% of the ~900k PEs (assuming half of each 48 KB PE memory holds W). x (${2 * n} B) is broadcast along PE rows and partial sums are reduced along columns, 32-bit wavelet by wavelet; nothing comes from off-chip memory. Granule: one 4-byte wavelet. Capacity is the price: 44 GB per wafer.`;
+  }
+  $("#vs-n").oninput = draw; draw();
+})();
+
+/* ---------- code tabs ---------- */
+(function () {
+  const bs = [...document.querySelectorAll("#code-tabs button")], ps = [...document.querySelectorAll(".codepane")];
+  bs.forEach(b => b.onclick = () => { bs.forEach(x => x.classList.toggle("on", x === b)); ps.forEach((p, i) => p.hidden = i !== +b.dataset.p); });
 })();
 </script>
 </body>
