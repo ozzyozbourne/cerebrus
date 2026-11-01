@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSDs: Loops as Hardware</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 6 · Part II · The machine</div>
+<h1>DSDs: loops as hardware</h1>
+<p class="lede">With no caches and no DRAM, the WSE needs a different way to make memory access cheap. The answer is the <em>data structure descriptor</em> (DSD): a hardware address generator that describes a whole walk over memory — or over a stream of wavelets — so that a single instruction can process an entire vector.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Build memory DSDs with base/extent/stride or <code>tensor_access</code>, and predict exactly which words they touch.</li>
+<li>Use fabric DSDs so that receiving, computing and sending are one instruction.</li>
+<li>Run DSD operations asynchronously and chain them through tasks.</li>
+</ul>
+</div>
+
+<h2>One instruction, a whole loop</h2>
+<p>In C you would write <code>for (i = 0; i &lt; N; i++) y[i] += x[i] * a;</code>. In CSL you describe <code>x</code> and <code>y</code> once and issue one instruction (Lab 1, program 01):</p>
+<div class="filename">course/programs/01-saxpy/pe_program.csl</div>
+<pre><code><span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> x[i] });
+<span class="k">const</span> y_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> y[i] });
+
+<span class="k">fn</span> saxpy(a: <span class="n">f32</span>) <span class="n">void</span> {
+  <span class="b">@fmacs</span>(y_dsd, y_dsd, x_dsd, a);   <span class="c">// y[i] = y[i] + x[i] * a   for all N</span>
+  sys_mod.unblock_cmd_stream();
+}</code></pre>
+<p>The descriptor lives in one of the PE's 48 data-structure registers (DSRs). The datapath walks it, generating addresses and streaming operands through the SIMD lanes, with no per-element instruction fetch or loop counter. The <code>tensor_access</code> form names an induction variable, a bound and an affine index: <code>|i|{M} -> A[i*N]</code> means "M elements starting at A[0], stride N" — a matrix column.</p>
+
+<div class="widget" id="dsd">
+<h4>DSD visualizer</h4>
+<p class="hint">Memory shown as 48 words of one array. Choose a descriptor and see the exact words it visits, in order.</p>
+<div class="controls">
+<label>Preset <select id="d-pre">
+  <option value="0,16,1">contiguous: |i|{16} -> v[i]</option>
+  <option value="0,6,8">matrix column (6×8 row-major): |i|{6} -> A[i*8]</option>
+  <option value="3,6,8">next column via @increment_dsd_offset: |i|{6} -> A[3 + i*8]</option>
+  <option value="0,16,0">broadcast one value: |i|{16} -> v[0]</option>
+  <option value="stencil">Lab 3 stencil: left / mid / right over u[0..n+1]</option>
+</select></label>
+<label>base <input type="number" id="d-b" min="0" max="47" value="0" style="width:56px"></label>
+<label>extent <input type="number" id="d-e" min="1" max="48" value="16" style="width:56px"></label>
+<label>stride <input type="number" id="d-s" min="0" max="16" value="1" style="width:56px"></label>
+</div>
+<svg id="d-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Memory words touched by a DSD"></svg>
+<div class="readout" id="d-out"></div>
+</div>
+
+<h2>Builtins: the vector instruction set</h2>
+<div class="table-wrap"><table>
+<tr><th>Builtin</th><th>Meaning (f32)</th><th>Used in</th></tr>
+<tr><td><code>@fmovs(dst, src)</code></td><td>dst[i] = src[i] — copy, send or receive</td><td>programs 03, 04, 05</td></tr>
+<tr><td><code>@fadds(dst, a, b)</code></td><td>dst[i] = a[i] + b[i]</td><td>03 (reduction), 04 (stencil)</td></tr>
+<tr><td><code>@fmuls(dst, a, s)</code></td><td>dst[i] = a[i] × s</td><td>05 (broadcast + scale)</td></tr>
+<tr><td><code>@fmacs(dst, a, b, s)</code></td><td>dst[i] = a[i] + b[i] × s</td><td>01 (SAXPY), 04 (stencil)</td></tr>
+<tr><td><code>@fnegs</code>, <code>@mov16/32</code>, <code>@add16</code>, ...</td><td>negate, integer moves and adds</td><td>SDK tutorials</td></tr>
+<tr><td><code>@map(fn, in..., out)</code></td><td>apply a user function element-wise over DSDs</td><td>SDK topic-10</td></tr>
+</table></div>
+<p>Naming pattern: <code>f</code> = float, trailing <code>s</code> = single (f32), <code>h</code> = half (f16); <code>16/32</code> = integer width <span class="tag derived">Derived from SDK sources; verify against the builtin reference</span>. Any operand can be a memory DSD, a fabric DSD, a FIFO, or a scalar.</p>
+
+<h2>Fabric DSDs: communication is an operand</h2>
+<p>A <code>fabin_dsd</code> describes "the next <em>extent</em> wavelets arriving on this input queue"; a <code>fabout_dsd</code> describes "send <em>extent</em> wavelets out of this output queue". Plug them into the same builtins and data moves and computes in one step. Lab 2's row reduction is the clearest example — each middle PE does this:</p>
+<div class="filename">course/programs/03-row-reduce/pe_program.csl</div>
+<pre><code><span class="c">// receive the running sum from the WEST, add my own v, send the result EAST</span>
+<span class="b">@fadds</span>(out_dsd, in_dsd, v_dsd, .{ .async = <span class="k">true</span>, .activate = exit_id });</code></pre>
+
+<figure>
+<svg viewBox="0 0 760 200" width="760" role="img" aria-label="Fabric in plus memory to fabric out">
+  <defs><marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <rect x="20" y="70" width="140" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="90" y="96" text-anchor="middle" font-weight="600">in_dsd</text><text x="90" y="114" text-anchor="middle" font-size="11" class="muted">fabin: from WEST</text>
+  <rect x="310" y="40" width="140" height="120" rx="10" class="acc" stroke-width="2"/><text x="380" y="92" text-anchor="middle" font-weight="700">@fadds</text><text x="380" y="112" text-anchor="middle" font-size="12" class="muted">one instruction,</text><text x="380" y="128" text-anchor="middle" font-size="12" class="muted">M elements</text>
+  <rect x="310" y="170" width="140" height="26" rx="6" class="grn" stroke-width="1.3"/><text x="380" y="188" text-anchor="middle" font-size="12">v_dsd (my 48 KB)</text>
+  <rect x="600" y="70" width="140" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="670" y="96" text-anchor="middle" font-weight="600">out_dsd</text><text x="670" y="114" text-anchor="middle" font-size="11" class="muted">fabout: to EAST</text>
+  <path d="M160 100 H306" class="s-blu" stroke-width="2.5" marker-end="url(#a7)"/>
+  <path d="M450 100 H596" class="s-blu" stroke-width="2.5" marker-end="url(#a7)"/>
+  <path d="M380 170 V162" class="s-blu" stroke-width="2" marker-end="url(#a7)"/>
+</svg>
+<figcaption><b>Receive + compute + send, no buffer in between.</b> Each arriving wavelet is added to the matching element of <code>v</code> and leaves eastward. A chain of these is a systolic reduction.</figcaption>
+</figure>
+
+<div class="callout warn">
+<strong>WSE-3 limit: one fabric input per operation</strong>
+"WSE3 does not allow multiple fabric inputs per DSD operation" <span class="tag sdk">SDK 2.10.1</span>. To add two incoming streams you first drain one into a FIFO, then operate on FIFO + fabric. Lab 2's reduction only ever has one fabric input, so it runs unchanged on both chips.
+</div>
+
+<h2>Async operations and completion tasks</h2>
+<p>Add <code>.async = true</code> and the operation runs on a <strong>microthread</strong> while the CE moves on. Two optional fields say what to do when it finishes: <code>.activate = task_id</code> (run that local task) or <code>.unblock = task_id</code> (lift a block). This is how "callbacks" are spelled on the WSE. Fabric operations should almost always be async: the SDK warns that a blocking fabric op can stall because the CE must stay free to service the memcpy runtime <span class="tag sdk">SDK 2.10.1, pipeline-01</span>.</p>
+
+<h3>FIFOs extend the tiny hardware queues</h3>
+<p>Hardware queues hold only a handful of wavelets — one SDK example "stalls when size exceeds 14". <code>@allocate_fifo(buffer)</code> turns an SRAM array into a FIFO that one async op fills and another drains, using two microthreads <span class="tag sdk">SDK 2.10.1</span>.</p>
+
+<h2>Lab 3's whole update, in three instructions</h2>
+<p>The stencil keeps ghost cells at both ends of its array so that three overlapping DSDs see the left neighbour, the cell itself, and the right neighbour of every cell:</p>
+<div class="filename">course/programs/04-heat-stencil/pe_program.csl</div>
+<pre><code><span class="k">const</span> left  = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i] });
+<span class="k">const</span> mid   = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i + 1] });
+<span class="k">const</span> right = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i + 2] });
+
+<span class="b">@fadds</span>(lap_dsd, left, right);         <span class="c">// lap = u[i-1] + u[i+1]</span>
+<span class="b">@fmacs</span>(lap_dsd, lap_dsd, mid, -2.0);  <span class="c">// lap += -2 u[i]</span>
+<span class="b">@fmacs</span>(mid, mid, lap_dsd, alpha);    <span class="c">// u[i] += alpha * lap</span></code></pre>
+<p>Pick the "Lab 3 stencil" preset above to see the three overlapping windows.</p>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Write a DSD for the main diagonal of an 8 × 8 row-major matrix.</summary><p><code>|i|{8} -> A[i * 9]</code> (stride 9), or in 2-D form <code>|i|{8} -> A[i, i]</code>.</p></details>
+<details><summary>Why is <code>@fadds(out_dsd, in_dsd, v_dsd)</code> faster than receiving into memory and then adding?</summary><p>It avoids writing the incoming vector to SRAM and reading it back, and overlaps receive, add and send in one pipelined operation.</p></details>
+<details><summary>What does a stride of 0 do?</summary><p>It visits the same word every time: a broadcast of one memory value as a vector operand.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const svg = $("#d-svg"), out = $("#d-out");
+  const C = 24, PER = 24, OX = 20, OY = 40;
+  function cell(i) { return [OX + (i % PER) * 27, OY + Math.floor(i / PER) * 60]; }
+  function draw(dsds) {
+    svg.innerHTML = "";
+    for (let i = 0; i < 48; i++) { const [x, y] = cell(i);
+      el("rect", { x, y, width: C, height: C, rx: 3, class: "box" }, svg);
+      el("text", { x: x + C / 2, y: y + C + 13, "text-anchor": "middle", "font-size": 9, class: "muted" }, svg).textContent = i; }
+    const lines = [];
+    dsds.forEach(({ b, e, s, color, name }, k) => {
+      const seq = []; for (let i = 0; i < e; i++) seq.push(b + i * s);
+      const bad = seq.some(a => a > 47);
+      seq.forEach((a, i) => { if (a > 47) return; const [x, y] = cell(a);
+        el("rect", { x: x + 2 + k * 2, y: y + 2 + k * 2, width: C - 4 - k * 4, height: C - 4 - k * 4, rx: 3, fill: cssVar(color), opacity: s === 0 ? .9 : .75 }, svg);
+        if (dsds.length === 1 && i < 30) el("text", { x: x + C / 2, y: y + 16, "text-anchor": "middle", "font-size": 10, fill: "#fff", "font-weight": 700 }, svg).textContent = i; });
+      lines.push(`${name || "dsd"}: base=${b} extent=${e} stride=${s} → words [${seq.slice(0, 16).join(", ")}${seq.length > 16 ? ", …" : ""}]` + (bad ? "  ⚠ runs past the array!" : ""));
+    });
+    out.textContent = lines.join("\n");
+  }
+  function fromInputs() { draw([{ b: +$("#d-b").value, e: +$("#d-e").value, s: +$("#d-s").value, color: "--accent" }]); }
+  $("#d-pre").onchange = e => {
+    if (e.target.value === "stencil") {
+      draw([{ b: 0, e: 8, s: 1, color: "--blue", name: "left  u[i]  " }, { b: 1, e: 8, s: 1, color: "--accent", name: "mid   u[i+1]" }, { b: 2, e: 8, s: 1, color: "--green", name: "right u[i+2]" }]);
+      out.textContent += "\n(n = 8 cells; u[0] and u[9] are the ghost cells filled by the halo exchange)";
+      return;
+    }
+    const [b, ex, s] = e.target.value.split(",").map(Number); $("#d-b").value = b; $("#d-e").value = ex; $("#d-s").value = s; fromInputs();
+  };
+  ["#d-b", "#d-e", "#d-s"].forEach(s => $(s).oninput = fromInputs);
+  fromInputs();
+})();
+</script>
+</body>
+</html>

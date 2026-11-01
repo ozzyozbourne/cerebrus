@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Host I/O and memcpy</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 7 · Part II · The machine</div>
+<h1>Host I/O and memcpy</h1>
+<p class="lede">The wafer has enormous internal bandwidth and a comparatively narrow door to the outside world. Every program in this course uses the SDK's <code>memcpy</code> runtime to get data on and off the wafer and to call device functions from Python. Knowing how it works explains several rules — and one bug we hit.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Explain the memcpy "halo" columns and why your rectangle needs <code>--fabric-offsets</code>.</li>
+<li>Choose between copy mode and streaming mode.</li>
+<li>Use the command stream correctly: every RPC must call <code>unblock_cmd_stream()</code>, and a streaming copy needs a barrier before you read results.</li>
+</ul>
+</div>
+
+<h2>The narrow door</h2>
+<div class="stat-row">
+  <div class="stat"><div class="v">100 GbE</div><div class="l">host ↔ system links <span class="tag sdk">SDK 2.10.1</span></div></div>
+  <div class="stat"><div class="v">~7 Gb/s</div><div class="l">per I/O channel <span class="tag sdk">SDK 2.10.1</span></div></div>
+  <div class="stat"><div class="v">≤ 16</div><div class="l">channels (<code>--channels</code>)</div></div>
+  <div class="stat"><div class="v">~200 µs</div><div class="l">TCP overhead per transfer</div></div>
+</div>
+<p>The SDK's bandwidth benchmark puts it plainly: "The maximum bandwidth of a single channel is around 7Gbps … the overhead of TCP is about 200 us" <span class="tag sdk">SDK 2.10.1</span>. Sixteen channels give roughly 14 GB/s, so filling 44 GB of SRAM through this path would take over three seconds <span class="tag derived">Derived</span> — while the SRAM itself can be read at 21 PB/s. Conclusion: data that matters must <em>stay</em> on the wafer (inference), or arrive through dedicated hardware (MemoryX in training, Chapter 8). In this course's labs, host transfers dominate total runtime — Lab 3 measures this.</p>
+
+<h2>What <code>--memcpy</code> adds around your program</h2>
+<p>When you compile with <code>--memcpy</code>, <code>cslc</code> generates extra PE programs in columns to the west and east of your rectangle: command fan-out and host→device demultiplexing on the west, device→host multiplexing on the east. For our programs with <code>--channels 1</code> the compiler emitted 3 west and 2 east columns <span class="tag measured">Measured from out/</span>.</p>
+
+<figure>
+<svg viewBox="0 0 760 300" width="760" role="img" aria-label="Fabric layout with memcpy halo columns">
+  <g id="halo"></g>
+  <text x="20" y="268" font-size="12" class="muted">8 × 3 fabric for program 01: a 1 × 1 rectangle at offset (4,1).</text><text x="20" y="288" font-size="12" class="muted">Purple = memcpy west (commands, H2D demux) · green = memcpy east (D2H mux) · orange = your PE.</text>
+</svg>
+<figcaption><b>Your rectangle sits inside a frame built by the runtime.</b> That is why every <code>commands.sh</code> in this course passes <code>--fabric-dims=…</code> a few columns wider than the program and <code>--fabric-offsets=4,1</code>. On a real CS-2 the user rectangle must be 7 columns narrower and 2 rows shorter than the 750 × 994 fabric <span class="tag sdk">SDK 2.10.1</span>. Exact column roles per <code>--channels</code> are not documented locally.</figcaption>
+</figure>
+
+<p>memcpy also claims a fixed set of on-chip resources on every PE <span class="tag sdk">SDK 2.10.1</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>Resource</th><th>Reserved by memcpy</th><th>Consequence for you</th></tr>
+<tr><td>Colors</td><td>21 D2H data, 22 command stream, 23 H2D data, 20 context switch</td><td>use colors 0–19</td></tr>
+<tr><td>Local tasks</td><td>24, 27, 28, 30 (29 = teardown, 31 = NOP)</td><td>use e.g. 9–23 for your local tasks</td></tr>
+<tr><td>Control tasks</td><td>33–37, 40</td><td>pick other IDs for sentinels</td></tr>
+<tr><td>Queues</td><td>input/output queue 0 (and 1 on WSE-3)</td><td>start your queues at 2 — as all our programs do</td></tr>
+</table></div>
+
+<h2>Six calls on the host</h2>
+<div class="filename">course/programs/01-saxpy/run.py</div>
+<pre><code><span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder
+
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr)     <span class="c"># cmaddr=None → simulator</span>
+xs, ys = rt.get_id(<span class="s">'x'</span>), rt.get_id(<span class="s">'y'</span>)         <span class="c"># exported symbol IDs</span>
+rt.load(); rt.run()
+kw = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
+rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)            <span class="c"># (x0, y0, width, height, elements per PE)</span>
+rt.memcpy_h2d(ys, y, 0, 0, 1, 1, N, **kw)
+rt.launch(<span class="s">'saxpy'</span>, a, nonblock=<span class="k">False</span>)                <span class="c"># RPC with an f32 argument</span>
+rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)
+rt.stop()</code></pre>
+<p>The four integers name a rectangle of PEs (x, y, width, height) and the last is the element count <em>per PE</em>. Splitting data across PEs is the host's job: for an array going to a row of P PEs, element block <code>k</code> lands on PE <code>k</code> (programs 03 and 04 lay out their arrays this way).</p>
+
+<h2>The command stream</h2>
+<p>Every host call becomes a command wavelet on color 22, decoded by memcpy's control tasks on the device. Commands are <strong>serialized</strong>. While an RPC runs, the stream is blocked; the device function must call <code>sys_mod.unblock_cmd_stream()</code> — directly or from a completion task — before the next command can run. "The user must call unblock_cmd_stream() at the end of a RPC" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. Forget it on even one PE and the host hangs on its next call.</p>
+
+<h2>Copy mode vs streaming mode</h2>
+<div class="grid2">
+<div class="callout">
+<strong>Copy mode (<code>streaming=False</code>)</strong>
+The host names an exported array; memcpy writes or reads it on a rectangle of PEs. Device code is not involved beyond exporting the symbol. Simple and safe. Programs 01, 03, 04, 05.
+</div>
+<div class="callout key">
+<strong>Streaming mode (<code>streaming=True</code>)</strong>
+The host passes a color ID instead of a symbol; each element arrives as a wavelet that your data task (or fabric DSD) must consume. No <code>launch</code> needed — arrival starts the computation. Program 02.
+</div>
+</div>
+
+<div class="widget" id="cmd">
+<h4>Command-stream timeline: the bug we found in program 02</h4>
+<p class="hint">Program 02 streams 100 values into a PE; a data task accumulates sum and sum of squares; then the host copies the statistics back. Toggle the barrier and press Play. Bar lengths are schematic; the values read are the real measured ones.</p>
+<div class="controls">
+<label><input type="checkbox" id="c-bar"> add <code>launch('wait_done')</code> barrier before reading</label>
+<button class="btn" id="c-play" type="button">Play</button>
+</div>
+<svg id="c-svg" viewBox="0 0 680 220" width="680" role="img" aria-label="Command stream timeline"></svg>
+<div class="readout" id="c-out"></div>
+</div>
+
+<div class="callout bug">
+<strong>What actually happened</strong>
+Without the barrier the host read <code>sum = 30.818</code>; the correct total was <code>26.138</code>. The value we got is exactly the running sum after 95 of the 100 values <span class="tag measured">Measured</span>. A streaming <code>memcpy_h2d</code> completes when the host has <em>injected</em> its wavelets, not when the device has <em>processed</em> them, so the following D2H copy raced the last few data tasks. The fix is an RPC that leaves the command stream blocked until the last data task runs:
+<pre><code><span class="k">fn</span> wait_done() <span class="n">void</span> {
+  <span class="k">if</span> (count[0] == <span class="b">@as</span>(<span class="n">u32</span>, N)) { sys_mod.unblock_cmd_stream(); }  <span class="c">// already done</span>
+  <span class="k">else</span> { host_waiting = <span class="k">true</span>; }                                   <span class="c">// on_value() unblocks later</span>
+}</code></pre>
+</div>
+
+<h3>Ordering matters too</h3>
+<p>Because commands are serialized, streams must be sent in the order the device expects. The SDK's gemv-09 tutorial warns: "If the b values were streamed in before x, the program would hang" <span class="tag sdk">SDK 2.10.1</span>. For bulk inputs that every PE in a row or column needs, <code>memcpy_h2d_rowbcast</code>/<code>colbcast</code> send one copy and let the fabric replicate it, saving host bandwidth (host→device only).</p>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Your RPC starts an async send and returns. Where should <code>unblock_cmd_stream()</code> go?</summary><p>In the task activated when the send completes (as in programs 03–05), not at the end of the RPC — otherwise the host could issue a D2H copy before the data has moved.</p></details>
+<details><summary>Why does every course program use queues ≥ 2 and colors ≤ 4?</summary><p>memcpy owns queues 0–1 on WSE-3 and colors 20–23. Low colors and queues from 2 up are free.</p></details>
+<details><summary>Why can't you treat the wafer like a GPU and stream weights in for each request?</summary><p>The SDK host path is ~7 Gb/s per channel, about 14 GB/s at most — orders of magnitude below on-wafer bandwidth. Data must stay resident or come through MemoryX.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  // halo diagram 8 x 3
+  const g = $("#halo"), S = 64, OX = 110, OY = 40;
+  for (let y = 0; y < 3; y++) for (let x = 0; x < 8; x++) {
+    let cls = "box", lab = "";
+    if (x >= 1 && x <= 3 && y === 1) { cls = "pur"; lab = "west"; }
+    if (x === 4 && y === 1) { cls = "acc"; lab = "you"; }
+    if (x >= 5 && x <= 6 && y === 1) { cls = "grn"; lab = "east"; }
+    el("rect", { x: OX + x * (S + 6), y: OY + y * (S + 6), width: S, height: S, rx: 6, class: cls, "stroke-width": cls === "acc" ? 2.5 : 1.2 }, g);
+    el("text", { x: OX + x * (S + 6) + S / 2, y: OY + y * (S + 6) + S / 2 + 4, "text-anchor": "middle", "font-size": 11, class: lab ? "" : "muted" }, g).textContent = lab || `${x},${y}`;
+  }
+  el("text", { x: OX - 10, y: OY + 1.5 * (S + 6), "text-anchor": "end", "font-size": 12 }, g).textContent = "host I/O ←";
+  el("text", { x: OX + 4 * (S + 6) + S / 2, y: OY - 10, "text-anchor": "middle", "font-size": 12, class: "f-acc" }, g).textContent = "offset (4,1)";
+
+  // command stream timeline
+  const svg = $("#c-svg"), out = $("#c-out");
+  // exact data from program 02 (seed 1): partial sums at 95 and 100 values
+  function play() {
+    const barrier = $("#c-bar").checked;
+    svg.innerHTML = "";
+    const lanes = [["host commands", 40], ["device data tasks", 110], ["value read", 180]];
+    lanes.forEach(([n, y]) => el("text", { x: 10, y: y + 5, "font-size": 12 }, svg).textContent = n);
+    const X = t => 150 + t * 5;
+    const cmds = [["memcpy_h2d stream ×100", 0, 40, "--blue"]];
+    if (barrier) cmds.push(["launch wait_done", 40, 54, "--purple"]);
+    const readAt = barrier ? 54 : 40;
+    cmds.push(["memcpy_d2h stats", readAt, readAt + 14, "--green"]);
+    let i = 0;
+    const tasksEnd = 54; // data tasks finish ~ 14 time units after injection ends
+    const anim = setInterval(() => {
+      i += 1; svg.querySelectorAll(".dyn").forEach(e => e.remove());
+      const t = Math.min(i, 75);
+      cmds.forEach(([n, a, b, c]) => { if (t < a) return;
+        el("rect", { x: X(a), y: 25, width: Math.max(0, X(Math.min(b, t)) - X(a)), height: 28, rx: 4, fill: cssVar(c), opacity: .8, class: "dyn" }, svg);
+        if (t >= b - 4) el("text", { x: X(a) + 4, y: 44, "font-size": 11, fill: "#fff", class: "dyn" }, svg).textContent = n; });
+      const done = Math.min(100, Math.max(0, Math.round((Math.min(t, tasksEnd) - 2) * 100 / (tasksEnd - 2))));
+      el("rect", { x: X(2), y: 95, width: Math.max(0, X(Math.min(t, tasksEnd)) - X(2)), height: 28, rx: 4, fill: cssVar("--amber"), opacity: .7, class: "dyn" }, svg);
+      el("text", { x: X(2) + 4, y: 114, "font-size": 11, class: "dyn" }, svg).textContent = `on_value() × ${done}`;
+      if (t >= readAt) {
+        const seen = barrier ? 100 : 95;
+        el("line", { x1: X(readAt), x2: X(readAt), y1: 20, y2: 200, stroke: cssVar("--red"), "stroke-dasharray": "4 3", class: "dyn" }, svg);
+        el("text", { x: X(readAt) + 6, y: 186, "font-size": 12, class: "dyn " + (barrier ? "f-grn" : "f-red"), "font-weight": 700 }, svg).textContent =
+          barrier ? "reads sum after 100 values = 26.138 ✓" : "reads sum after 95 values = 30.818 ✕";
+      }
+      if (i >= 75) clearInterval(anim);
+    }, 40);
+    out.textContent = barrier
+      ? "With the barrier: wait_done() leaves the command stream blocked until the 100th data task calls unblock_cmd_stream(). The D2H copy cannot start early.\nResult: count=100, sum=26.137941, matches numpy → SUCCESS (validated at N=100 and N=500)."
+      : "Without the barrier: the streaming H2D command completes once its wavelets are injected. The D2H copy starts while the last data tasks are still queued.\nResult: count read later shows 100, but sum = 30.818176 (the partial sum after 95 values) → assertion failed.";
+  }
+  $("#c-play").onclick = play; $("#c-bar").onchange = play; play();
+})();
+</script>
+</body>
+</html>

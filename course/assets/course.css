@@ -132,7 +132,7 @@ svg .s-pur { stroke: var(--purple); } svg .s-red { stroke: var(--red); } svg .s-
 .btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 7px 14px; font: 600 14px var(--sans); cursor: pointer; }
 .btn.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
 .btn:disabled { opacity: .5; cursor: default; }
-select { max-width: 100%; font: inherit; font-size: 14px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+input[type=number], select { max-width: 100%; font: inherit; font-size: 14px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 .readout { font: 14px var(--mono); background: var(--surface-2); border-radius: 8px; padding: 8px 10px; margin-top: 10px; white-space: pre-wrap; }
 
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
