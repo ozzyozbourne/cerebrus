@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 2: Reduce and Broadcast</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 11 · Part III · Programming</div>
+<h1>Lab 2: reduce and broadcast</h1>
+<p class="lede">Now the PEs talk to each other. Program 03 sums vectors held by a row of PEs by letting the running total flow east through the row. Program 05 sends one vector to a whole column with a single multicast route. Together they cover the two collective shapes that most wafer algorithms are built from.</p>
+
+<div class="objectives">
+<h4>After this lab you can</h4>
+<ul>
+<li>Write a multi-PE layout with per-PE roles and colors.</li>
+<li>Use a fabric-in/memory/fabric-out DSD operation to build a streaming (systolic) reduction.</li>
+<li>Use a multicast route to broadcast without any relay code.</li>
+<li>Explain why streaming through PEs beats store-and-forward.</li>
+</ul>
+</div>
+
+<h2>Program 03 · Row reduction</h2>
+<p>P PEs in a row each hold a vector <code>v[M]</code>. PE 0 sends its vector east. Every middle PE receives the running sum from the west, adds its own vector <em>while the data passes through</em>, and sends the result east. The last PE adds into memory. One instruction per PE.</p>
+
+<figure>
+<svg viewBox="0 0 760 200" width="760" role="img" aria-label="Row reduction roles and colors">
+  <defs>
+    <marker id="r0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
+    <marker id="r1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
+  </defs>
+  <g id="red"></g>
+</svg>
+<figcaption><b>Roles by position, colors by parity.</b> First PE: <code>@fmovs(out, v)</code>. Middle PEs: <code>@fadds(out, in, v)</code>. Last PE: <code>@fadds(v, in, v)</code>. Even columns send on c0, odd on c1 (Chapter 4).</figcaption>
+</figure>
+
+{{code:programs/03-row-reduce/layout.csl}}
+{{code:programs/03-row-reduce/pe_program.csl}}
+{{code:programs/03-row-reduce/run.py}}
+{{out:programs/03-row-reduce/expected_output.txt}}
+
+<h3>Why it is fast: streaming, not store-and-forward</h3>
+<p>A middle PE does not wait for the whole vector before forwarding. <code>@fadds(out_dsd, in_dsd, v_dsd)</code> processes element <em>i</em> as soon as wavelet <em>i</em> arrives and emits it immediately. The vector moves through the row as a wavefront, so the reduction takes about <strong>M + P</strong> steps, not <strong>M × P</strong>.</p>
+
+<div class="widget" id="pipe">
+<h4>Streaming vs store-and-forward</h4>
+<p class="hint">Each cell is one element of the vector at one PE. Watch the wavefront. Store-and-forward makes each PE receive the full vector before sending.</p>
+<div class="controls">
+<label>PEs <input type="range" id="w-p" min="2" max="12" value="8"> <span id="w-pv" class="mono"></span></label>
+<label>M <input type="range" id="w-m" min="4" max="24" value="12"> <span id="w-mv" class="mono"></span></label>
+<label>Mode <select id="w-mode"><option value="stream">streaming (@fadds fabric→fabric)</option><option value="saf">store-and-forward</option></select></label>
+<button class="btn" id="w-go" type="button">Play</button>
+</div>
+<svg id="w-svg" viewBox="0 0 680 260" width="680" role="img" aria-label="Reduction wavefront"></svg>
+<div class="readout" id="w-out"></div>
+</div>
+
+<p>The simulator agrees with the model. With M = 32 and the same host transfers per PE, going from 2 to 16 PEs adds only 866 cycles in total — and part of that is the extra host copies to more PEs <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>PEs (M = 32)</th><th>2</th><th>4</th><th>8</th><th>16</th></tr>
+<tr><td>Total simulated cycles, WSE-3</td><td>4,394</td><td>4,496</td><td>4,748</td><td>5,260</td></tr>
+</table></div>
+<p>Changing M at P = 8 moves the total much more (3,025 cycles at M = 8 → 11,463 at M = 128), because every element must also cross the narrow host link twice. Totals include all host I/O, so treat these as end-to-end numbers, not kernel times.</p>
+
+<h2>Program 05 · Column broadcast by multicast</h2>
+<p>The root PE of a column sends its vector once. Every router below delivers each wavelet to its own CE <em>and</em> forwards it south in the same hop: <code>.tx = .{RAMP, SOUTH}</code>. No PE runs relay code; the router does the copying.</p>
+
+<figure>
+<svg viewBox="0 0 760 300" width="760" role="img" aria-label="Column multicast">
+  <defs><marker id="b0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker></defs>
+  <g id="bc"></g>
+</svg>
+<figcaption><b>One send, R receivers.</b> Each PE then scales its copy by its own <code>s</code>. A single color serves the whole column because traffic only ever flows one way.</figcaption>
+</figure>
+
+{{code:programs/05-column-broadcast/layout.csl}}
+{{code:programs/05-column-broadcast/pe_program.csl}}
+{{out:programs/05-column-broadcast/expected_output.txt}}
+
+<div class="callout">
+<strong>CSL detail learned the hard way</strong>
+<code>if (a) stmt; else if (b) stmt; else stmt;</code> without braces is a compile error ("Unexpected character"). Statement-form <code>if/else</code> needs braces; expression-form (<code>const c = if (x) c0 else c1;</code>) does not.
+</div>
+
+<h2>Composing the two: a distributed GEMV</h2>
+<p>Put program 05 and program 03 together and you have the SDK's gemv-08 pattern: broadcast <code>x</code> slices down columns, let each PE multiply its block of <code>A</code>, then reduce partial results along rows with alternating colors. The SDK tutorials gemv-05 through gemv-09 walk through exactly this.</p>
+<figure>
+<svg viewBox="0 0 760 260" width="760" role="img" aria-label="GEMV composed from broadcast and reduction">
+  <g id="gemv"></g>
+</svg>
+<figcaption><b>Broadcast down, compute, reduce across.</b> Blue arrows: column multicast of x. Orange/teal: checkerboard row reduction of partial y.</figcaption>
+</figure>
+
+<h3>Exercises</h3>
+<ol>
+<li>Make program 03 compute a <em>maximum</em> instead of a sum. (Hint: is there a fabric-capable max builtin? If not, receive into memory and compare.)</li>
+<li>Extend program 05 to a 2-D rectangle where row 0 multicasts down every column. How many colors do you need?</li>
+<li>Run program 03 with <code>ARCH=wse2</code> and compare cycles with WSE-3.</li>
+</ol>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  // reduction diagram
+  const g = $("#red");
+  for (let i = 0; i < 6; i++) {
+    const x = 20 + i * 125, role = i === 0 ? "first" : i === 5 ? "last" : "middle";
+    el("rect", { x, y: 50, width: 95, height: 70, rx: 8, class: role === "middle" ? "box" : "acc", "stroke-width": 1.5 }, g);
+    el("text", { x: x + 47, y: 78, "text-anchor": "middle", "font-weight": 700 }, g).textContent = `PE ${i}`;
+    el("text", { x: x + 47, y: 98, "text-anchor": "middle", "font-size": 11, class: "muted" }, g).textContent = role;
+    el("text", { x: x + 47, y: 145, "text-anchor": "middle", "font-size": 11, class: "mono" }, g).textContent = i === 0 ? "@fmovs(out,v)" : i === 5 ? "@fadds(v,in,v)" : "@fadds(out,in,v)";
+    if (i < 5) { const ev = i % 2 === 0;
+      el("path", { d: `M${x + 96} 85 H${x + 122}`, stroke: cssVar(ev ? "--accent" : "--blue"), "stroke-width": 3, "marker-end": `url(#r${ev ? 0 : 1})` }, g);
+      el("text", { x: x + 110, y: 75, "text-anchor": "middle", "font-size": 11 }, g).textContent = ev ? "c0" : "c1"; }
+  }
+  el("text", { x: 380, y: 30, "text-anchor": "middle", "font-size": 13 }, g).textContent = "running sum flows east; PE 5 ends with Σ v";
+  el("text", { x: 380, y: 185, "text-anchor": "middle", "font-size": 12, class: "muted" }, g).textContent = "middle PE routes: c_recv rx WEST → tx RAMP · c_send rx RAMP → tx EAST";
+
+  // broadcast diagram
+  const b = $("#bc");
+  for (let r = 0; r < 5; r++) {
+    const y = 20 + r * 54;
+    el("rect", { x: 250, y, width: 110, height: 40, rx: 8, class: r === 0 ? "acc" : "box", "stroke-width": 1.5 }, b);
+    el("text", { x: 305, y: y + 25, "text-anchor": "middle", "font-size": 12 }, b).textContent = `PE (0,${r}) · s=${r + 1}`;
+    const route = r === 0 ? "rx RAMP → tx SOUTH" : r === 4 ? "rx NORTH → tx RAMP" : "rx NORTH → tx {RAMP, SOUTH}";
+    el("text", { x: 380, y: y + 25, "font-size": 12, class: "mono" }, b).textContent = route;
+    if (r < 4) el("path", { d: `M305 ${y + 41} V${y + 52}`, stroke: cssVar("--accent"), "stroke-width": 3, "marker-end": "url(#b0)" }, b);
+    el("text", { x: 230, y: y + 25, "text-anchor": "end", "font-size": 12, class: "muted" }, b).textContent = r === 0 ? "sends x once" : `y = ${r + 1}·x`;
+  }
+
+  // gemv diagram
+  const gm = $("#gemv");
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) {
+    const x = 200 + c * 100, y = 30 + r * 70;
+    el("rect", { x, y, width: 70, height: 48, rx: 6, class: "box", "stroke-width": 1.3 }, gm);
+    el("text", { x: x + 35, y: y + 29, "text-anchor": "middle", "font-size": 11 }, gm).textContent = `A[${r},${c}]`;
+    if (c < 3) el("line", { x1: x + 71, y1: y + 30, x2: x + 99, y2: y + 30, stroke: cssVar(c % 2 ? "--green" : "--accent"), "stroke-width": 3 }, gm);
+    if (r < 2) el("line", { x1: x + 20, y1: y + 49, x2: x + 20, y2: y + 69, stroke: cssVar("--blue"), "stroke-width": 3 }, gm);
+  }
+  for (let c = 0; c < 4; c++) el("text", { x: 235 + c * 100, y: 20, "text-anchor": "middle", "font-size": 12, class: "f-blu" }, gm).textContent = `x[${c}] ↓`;
+  for (let r = 0; r < 3; r++) el("text", { x: 600, y: 60 + r * 70, "font-size": 12, class: "f-acc" }, gm).textContent = `→ y[${r}]`;
+
+  // wavefront widget
+  const svg = $("#w-svg"); let timer = null;
+  function frame(t, P, M, mode) {
+    svg.innerHTML = "";
+    const cw = Math.min(24, 600 / M), ch = Math.min(26, 220 / P);
+    for (let p = 0; p < P; p++) {
+      el("text", { x: 36, y: 20 + p * ch + ch / 2 + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = `PE ${p}`;
+      for (let i = 0; i < M; i++) {
+        // time element i is processed at PE p
+        const tp = mode === "stream" ? p * 2 + i : p * (M + 2) + i;
+        const done = t > tp, now = t === tp;
+        el("rect", { x: 44 + i * cw, y: 14 + p * ch, width: cw - 2, height: ch - 3, rx: 2,
+          fill: cssVar(now ? "--accent" : done ? "--green" : "--surface-2"), opacity: done && !now ? .55 : 1 }, svg);
+      }
+    }
+    const total = mode === "stream" ? (P - 1) * 2 + M : (P - 1) * (M + 2) + M;
+    $("#w-out").textContent = `cycle ${Math.min(t, total)} / ${total}   (model: ${mode === "stream" ? "≈ M + 2P" : "≈ P × M"}; one element per cycle per link, ~2-cycle hop+ramp)`;
+    return total;
+  }
+  function play() {
+    if (timer) clearInterval(timer);
+    const P = +$("#w-p").value, M = +$("#w-m").value, mode = $("#w-mode").value;
+    $("#w-pv").textContent = P; $("#w-mv").textContent = M;
+    let t = 0; const total = frame(0, P, M, mode);
+    timer = setInterval(() => { t++; frame(t, P, M, mode); if (t > total) clearInterval(timer); }, Math.max(20, 2400 / total));
+  }
+  ["#w-p", "#w-m", "#w-mode"].forEach(s => $(s).oninput = () => { $("#w-pv").textContent = $("#w-p").value; $("#w-mv").textContent = $("#w-m").value; frame(0, +$("#w-p").value, +$("#w-m").value, $("#w-mode").value); });
+  $("#w-go").onclick = play; $("#w-pv").textContent = 8; $("#w-mv").textContent = 12; frame(0, 8, 12, "stream");
+})();
+</script>
+</body>
+</html>

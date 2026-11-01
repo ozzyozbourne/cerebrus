@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSL and the Toolchain</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .tabs button { font: 600 13px var(--mono); padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
+  .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .code-tour { font: 13px/1.6 var(--mono); background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 0; overflow-x: auto; }
+  .code-tour div { padding: 0 14px; white-space: pre; border-left: 3px solid transparent; }
+  .code-tour div[data-n] { cursor: pointer; }
+  .code-tour div[data-n]:hover { background: var(--accent-soft); }
+  .code-tour div.sel { background: var(--accent-soft); border-left-color: var(--accent); }
+  .code-tour .pin { display: inline-block; min-width: 18px; text-align: center; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; margin-right: 6px; }
+  .code-tour .nopin { display: inline-block; min-width: 18px; margin-right: 6px; }
+</style>
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 9 · Part III · Programming</div>
+<h1>CSL and the toolchain</h1>
+<p class="lede">CSL — the Cerebras Software Language — looks like Zig, but its real content is a type system for hardware resources: colors, queues, tasks and descriptors. This chapter covers the language, the three files every program has, and the toolchain that turns them into a running simulation.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Read every line of a complete CSL program and say what runs where and when.</li>
+<li>Compile and simulate with <code>cslc</code> and <code>cs_python</code>, and find the outputs.</li>
+<li>Set up the SDK in a fresh Linux environment.</li>
+</ul>
+</div>
+
+<h2>Three files, three places</h2>
+<figure>
+<svg viewBox="0 0 760 230" width="760" role="img" aria-label="The three parts of a CSL program">
+  <defs><marker id="a11" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <rect x="20" y="30" width="220" height="150" rx="10" class="pur" stroke-width="1.6"/>
+  <text x="130" y="56" text-anchor="middle" font-weight="700" class="mono">layout.csl</text>
+  <text x="130" y="80" text-anchor="middle" font-size="12">runs at <tspan font-weight="700">compile time</tspan></text>
+  <text x="130" y="104" text-anchor="middle" font-size="12" class="muted">size of the PE rectangle</text>
+  <text x="130" y="122" text-anchor="middle" font-size="12" class="muted">which code + params per PE</text>
+  <text x="130" y="140" text-anchor="middle" font-size="12" class="muted">routes for every color</text>
+  <text x="130" y="158" text-anchor="middle" font-size="12" class="muted">names the host may use</text>
+  <rect x="270" y="30" width="220" height="150" rx="10" class="acc" stroke-width="1.6"/>
+  <text x="380" y="56" text-anchor="middle" font-weight="700" class="mono">pe_program.csl</text>
+  <text x="380" y="80" text-anchor="middle" font-size="12">runs <tspan font-weight="700">on every PE</tspan></text>
+  <text x="380" y="104" text-anchor="middle" font-size="12" class="muted">arrays in the 48 KB</text>
+  <text x="380" y="122" text-anchor="middle" font-size="12" class="muted">DSDs, queues, tasks</text>
+  <text x="380" y="140" text-anchor="middle" font-size="12" class="muted">RPC functions for the host</text>
+  <text x="380" y="158" text-anchor="middle" font-size="12" class="muted">one ELF per unique param set</text>
+  <rect x="520" y="30" width="220" height="150" rx="10" class="blu" stroke-width="1.6"/>
+  <text x="630" y="56" text-anchor="middle" font-weight="700" class="mono">run.py</text>
+  <text x="630" y="80" text-anchor="middle" font-size="12">runs <tspan font-weight="700">on the host</tspan></text>
+  <text x="630" y="104" text-anchor="middle" font-size="12" class="muted">SdkRuntime: load, run</text>
+  <text x="630" y="122" text-anchor="middle" font-size="12" class="muted">memcpy data in and out</text>
+  <text x="630" y="140" text-anchor="middle" font-size="12" class="muted">launch RPCs</text>
+  <text x="630" y="158" text-anchor="middle" font-size="12" class="muted">check results with numpy</text>
+  <text x="380" y="214" text-anchor="middle" font-size="13">grid coordinates are always (x = column, y = row); sizes are width × height</text>
+</svg>
+<figcaption><b>Compile-time layout, device code, host script.</b> "A complete program consists of a host program … and at least two CSL code files" <span class="tag sdk">SDK 2.10.1, gemv-01</span>.</figcaption>
+</figure>
+
+<div class="widget" id="tour">
+<h4>Guided tour: program 01 (SAXPY), every line</h4>
+<p class="hint">Click a numbered line to see what it does.</p>
+<div class="tabs" id="tour-tabs"></div>
+<div class="code-tour" id="tour-code"></div>
+<div class="readout" id="tour-note">Click a numbered line.</div>
+</div>
+
+<h2>The language in one screen</h2>
+<div class="grid2">
+<div>
+<h3>Ordinary parts</h3>
+<ul>
+<li>Types: <code>bool</code>, <code>i16</code>, <code>i32</code>, <code>u16</code>, <code>u32</code>, <code>f16</code>, <code>f32</code>, arrays <code>[N]f32</code>, pointers <code>*[N]f32</code> and many-item <code>[*]f32</code>.</li>
+<li><code>const</code> / <code>var</code>, <code>fn</code>, <code>if</code>/<code>else</code> (with braces when used as statements), <code>for (@range(i16, n)) |i|</code>, <code>while (c) : (i += 1)</code>.</li>
+<li>Builtins start with <code>@</code>: <code>@as</code>, <code>@zeros</code>, <code>@bitcast</code>, <code>@get_dsd</code>...</li>
+<li>No null pointers. Runtime functions take pointers, not arrays.</li>
+</ul>
+</div>
+<div>
+<h3>Hardware parts</h3>
+<ul>
+<li><code>param</code>: compile-time constants from the layout or <code>--params</code>. Different params → different ELF.</li>
+<li><code>comptime { }</code>: bindings and exports evaluated at compile time.</li>
+<li>Resource types: <code>color</code>, <code>input_queue</code>, <code>output_queue</code>, <code>data_task_id</code>, <code>local_task_id</code>, <code>control_task_id</code>, <code>mem1d_dsd</code>, <code>fabin_dsd</code>, <code>fabout_dsd</code>.</li>
+<li><code>@is_arch("wse3")</code> picks per-chip code in one source file.</li>
+</ul>
+</div>
+</div>
+<div class="callout">
+<strong>Most bugs are resource bugs</strong>
+Every bug we hit while writing this course's programs was about a resource, not arithmetic: an export's mutability flag, a race on the command stream, two operations sharing a microthread. The scalar language is the easy part.
+</div>
+
+<h2>From source to simulation</h2>
+<figure>
+<svg viewBox="0 0 760 260" width="760" role="img" aria-label="Compile and simulate pipeline">
+  <defs><marker id="a12" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker></defs>
+  <g font-size="12">
+  <rect x="10" y="30" width="130" height="70" rx="8" class="pur" stroke-width="1.4"/><text x="75" y="58" text-anchor="middle" font-weight="700">cslc</text><text x="75" y="76" text-anchor="middle" class="muted">evaluate layout</text><text x="75" y="91" text-anchor="middle" class="muted">compile each PE</text>
+  <rect x="170" y="20" width="170" height="90" rx="8" class="box" stroke-width="1.4"/><text x="255" y="40" text-anchor="middle" font-weight="700" class="mono">out/</text>
+  <text x="180" y="58" class="mono" font-size="11">bin/out_X_Y.elf</text><text x="180" y="74" class="mono" font-size="11">west/ east/ (memcpy)</text><text x="180" y="90" class="mono" font-size="11">out.json  out_rpc.json</text>
+  <rect x="370" y="30" width="130" height="70" rx="8" class="blu" stroke-width="1.4"/><text x="435" y="58" text-anchor="middle" font-weight="700">cs_python run.py</text><text x="435" y="76" text-anchor="middle" class="muted">SdkRuntime</text><text x="435" y="91" text-anchor="middle" class="muted">cmaddr=None</text>
+  <rect x="530" y="20" width="220" height="90" rx="8" class="grn" stroke-width="1.4"/><text x="640" y="40" text-anchor="middle" font-weight="700">simulator (simfabric)</text>
+  <text x="540" y="58" class="mono" font-size="11">sim.log  (simprint output)</text><text x="540" y="74" class="mono" font-size="11">sim_stats.json  (cycles)</text><text x="540" y="90" class="mono" font-size="11">simfab_traces/  (CTF)</text>
+  <path d="M140 65 H166" class="s-acc" stroke-width="2" marker-end="url(#a12)"/>
+  <path d="M340 65 H366" class="s-acc" stroke-width="2" marker-end="url(#a12)"/>
+  <path d="M500 65 H526" class="s-acc" stroke-width="2" marker-end="url(#a12)"/>
+  </g>
+  <text x="20" y="150" font-size="13" font-weight="700">Program 01's sim_stats.json (WSE-3):</text>
+  <text x="20" y="172" font-size="12" class="mono">"cycle_count": 7740, "fabric_x": 8, "fabric_y": 3, "hwtile_count": 10,</text>
+  <text x="20" y="190" font-size="12" class="mono">"sim_stop_cause": "Stopped due to idleness"</text>
+  <text x="20" y="222" font-size="12" class="muted">The simulator stops once nothing has moved for 50 cycles. sim.log names the architecture internally: FYN = WSE-2, SDR = WSE-3.</text>
+  <text x="20" y="242" font-size="12" class="muted">One SAXPY run takes a few seconds of wall time.</text>
+</svg>
+<figcaption><b>Two commands.</b> Same host script, same ELFs: on hardware you pass <code>--cmaddr IP:port</code> instead of using the simulator <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span>.</figcaption>
+</figure>
+
+<div class="filename">course/programs/01-saxpy/commands.sh</div>
+<pre><code>cslc --arch=wse3 ./layout.csl --fabric-dims=8,3 --fabric-offsets=4,1 \
+     --params=N:64 -o out --memcpy --channels 1
+cs_python run.py --name out</code></pre>
+<div class="table-wrap"><table>
+<tr><th>Flag</th><th>Meaning</th></tr>
+<tr><td><code>--arch=wse2|wse3</code></td><td>target chip (default wse2). All course programs build for both.</td></tr>
+<tr><td><code>--fabric-dims=W,H</code></td><td>size of the simulated fabric, including memcpy's columns</td></tr>
+<tr><td><code>--fabric-offsets=X,Y</code></td><td>where your rectangle's (0,0) sits in the fabric</td></tr>
+<tr><td><code>--params=N:64,...</code></td><td>values for the layout's <code>param</code>s</td></tr>
+<tr><td><code>--memcpy --channels 1</code></td><td>add the host-I/O runtime with one channel (up to 16)</td></tr>
+<tr><td><code>--out-routes</code>, <code>--fp16-format</code></td><td>dump per-PE routing; choose f16 / bf16 / cb16</td></tr>
+</table></div>
+
+<h2>Debugging tools</h2>
+<div class="table-wrap"><table>
+<tr><th>Tool</th><th>What it gives you</th><th>When</th></tr>
+<tr><td><code>&lt;simprint&gt;</code></td><td>prints from device code into <code>sim.log</code>, prefixed with cycle and PE</td><td>"particularly useful for debugging stalling programs"</td></tr>
+<tr><td><code>&lt;debug&gt;</code></td><td>trace buffers (<code>trace_u32</code>, <code>trace_timestamp</code>) read on the host</td><td>program must complete</td></tr>
+<tr><td><code>sim_stats.json</code></td><td>total cycles, stop cause</td><td>every run; Lab 3 uses it to measure cost per step</td></tr>
+<tr><td><code>csdb</code></td><td>inspect memory, registers, traces, wavelets</td><td>deep dives</td></tr>
+<tr><td><code>cs_readelf</code></td><td>symbols, routing and switch config of an ELF</td><td>checking what the compiler emitted</td></tr>
+</table></div>
+<p>A cheap trick we used for program 02's race: export an extra array, have the data task record each running sum into it, read it back, and compare with <code>numpy.cumsum</code>. On a deterministic simulator, recording state is often faster than stepping a debugger.</p>
+
+<h2>Setting up the SDK</h2>
+<p>The SDK ships as a tarball with wrapper scripts and a 3.4 GB Singularity image (<code>.sif</code>) containing the compiler, runtime and simulator. In the cloud container used for this course, two things were needed beyond unpacking it <span class="tag measured">Measured</span>:</p>
+<ol>
+<li><strong>A container runtime.</strong> The wrappers call <code>singularity</code>; Ubuntu's own <code>singularity-container</code> package (SingularityCE 4.1.1) works.</li>
+<li><strong>Dropping one capability.</strong> Running as root in a container without <code>CAP_SYS_RESOURCE</code>, every tool failed with "Requesting capability set … while permitted capability set is …". Setting <code>SINGULARITY_DROP_CAPS=CAP_SYS_RESOURCE</code> fixed it.</li>
+</ol>
+<p>The repository's <code>.claude/skills/cerebras-sdk/scripts/setup.sh</code> does all of this idempotently and ends with a smoke test. Then:</p>
+<pre><code>source /home/user/cerebras-sdk/env.sh
+cd course/programs && ARCH=wse3 bash run_all.sh</code></pre>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Which file decides that PE (3,0) talks to PE (4,0) on color 1?</summary><p><code>layout.csl</code>, through <code>@set_color_config</code> on both PEs. Device code only sees queues bound to that color.</p></details>
+<details><summary>You change a param from 8 to 16 PEs and compilation gets slower. Why?</summary><p>Each unique combination of params is a separate PE program to compile. Using runtime coordinates from <code>&lt;layout&gt;</code> instead of per-PE params reduces unique programs.</p></details>
+<details><summary>Where do you look when a simulation hangs?</summary><p><code>sim.log</code> (with <code>&lt;simprint&gt;</code> output) to see which PEs reached which point; the stop cause in <code>sim_stats.json</code>; then csdb.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const files = {
+    "layout.csl": [
+      ["param N: i16;", "A compile-time parameter, supplied by cslc --params=N:64. The compiler knows its exact value, so array sizes can depend on it."],
+      ["", null],
+      ["const memcpy = @import_module(\"<memcpy/get_params>\", .{ .width = 1, .height = 1 });", "Imports the memcpy parameter helper for a 1 × 1 program. It computes per-column settings the host-I/O runtime needs."],
+      ["", null],
+      ["layout {", "The layout block runs at compile time and describes the whole program on the fabric."],
+      ["  @set_rectangle(1, 1);", "The program occupies 1 column × 1 row of PEs (width × height)."],
+      ["  @set_tile_code(0, 0, \"pe_program.csl\", .{ .memcpy_params = memcpy.get_params(0), .N = N });", "PE (0,0) runs pe_program.csl with these params. Multi-PE programs call this in a loop, often with different params per PE."],
+      ["", null],
+      ["  @export_name(\"x\", [*]f32, true);", "Declares a host-visible name. The third argument says the symbol is mutable — it must match how the device declares the pointer (var vs const). We got this wrong once in program 02."],
+      ["  @export_name(\"y\", [*]f32, true);", null],
+      ["  @export_name(\"saxpy\", fn(f32)void);", "A host-callable function (RPC) that takes one f32 argument."],
+      ["}", null],
+    ],
+    "pe_program.csl": [
+      ["param memcpy_params;", "Receives the struct passed by @set_tile_code."],
+      ["param N: i16;", null],
+      ["", null],
+      ["const sys_mod = @import_module(\"<memcpy/memcpy>\", memcpy_params);", "The device side of the host-I/O runtime. It reserves colors 20–23, some task IDs and queues 0–1."],
+      ["", null],
+      ["var x: [N]f32;", "Arrays live in this PE's 48 KB SRAM — there is nowhere else."],
+      ["var y: [N]f32;", null],
+      ["var x_ptr: [*]f32 = &x;", "Host-visible symbols are exported as many-item pointers."],
+      ["var y_ptr: [*]f32 = &y;", null],
+      ["", null],
+      ["const x_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -> x[i] });", "A memory DSD: N elements of x, stride 1. Held in a data-structure register."],
+      ["const y_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -> y[i] });", null],
+      ["", null],
+      ["fn saxpy(a: f32) void {", "The RPC body. It runs on the PE when the host calls launch('saxpy', a)."],
+      ["  @fmacs(y_dsd, y_dsd, x_dsd, a);", "One vector instruction: y[i] = y[i] + x[i] * a for all N elements."],
+      ["  sys_mod.unblock_cmd_stream();", "Mandatory: releases the host's command stream so the next memcpy can run. Forget it and the host hangs."],
+      ["}", null],
+      ["", null],
+      ["comptime {", "Compile-time block for bindings and exports."],
+      ["  @export_symbol(x_ptr, \"x\");", "Connects the device symbol to the name declared in the layout."],
+      ["  @export_symbol(y_ptr, \"y\");", null],
+      ["  @export_symbol(saxpy);", null],
+      ["}", null],
+    ],
+    "run.py": [
+      ["rt = SdkRuntime(args.name, cmaddr=args.cmaddr)", "Opens the compiled program. cmaddr=None means the simulator; an IP:port means a real CS system."],
+      ["xs, ys = rt.get_id('x'), rt.get_id('y')", "Looks up exported symbols (IDs come from out/bin/out_rpc.json)."],
+      ["rt.load(); rt.run()", "Loads every ELF (yours plus memcpy's) onto the fabric and starts it."],
+      ["rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)", "Copy mode: write N floats into x on the 1 × 1 rectangle at (0,0). Becomes a command on color 22."],
+      ["rt.memcpy_h2d(ys, y, 0, 0, 1, 1, N, **kw)", null],
+      ["rt.launch('saxpy', a, nonblock=False)", "Calls the RPC with a = 2.5. Blocks until the device calls unblock_cmd_stream()."],
+      ["rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)", "Copies y back to the host."],
+      ["rt.stop()", "Ends the simulation; sim_stats.json is written."],
+      ["np.testing.assert_allclose(out, a * x + y, rtol=1e-6, atol=1e-6)", "Validation against numpy. Passed on WSE-3 (7,740 cycles) and WSE-2 (6,825 cycles)."],
+    ],
+  };
+  const tabs = $("#tour-tabs"), code = $("#tour-code"), note = $("#tour-note");
+  function show(name) {
+    [...tabs.children].forEach(b => b.classList.toggle("on", b.textContent === name));
+    code.innerHTML = ""; let n = 0;
+    files[name].forEach(([line, txt]) => {
+      const d = document.createElement("div");
+      if (txt) { n++; d.dataset.n = n; d.innerHTML = `<span class="pin">${n}</span>`; d.onclick = () => {
+        code.querySelectorAll(".sel").forEach(e => e.classList.remove("sel")); d.classList.add("sel"); note.textContent = `${name} · ${d.dataset.n}: ${txt}`; }; }
+      else d.innerHTML = `<span class="nopin"></span>`;
+      d.appendChild(document.createTextNode(line || " "));
+      code.appendChild(d);
+    });
+    note.textContent = "Click a numbered line.";
+  }
+  Object.keys(files).forEach(k => { const b = document.createElement("button"); b.type = "button"; b.textContent = k; b.onclick = () => show(k); tabs.appendChild(b); });
+  show("layout.csl");
+})();
+</script>
+</body>
+</html>

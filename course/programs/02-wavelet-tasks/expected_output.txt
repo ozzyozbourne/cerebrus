@@ -1,0 +1,3 @@
+tasks fired: 100  stats: [  26.137941 3302.5337      9.614744   -9.883508]  expected: [  26.13794  3302.5327      9.614744   -9.883508]
+SUCCESS!
+[7020 simulated cycles, WSE-3]

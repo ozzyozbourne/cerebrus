@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Systems: CS-3, MemoryX, SwarmX</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 8 · Part II · The machine</div>
+<h1>Systems: CS-3, MemoryX, SwarmX, CS-4</h1>
+<p class="lede">A wafer has 44 GB of memory. Frontier models need hundreds of gigabytes to terabytes. Cerebras uses two opposite strategies to cross that gap: for training it streams weights <em>through</em> the wafer; for inference it pins weights <em>onto</em> several wafers and streams tokens through them.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Explain weight streaming and the roles of MemoryX and SwarmX.</li>
+<li>Explain how inference fits a 70B model onto wafers, and estimate how many wafers a model needs.</li>
+<li>Place the CS-2, CS-3 and CS-4 systems on a timeline with the right numbers.</li>
+</ul>
+</div>
+
+<h2>The system around the wafer</h2>
+<div class="table-wrap"><table>
+<tr><th></th><th>CS-2 era</th><th>CS-3 era</th><th>CS-4 (2026)</th></tr>
+<tr><td>Wafer</td><td>WSE-2</td><td>WSE-3</td><td>3 × WSE-3T per rack</td></tr>
+<tr><td>System</td><td>one wafer, 15–20 kW</td><td>one wafer, ~23 kW, 15U</td><td>750 PF sparse, 129.6 PB/s memory, 7.2 Tb/s I/O per rack</td></tr>
+<tr><td>MemoryX capacity</td><td>4 TB – 2.4 PB</td><td>up to 1.2 PB (1.5 PB in some sources)</td><td>—</td></tr>
+<tr><td>Max cluster via SwarmX</td><td>192 CS-2</td><td>2,048 CS-3, "256 EF"</td><td>Direct Wafer Links + RoCE v2</td></tr>
+<tr><td>Flagship cluster</td><td>Condor Galaxy 1 & 2: 64 CS-2 each</td><td>Condor Galaxy 3: 64 CS-3, 8 EF</td><td>—</td></tr>
+</table></div>
+<p style="font-size:14px;color:var(--muted)">All figures <span class="tag vendor">Vendor</span>. Exaflop figures are sparse. The current status of the Condor Galaxy clusters was not verified.</p>
+
+<h2>Training: weight streaming</h2>
+<p>Early CS-1/CS-2 work mapped a whole model onto the wafer, layer by layer, in space ("layer-pipelined"). That caps model size at wafer SRAM. From 2021, Cerebras moved training to <strong>weight streaming</strong>: activations stay on the wafer, weights live off-wafer in <strong>MemoryX</strong> (DRAM plus flash, which also performs the weight update), and the whole wafer computes one layer at a time. <strong>SwarmX</strong> "handles the broadcast of weights from MemoryX to the entire cluster and effectively reduces (sums) gradients in the opposite direction" <span class="tag vendor">Vendor</span>.</p>
+
+<figure>
+<svg viewBox="0 0 760 330" width="760" role="img" aria-label="Weight streaming with MemoryX and SwarmX">
+  <defs>
+    <marker id="a8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-amb"/></marker>
+    <marker id="a9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-pur"/></marker>
+  </defs>
+  <rect x="270" y="20" width="220" height="60" rx="10" class="amb" stroke-width="1.8"/>
+  <text x="380" y="46" text-anchor="middle" font-weight="700">MemoryX</text>
+  <text x="380" y="64" text-anchor="middle" font-size="12" class="muted">all weights + optimizer state, updates</text>
+  <rect x="270" y="120" width="220" height="56" rx="10" class="pur" stroke-width="1.8"/>
+  <text x="380" y="144" text-anchor="middle" font-weight="700">SwarmX</text>
+  <text x="380" y="160" text-anchor="middle" font-size="12" class="muted">broadcast ↓ weights · reduce ↑ gradients</text>
+  <path d="M360 80 V116" class="s-amb" stroke-width="2.5" marker-end="url(#a8)"/>
+  <path d="M400 116 V84" class="s-pur" stroke-width="2.5" marker-end="url(#a9)"/>
+  <g id="cs"></g>
+  <text x="380" y="318" text-anchor="middle" font-size="13" class="muted">Each wafer holds activations for its slice of the batch (data parallel). Weights flow in one layer at a time.</text>
+</svg>
+<figcaption><b>Weights in, gradients out.</b> Because model size no longer depends on wafer SRAM, adding systems is pure data parallelism, which Cerebras frames as "linear scaling" <span class="tag vendor">Vendor</span>. Primary details of the older layer-pipelined mode were not found.</figcaption>
+</figure>
+
+<h2>Inference: pin the weights, stream the tokens</h2>
+<p>Inference flips it. Decode is bandwidth-bound (Chapter 1), so the winning move is to keep every weight in SRAM and never fetch it from anywhere: "we don't need to access external memory to load parameters because they're already there" <span class="tag vendor">Vendor</span>. The cost is capacity. Llama 3.1-70B needs about 140 GB at 16-bit, so at launch in August 2024 its 80 layers were spread across <strong>four CS-3 systems</strong> connected over Ethernet, each holding a contiguous block of layers, with tokens flowing wafer to wafer like a pipeline.</p>
+
+<figure>
+<svg viewBox="0 0 760 210" width="760" role="img" aria-label="Llama 70B pipelined across four wafers">
+  <defs><marker id="a10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <g id="pipe"></g>
+  <text x="380" y="190" text-anchor="middle" font-size="13" class="muted">4 × 44 GB = 176 GB: 140 GB of weights, ~36 GB left for KV cache and activations <tspan class="f-amb">[Derived]</tspan></text>
+</svg>
+<figcaption><b>A pipeline of wafers.</b> Each token's activations hop between systems; the weights never move.</figcaption>
+</figure>
+
+<div class="widget" id="cap">
+<h4>How many wafers does a model need?</h4>
+<p class="hint">Weights only, pinned in SRAM (44 GB per WSE-3), with a slice reserved for KV cache and activations. Compare with GPUs' HBM capacity.</p>
+<div class="controls">
+<label>Parameters (B) <input type="range" id="p-n" min="1" max="1000" step="1" value="70"> <span id="p-nv" class="mono"></span></label>
+<label>Precision <select id="p-b"><option value="2">16-bit</option><option value="1">8-bit</option><option value="0.5">4-bit</option></select></label>
+<label>Reserve for KV/activations <input type="range" id="p-r" min="0" max="50" step="5" value="20"> <span id="p-rv" class="mono"></span></label>
+</div>
+<svg id="p-svg" viewBox="0 0 680 120" width="680" role="img" aria-label="Wafers needed"></svg>
+<div class="readout" id="p-out"></div>
+</div>
+
+<h2>What the speed looks like</h2>
+<div class="table-wrap"><table>
+<tr><th>Result</th><th>Tag</th></tr>
+<tr><td>Llama 3.1-70B: 450 tok/s at launch (Aug 2024), 2,100 tok/s by Oct 2024</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Llama 3.3-70B: 2,314 tok/s, 170 ms time-to-first-token</td><td><span class="tag indep">Indep</span> Artificial Analysis, reported in interview</td></tr>
+<tr><td>Kimi K2.6 (~1T params): 981 tok/s, 6.7× the fastest GPU cloud (May 2026)</td><td><span class="tag indep">Indep</span> Artificial Analysis</td></tr>
+<tr><td>gpt-oss-120B: ~3,000 tok/s claimed vs ~1,700 measured</td><td><span class="tag vendor">Vendor</span> vs <span class="tag indep">Indep</span></td></tr>
+<tr><td>CS-4: "2× CS-3 speed, up to 10× throughput per watt"</td><td><span class="tag vendor">Vendor</span>, unverified</td></tr>
+</table></div>
+<div class="callout warn">
+<strong>Fast per user is not the same as cheap per token</strong>
+Pinning weights makes each user's decode fast, but a wafer serves relatively few concurrent sequences compared with a GPU running large batches. Analysts put batched H100 serving at ~$0.10–0.25 per million tokens against Cerebras's $0.60 for Llama 70B <span class="tag analyst">Analyst</span>. Fast decode also does not shorten prefill. Chapter 15 returns to this.
+</div>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Why does weight streaming suit training but not low-latency inference?</summary><p>Training processes a large batch per weight load, so streaming each layer's weights once per step is amortised. Decode uses each weight for one token per sequence; streaming weights would make it as bandwidth-bound as a GPU.</p></details>
+<details><summary>What does SwarmX do on the backward pass?</summary><p>Sums (reduces) gradients from all systems on the way back to MemoryX, which applies the update.</p></details>
+<details><summary>Roughly how many WSE-3 wafers to hold a 405B model at 16-bit?</summary><p>810 GB of weights ÷ 44 GB ≈ 19 wafers before any KV cache — or about 5 at 4-bit.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const cs = $("#cs");
+  for (let i = 0; i < 4; i++) {
+    const x = 60 + i * 170;
+    el("rect", { x, y: 220, width: 130, height: 64, rx: 8, class: "acc", "stroke-width": 1.6 }, cs);
+    el("text", { x: x + 65, y: 248, "text-anchor": "middle", "font-weight": 700 }, cs).textContent = `CS-3 #${i + 1}`;
+    el("text", { x: x + 65, y: 266, "text-anchor": "middle", "font-size": 11, class: "muted" }, cs).textContent = "activations stay here";
+    el("line", { x1: 380, y1: 178, x2: x + 65, y2: 218, class: "s-pur", "stroke-width": 1.5 }, cs);
+  }
+  const pg = $("#pipe");
+  for (let i = 0; i < 4; i++) {
+    const x = 30 + i * 185;
+    el("rect", { x, y: 40, width: 150, height: 90, rx: 10, class: "acc", "stroke-width": 1.6 }, pg);
+    el("text", { x: x + 75, y: 70, "text-anchor": "middle", "font-weight": 700 }, pg).textContent = `CS-3 #${i + 1}`;
+    el("text", { x: x + 75, y: 92, "text-anchor": "middle", "font-size": 12 }, pg).textContent = `layers ${i * 20 + 1}–${i * 20 + 20}`;
+    el("text", { x: x + 75, y: 112, "text-anchor": "middle", "font-size": 11, class: "muted" }, pg).textContent = "~35 GB weights";
+    if (i < 3) el("path", { d: `M${x + 152} 85 H${x + 182}`, class: "s-blu", "stroke-width": 2.5, "marker-end": "url(#a10)" }, pg);
+  }
+  el("text", { x: 30, y: 28, "font-size": 12 }, pg).textContent = "token activations →";
+
+  function cap() {
+    const n = +$("#p-n").value, b = +$("#p-b").value, r = +$("#p-r").value / 100;
+    $("#p-nv").textContent = n + "B"; $("#p-rv").textContent = (r * 100) + "%";
+    const gb = n * b, usable = 44 * (1 - r), w = Math.ceil(gb / usable);
+    const svg = $("#p-svg"); svg.innerHTML = "";
+    const show = Math.min(w, 40);
+    for (let i = 0; i < show; i++) {
+      const x = 20 + (i % 20) * 32, y = 20 + Math.floor(i / 20) * 50;
+      el("rect", { x, y, width: 26, height: 40, rx: 4, class: "acc", "stroke-width": 1.2 }, svg);
+    }
+    if (w > 40) el("text", { x: 20, y: 140, "font-size": 12 }, svg).textContent = `… ${w} wafers total`;
+    const h100 = Math.ceil(gb / (80 * (1 - r))), b200 = Math.ceil(gb / (180 * (1 - r)));
+    $("#p-out").textContent = `weights: ${gb.toFixed(0)} GB  →  ${w} × WSE-3 (${usable.toFixed(1)} GB usable each)\n` +
+      `for comparison: ${h100} × H100 (80 GB HBM) or ${b200} × B200 (~180 GB usable HBM)\n` +
+      `capacity is the wafer's weakness; bandwidth per byte held is its strength.`;
+  }
+  ["#p-n", "#p-b", "#p-r"].forEach(s => $(s).oninput = cap); cap();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 1: First Programs</title>
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 10 · Part III · Programming</div>
+<h1>Lab 1: SAXPY and wavelet tasks</h1>
+<p class="lede">Two single-PE programs. The first uses the host-driven style: copy data in, call a function, copy results out. The second uses the dataflow style: the host streams values, and each arriving wavelet runs a task. Both were compiled and run on the SDK 2.10.1 simulator for WSE-3 and WSE-2; the code below is the exact validated source.</p>
+
+<div class="objectives">
+<h4>After this lab you can</h4>
+<ul>
+<li>Write, compile and validate a complete single-PE program.</li>
+<li>Bind a data task to a streaming input on both WSE-2 and WSE-3.</li>
+<li>Spot and fix the race between streaming input and result readback.</li>
+</ul>
+</div>
+
+<div class="callout ok">
+<strong>Run it yourself</strong>
+<code>source /home/user/cerebras-sdk/env.sh</code>, then in <code>course/programs/01-saxpy</code> run <code>bash commands.sh</code> (or <code>ARCH=wse2 bash commands.sh</code>). <code>course/programs/run_all.sh</code> runs every program and prints PASS/FAIL with cycle counts.
+</div>
+
+<h2>Program 01 · SAXPY: y ← a·x + y</h2>
+<p>The layout places one PE, exports two arrays and one function. Because the function takes an argument, its exported type is <code>fn(f32)void</code>.</p>
+{{code:programs/01-saxpy/layout.csl}}
+{{code:programs/01-saxpy/pe_program.csl}}
+{{code:programs/01-saxpy/run.py}}
+{{out:programs/01-saxpy/expected_output.txt}}
+<p>The last digit of element 2 differs (…295 vs …293): the device computes <code>y + x·a</code> with a fused multiply-add while numpy rounds the product first. The test tolerates 1e-6 relative error.</p>
+
+<h3>What happens inside, in order</h3>
+<figure>
+<svg viewBox="0 0 760 330" width="760" role="img" aria-label="SAXPY sequence" class="seq">
+  <defs><marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <g id="seq1"></g>
+</svg>
+<figcaption><b>Every host call becomes a command on color 22.</b> memcpy's control tasks on the PE decode it: write SRAM, run your RPC, or read SRAM. The command stream stays blocked while your RPC runs until it calls <code>unblock_cmd_stream()</code>.</figcaption>
+</figure>
+<p>Where do the 7,740 simulated cycles go? Almost all of it is host I/O: two 64-element copies in, one out, plus command handling. The <code>@fmacs</code> itself processes 64 elements in on the order of tens of cycles. Lab 3 shows how to separate the two by measuring at two problem sizes and subtracting.</p>
+
+<h3>Exercises</h3>
+<ol>
+<li>Change <code>N:64</code> to <code>N:4096</code> in <code>commands.sh</code>. What happens? (Two 16 KB arrays plus code — does it still fit in 48 KB? Try <code>N:6000</code>.)</li>
+<li>Add a second RPC <code>scale(b: f32)</code> that computes <code>y ← b·y</code> with <code>@fmuls</code>, and call it from the host.</li>
+<li>Remove <code>sys_mod.unblock_cmd_stream()</code> and run again. Note what the host does. (Put it back.)</li>
+</ol>
+
+<h2>Program 02 · A task per wavelet</h2>
+<p>Now the host does not write into an array. It <em>streams</em>: each of the N values becomes one 32-bit wavelet sent on a memcpy color. On the PE, that color is bound to input queue 2 and the queue is bound to a data task, so <strong>each arriving value runs <code>on_value()</code> once</strong>, with the value as its argument.</p>
+{{code:programs/02-wavelet-tasks/layout.csl}}
+{{code:programs/02-wavelet-tasks/pe_program.csl}}
+{{code:programs/02-wavelet-tasks/run.py}}
+{{out:programs/02-wavelet-tasks/expected_output.txt}}
+
+<figure>
+<svg viewBox="0 0 760 180" width="760" role="img" aria-label="Streaming path for program 02">
+  <defs><marker id="s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+  <rect x="10" y="60" width="110" height="56" rx="8" class="blu" stroke-width="1.4"/><text x="65" y="84" text-anchor="middle" font-weight="600">host</text><text x="65" y="102" text-anchor="middle" font-size="11" class="muted">100 floats</text>
+  <rect x="150" y="60" width="140" height="56" rx="8" class="pur" stroke-width="1.4"/><text x="220" y="84" text-anchor="middle" font-weight="600">memcpy west</text><text x="220" y="102" text-anchor="middle" font-size="11" class="muted">color MEMCPYH2D_1</text>
+  <rect x="320" y="60" width="120" height="56" rx="8" class="grn" stroke-width="1.4"/><text x="380" y="84" text-anchor="middle" font-weight="600">input queue 2</text><text x="380" y="102" text-anchor="middle" font-size="11" class="muted">@initialize_queue</text>
+  <rect x="470" y="60" width="130" height="56" rx="8" class="amb" stroke-width="1.4"/><text x="535" y="84" text-anchor="middle" font-weight="600">on_value(v)</text><text x="535" y="102" text-anchor="middle" font-size="11" class="muted">runs 100 times</text>
+  <rect x="630" y="60" width="120" height="56" rx="8" class="acc" stroke-width="1.4"/><text x="690" y="84" text-anchor="middle" font-weight="600">stats[4]</text><text x="690" y="102" text-anchor="middle" font-size="11" class="muted">count[1]</text>
+  <path d="M120 88 H146" class="s-blu" stroke-width="2" marker-end="url(#s2)"/><path d="M290 88 H316" class="s-blu" stroke-width="2" marker-end="url(#s2)"/>
+  <path d="M440 88 H466" class="s-blu" stroke-width="2" marker-end="url(#s2)"/><path d="M600 88 H626" class="s-blu" stroke-width="2" marker-end="url(#s2)"/>
+  <text x="380" y="150" text-anchor="middle" font-size="13" class="muted">No launch() is needed to start the computation: arrival is the trigger.</text>
+</svg>
+<figcaption><b>Dataflow on one PE.</b> On WSE-2 the same code binds the task directly to the color; <code>@is_arch</code> picks the right binding.</figcaption>
+</figure>
+
+<div class="callout bug">
+<strong>The bug, and the debugging method</strong>
+<p>The first version had no <code>wait_done</code>. All 100 tasks fired and max/min were right, but the sum was 30.818 instead of 26.138. Steps taken:</p>
+<ol>
+<li>Copied the program to a scratch directory, added an exported <code>seen[N]</code> array, and recorded each received value: all 100 matched the input exactly, so the transport was fine.</li>
+<li>Recorded the running sum after each task instead: every partial sum matched <code>numpy.cumsum</code>. So the device computed the right answer.</li>
+<li>Searched the host-side cumulative sums for 30.818176: it is exactly the sum after <strong>95</strong> values.</li>
+</ol>
+<p>Conclusion: the host read <code>stats</code> before the last five tasks ran. A streaming H2D completes when wavelets are injected, not consumed. <code>wait_done()</code> keeps the command stream blocked until <code>on_value()</code> sees the last value. Validated afterwards at N = 100 and N = 500, on WSE-3 and WSE-2.</p>
+</div>
+
+<h3>Exercises</h3>
+<ol>
+<li>Add a histogram: an exported <code>hist: [10]u32</code> and a bucket increment inside <code>on_value</code>.</li>
+<li>Delete the <code>launch('wait_done')</code> line in <code>run.py</code> and try N = 100, 500 and 2000. Does the error grow or shrink?</li>
+<li>Stream f16 pairs instead: give the data task two 16-bit arguments and send <code>MEMCPY_16BIT</code> data.</li>
+</ol>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const g = $("#seq1");
+  const cols = [["host (run.py)", 90], ["memcpy runtime", 300], ["your PE program", 520], ["SRAM", 690]];
+  cols.forEach(([n, x]) => { el("text", { x, y: 22, "text-anchor": "middle", "font-weight": 700 }, g).textContent = n;
+    el("line", { x1: x, x2: x, y1: 32, y2: 320, class: "line", "stroke-dasharray": "4 3" }, g); });
+  const steps = [
+    [90, 300, "memcpy_h2d(x)", 50], [300, 690, "write x[0..63]", 70],
+    [90, 300, "memcpy_h2d(y)", 100], [300, 690, "write y[0..63]", 120],
+    [90, 300, "launch('saxpy', 2.5)", 150], [300, 520, "call saxpy(2.5) · stream blocked", 170],
+    [520, 690, "@fmacs over 64 elements", 195], [520, 300, "unblock_cmd_stream()", 220],
+    [90, 300, "memcpy_d2h(y)", 250], [690, 300, "read y", 270], [300, 90, "64 floats", 292],
+  ];
+  steps.forEach(([a, b, t, y]) => {
+    el("path", { d: `M${a} ${y} H${b + (b > a ? -4 : 4)}`, stroke: cssVar("--blue"), "stroke-width": 1.8, "marker-end": "url(#s1)" }, g);
+    el("text", { x: (a + b) / 2, y: y - 5, "text-anchor": "middle" }, g).textContent = t;
+  });
+})();
+</script>
+</body>
+</html>

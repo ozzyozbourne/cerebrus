@@ -1,0 +1,6 @@
+8 PEs x 16 cells, 50 steps; temperature profile (every 8th cell):
+[8.424e-01 7.276e-02 6.412e-04 3.723e-07 2.791e-09 3.100e-05 1.557e-02
+ 5.359e-01 1.546e+00 3.954e-01 8.336e-03 1.159e-05 6.745e-10 6.351e-16
+ 6.577e-25 0.000e+00]
+SUCCESS!
+[10291 simulated cycles, WSE-3]
