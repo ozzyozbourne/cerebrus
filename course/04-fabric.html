@@ -5,248 +5,273 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The Fabric</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+  .fab-legend { font: 13px var(--mono); color: var(--muted); margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .fab-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 4px; }
+  .fab-legend i.hollow { background: transparent !important; border: 2px solid currentColor; }
+  .readout .bad { color: var(--red); font-weight: 700; }
+  .readout .good { color: var(--green); font-weight: 700; }
+  .plan-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 4px 16px; margin: 6px 0 10px; font-size: 14.5px; }
+  .plan-list label { display: flex; gap: 6px; align-items: baseline; }
+  svg g.pe:focus { outline: none; }
+  svg g.pe:focus rect { stroke-width: 3; stroke: var(--accent); }
+  table.mono-cells td code { white-space: nowrap; }
+</style>
 </head>
 <body>
 <main>
 <div class="kicker">Chapter 4 · Part II · The machine</div>
 <h1>The fabric: wavelets and colors</h1>
-<p class="lede">900,000 PEs share no memory. The only way data moves between them is the fabric: a 2-D mesh of routers passing 32-bit messages called <em>wavelets</em>, one hop per cycle, along routes fixed at compile time. Programming the WSE is largely the art of choosing those routes.</p>
+<p class="lede">900,000 PEs <span class="tag vendor">Vendor, WSE-3</span> share no memory. The only way data moves between them is the fabric: a 2-D mesh of routers passing 32-bit messages called <em>wavelets</em>, about one hop per cycle, along routes fixed when the program is loaded. Programming the WSE is largely the art of choosing those routes.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
 <ul>
-<li>Describe a wavelet, a color, and a route (<code>rx</code> → <code>tx</code>) on one router.</li>
-<li>Read and write <code>@set_color_config</code> for point-to-point, pass-through and multicast routes.</li>
-<li>Explain why programs alternate colors in a checkerboard, and why colors are the scarcest resource.</li>
+<li>Describe a wavelet, a color (a virtual channel), and a route (<code>rx</code> → <code>tx</code>) on one router, and explain why the fabric never drops data (back-pressure).</li>
+<li>Estimate how long a stream takes to cross the wafer: distance costs latency once, length costs one cycle per word.</li>
+<li>Read and write <code>@set_color_config</code> for point-to-point, pass-through, multicast and corner-turn routes, and know the WSE-3 rule of one input direction per color.</li>
+<li>Explain what goes wrong when a reduction chain uses one color, and why programs alternate colors.</li>
+<li>Use switches and filters to save colors, and plan a program's color budget.</li>
 </ul>
 </div>
 
 <h2>A mesh of five-port routers</h2>
-<p>Every PE has a router with five bidirectional ports: <strong>NORTH, SOUTH, EAST, WEST</strong> to its neighbours, and <strong>RAMP</strong> down to its own compute engine. A link carries one 32-bit word per cycle and a hop takes about one cycle; the ramp takes about two <span class="tag indep">Indep (arXiv papers)</span>. There are no long wires and no global bus: a message from one corner of the wafer to the other takes over a thousand hops.</p>
+<p>Every PE has a router with five bidirectional ports: <strong>NORTH, SOUTH, EAST, WEST</strong> to its neighbours, and <strong>RAMP</strong> down to its own compute engine (CE). A link carries one 32-bit word per cycle and a hop takes about one cycle; the ramp takes about two <span class="tag indep">Indep (arXiv:2209.15040, 2605.07954)</span>. There are no long wires and no global bus. On a CS-2, whose SDK-visible fabric is 750 × 994 positions <span class="tag sdk">SDK 2.10.1</span>, a wavelet from one corner to the other takes 749 + 993 = 1,742 hops, about 1.6 µs at the WSE-2's 1.1 GHz <span class="tag vendor">Vendor, HC22</span> or 2.0 µs at the 850 MHz the SDK benchmarks assume <span class="tag derived">Derived</span>.</p>
+<p>A color is a <em>virtual channel</em>: a lane label carried by the wavelet, not a separate wire. All colors crossing one link share that link's one word per cycle, and the router interleaves them. What each color gets is its own route rule and its own small input buffer, so colors can be steered and stalled independently. (Think of one railway track carrying trains of different liveries, with the points at every junction set in advance for each livery.) More colors do not mean more bandwidth.</p>
 
 <figure>
-<svg viewBox="0 0 760 250" width="760" role="img" aria-label="A wavelet and a router">
+<svg viewBox="0 0 760 290" width="760" role="img" aria-label="A wavelet's fields and a router with five ports">
   <text x="20" y="22" font-weight="700">A wavelet</text>
-  <rect x="20" y="40" width="70" height="40" rx="4" class="pur" stroke-width="1.5"/><text x="55" y="65" text-anchor="middle" font-size="13">color</text>
-  <rect x="90" y="40" width="250" height="40" rx="4" class="grn" stroke-width="1.5"/><text x="215" y="65" text-anchor="middle" font-size="13">32-bit payload (f32, u32, or 2 × 16-bit)</text>
-  <text x="20" y="104" font-size="13" class="muted">5-bit color tag: 24 routable colors (0–23), 8 reserved.</text>
-  <text x="20" y="124" font-size="13" class="muted">The color picks the route at every router AND the task at the receiver.</text>
-  <text x="20" y="150" font-size="13" class="muted">Control wavelets carry commands (e.g. advance a switch, trigger a task).</text>
+  <!-- proportional fields: 9 units per bit -->
+  <text x="42" y="44" text-anchor="middle" font-size="12" class="muted">5 bits</text>
+  <text x="372" y="44" text-anchor="middle" font-size="12" class="muted">32 bits</text>
+  <rect x="20" y="52" width="45" height="40" rx="4" class="pur" stroke-width="1.5"/><text x="42" y="77" text-anchor="middle" font-size="12">color</text>
+  <rect x="68" y="52" width="14" height="40" rx="3" class="amb" stroke-width="1.5"/>
+  <rect x="85" y="52" width="144" height="40" rx="4" class="grn" stroke-width="1.5"/><text x="157" y="70" text-anchor="middle" font-size="12">upper 16</text><text x="157" y="85" text-anchor="middle" font-size="11" class="muted">index (filters, sparse)</text>
+  <rect x="229" y="52" width="144" height="40" rx="4" class="grn" stroke-width="1.5"/><text x="301" y="70" text-anchor="middle" font-size="12">lower 16</text><text x="301" y="85" text-anchor="middle" font-size="11" class="muted">data</text>
+  <text x="75" y="108" text-anchor="middle" font-size="11" class="muted">ctrl flag</text>
+  <text x="229" y="108" text-anchor="middle" font-size="11" class="muted">or one f32 / u32 across all 32 bits</text>
+  <text x="20" y="138" font-size="13" class="muted">5-bit tag → 32 IDs. Colors 0–23 are routable;</text>
+  <text x="20" y="156" font-size="13" class="muted">24–31 are not (control and task IDs).</text>
+  <text x="20" y="184" font-size="13" class="muted">The color picks the route at every router.</text>
+  <text x="20" y="202" font-size="13" class="muted">At the receiver: WSE-2 picks the task by color;</text>
+  <text x="20" y="220" font-size="13" class="muted">WSE-3 puts it in an input queue bound to the</text>
+  <text x="20" y="238" font-size="13" class="muted">color, and the queue picks the task (Ch. 5).</text>
+  <text x="20" y="266" font-size="13" class="muted">The ctrl flag marks a control wavelet (a command).</text>
   <!-- router -->
-  <g transform="translate(560 125)">
+  <g transform="translate(600 130)">
     <rect x="-55" y="-55" width="110" height="110" rx="12" class="blu" stroke-width="2"/>
-    <text x="0" y="-4" text-anchor="middle" font-weight="700">router</text>
-    <text x="0" y="14" text-anchor="middle" font-size="11" class="muted">per-color table</text>
+    <text x="0" y="-6" text-anchor="middle" font-weight="700">router</text>
+    <text x="0" y="12" text-anchor="middle" font-size="12" class="muted">route per color</text>
+    <text x="0" y="28" text-anchor="middle" font-size="12" class="muted">buffer per color</text>
     <g class="s-blu" stroke-width="2">
       <line x1="0" y1="-55" x2="0" y2="-100"/><line x1="0" y1="55" x2="0" y2="100"/>
-      <line x1="55" y1="0" x2="130" y2="0"/><line x1="-55" y1="0" x2="-130" y2="0"/>
-      <line x1="40" y1="40" x2="85" y2="85"/>
+      <line x1="55" y1="0" x2="130" y2="0"/><line x1="-55" y1="0" x2="-105" y2="0"/>
+      <line x1="40" y1="40" x2="75" y2="80"/>
     </g>
-    <text x="8" y="-90" font-size="12">NORTH</text><text x="8" y="98" font-size="12">SOUTH</text>
-    <text x="100" y="-8" font-size="12">EAST</text><text x="-128" y="-8" font-size="12">WEST</text>
-    <rect x="72" y="86" width="80" height="26" rx="5" class="acc" stroke-width="1.3"/><text x="112" y="104" text-anchor="middle" font-size="12">RAMP → CE</text>
+    <text x="8" y="-90" font-size="12">NORTH</text><text x="8" y="100" font-size="12">SOUTH</text>
+    <text x="80" y="-8" font-size="12">EAST</text><text x="-104" y="-8" font-size="12">WEST</text>
+    <rect x="58" y="80" width="96" height="44" rx="5" class="acc" stroke-width="1.3"/><text x="106" y="98" text-anchor="middle" font-size="12">RAMP → CE</text><text x="106" y="114" text-anchor="middle" font-size="11" class="muted">(WSE-3: input queue)</text>
   </g>
 </svg>
-<figcaption><b>Wavelet + router.</b> The SDK library confirms <code>NUM_COLORS = 24</code> on both WSE-2 and WSE-3 <span class="tag sdk">SDK 2.10.1</span>. Each color has its own input buffers at each router, so traffic on one color cannot block another.</figcaption>
+<figcaption><b>Wavelet + router.</b> The SDK library confirms <code>NUM_COLORS = 24</code> on both WSE-2 and WSE-3 <span class="tag sdk">SDK 2.10.1</span>. The 5-bit tag and the 8 non-routable IDs come from SDK-docs search extracts and the SpaDA paper <span class="tag indep">Indep (arXiv:2511.09447)</span>; how the header bits are laid out is not published, so the color and ctrl boxes are schematic. The 32-bit payload and the 16|16 split are exact <span class="tag sdk">SDK 2.10.1</span>. Each color has dedicated input buffers at each router, so the fabric is lossless and deadlock-free and a stalled color does not stall the other colors' buffers, though all colors share each link's bandwidth <span class="tag indep">Indep (arXiv:2209.15040)</span>.</figcaption>
 </figure>
 
-<h2>Routes are static</h2>
-<p>For each PE and each color, the layout file declares a route: the set of ports a wavelet of that color is accepted from (<code>rx</code>) and the set it is sent to (<code>tx</code>). This is configured once, at load time; the router does no address lookup at run time. Here is the route pair from Lab 2's row reduction, sending from PE (0,0) to PE (1,0):</p>
+<h3>Nothing is dropped: back-pressure</h3>
+<p>What happens when a receiver is busy? Each router keeps a small buffer per color on each input. If the next hop's buffer for that color is full (say, the receiving CE is busy and not draining it), the wavelet waits where it is. The stall propagates upstream hop by hop until the sender's CE stops sending. The fabric is lossless: a slow receiver slows the sender, it never loses data <span class="tag indep">Indep (arXiv:2209.15040)</span>. Because buffers are per color, a stalled color does not stop other colors from using the same link. Chapter 5 shows how tasks use this deliberately. Try it below.</p>
+
+<div class="widget" id="bp">
+<h4>One link, two colors: sharing and back-pressure</h4>
+<p class="hint">Two senders both route EAST over the same link: c0 from the west, c1 from the north. The link carries one wavelet per cycle and alternates between colors that have data and room downstream. Tick "stall c0 receiver" and watch c0's buffers fill, its sender stop, and c1 keep flowing. Buffer depth 2 is illustrative; real depths are not published.</p>
+<div class="controls">
+<button class="btn" id="bp-run" type="button">Run</button>
+<button class="btn secondary" id="bp-step" type="button">Step</button>
+<button class="btn secondary" id="bp-reset" type="button">Reset</button>
+<label><input type="checkbox" id="bp-stall"> stall c0 receiver</label>
+<label>c1 send rate <input type="range" id="bp-rate" min="0" max="100" step="10" value="100"> <span class="mono" id="bp-rate-v">100%</span></label>
+</div>
+<svg id="bp-svg" viewBox="0 0 700 250" width="700" role="img" aria-label="Two colors sharing one link, with per-color buffers"></svg>
+<div class="readout" id="bp-out" aria-live="polite"></div>
+</div>
+
+<h3>Latency is paid once, length once per word</h3>
+<p>Wavelets pipeline. Sending a 1,000-element f32 vector 100 PEs east, the first wavelet arrives after about 2 (ramp) + 100 (hops) + 2 (ramp) ≈ 104 cycles, and the rest follow one per cycle behind it, so the whole vector lands after about 1,100 cycles: 1.0 µs at 1.1 GHz, 1.3 µs at 850 MHz <span class="tag derived">Derived</span>. Distance adds latency once; length costs one cycle per word. Each link carries 32 bits per cycle, which is 4.4 GB/s per direction at 1.1 GHz, or 3.4 GB/s at 850 MHz <span class="tag derived">Derived</span>. That is a fifth or less of the ~23 GB/s a PE gets from its own SRAM (Chapter 3). Moving a word to a neighbour is cheap, but keeping it local is cheaper.</p>
+<p>I checked this on the SDK simulator. A row of P PEs sends M wavelets east through pass-through routers, and the last PE streams them straight back west on a second color. PE 0 times the round trip with its own timestamp counter, so no clocks have to be compared across PEs. Each extra PE in the row adds 2 hops (out and back). The slope came out at <strong>2.0 cycles per hop on WSE-3 and 1.0 on WSE-2</strong>, and each extra wavelet adds 1 cycle on WSE-3 <span class="tag measured">Measured, SDK 2.10.1 simulator</span>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>round trip on PE 0, cycles</th><th>P = 2</th><th>P = 8</th><th>P = 32</th><th>P = 64</th><th>slope</th></tr></thead>
+<tbody>
+<tr><td>WSE-3, M = 1</td><td>44</td><td>68</td><td>164</td><td>292</td><td>4.0 / PE = 2.0 / hop</td></tr>
+<tr><td>WSE-3, M = 64</td><td>108</td><td>132</td><td>227</td><td>355</td><td>+63–64 for 63 more wavelets</td></tr>
+<tr><td>WSE-2, M = 1</td><td>36</td><td>48</td><td>96</td><td>160</td><td>2.0 / PE = 1.0 / hop</td></tr>
+<tr><td>WSE-2, M = 64</td><td>162</td><td>162</td><td>159</td><td>223</td><td>about 2 cycles per wavelet; the distance is hidden until P = 64</td></tr>
+</tbody></table></div>
+<p class="small" style="font-size:14px;color:var(--muted)">Method: <code>--fabric-dims=P+7,3</code>, one color east and one west, an async <code>@fmovs</code> fabric-to-fabric relay at the far end, and <code>&lt;time&gt;</code> stamps on PE 0 before the send and in the receive-completion task <span class="tag measured">Measured</span>. The fixed ~36–44 cycles cover four ramps, the DSD start-up and the relay. In this test WSE-2 streamed at about one wavelet per 2 cycles, a CE-side limit I did not chase further. The simulator's per-hop cost is a model, not silicon. Papers report about 1 cycle per hop on hardware <span class="tag indep">Indep</span>. A CE that adds as well as relays (Lab 2) costs about 7 cycles per PE <span class="tag measured">Measured, Ch. 11</span>.</p>
+
+<div class="widget" id="lat">
+<h4>Stream-time calculator</h4>
+<p class="hint">Time ≈ ramp up + distance × hop cost + ramp down + (length − 1). All results are <span class="tag derived">Derived</span> from the inputs you pick.</p>
+<div class="controls">
+<label>distance <input type="range" id="lat-d" min="1" max="1742" value="100"> <span class="mono" id="lat-dv"></span></label>
+<label>length <input type="range" id="lat-m" min="0" max="12" value="10"> <span class="mono" id="lat-mv"></span></label>
+<label>hop cost <select id="lat-h"><option value="1">1 cycle (papers, Indep)</option><option value="2">2 cycles (WSE-3 simulator, Measured)</option></select></label>
+<label>clock <select id="lat-c"><option value="1.1">1.1 GHz (WSE-2, Vendor)</option><option value="0.85">850 MHz (SDK assumption)</option></select></label>
+</div>
+<svg id="lat-svg" viewBox="0 0 700 90" width="700" role="img" aria-label="Breakdown of stream time"></svg>
+<div class="readout" id="lat-out" aria-live="polite"></div>
+</div>
+
+<h2>Routes are set at load time</h2>
+<p>For each PE and each color, the layout file declares a route: the input port a wavelet of that color is accepted from (<code>rx</code>) and the set of ports it is sent to (<code>tx</code>). It is configured when the program is loaded, and the router never looks anything up per wavelet. A PE can rewrite its own routes between phases (teardown, below), but there is no per-packet routing. Here is the route pair from Lab 2's row reduction (Chapter 11), sending from PE (0,0) to PE (1,0):</p>
 <div class="filename">layout.csl</div>
 <pre><code><span class="k">const</span> c0: <span class="n">color</span> = <span class="b">@get_color</span>(0);
 <span class="c">// PE (0,0): accept from my own CE, send EAST</span>
 <span class="b">@set_color_config</span>(0, 0, c0, .{ .routes = .{ .rx = .{RAMP}, .tx = .{EAST} } });
 <span class="c">// PE (1,0): accept from WEST, deliver down the RAMP to my CE</span>
 <span class="b">@set_color_config</span>(1, 0, c0, .{ .routes = .{ .rx = .{WEST}, .tx = .{RAMP} } });</code></pre>
-<p>Three shapes cover most programs:</p>
+<p><strong>Why static?</strong> A packet-switched network puts a destination address in every message, and every router decodes it. Here the wavelet carries only a 5-bit color and the route is already in a register. That keeps all 32 bits for payload, keeps each hop to about a cycle, and keeps 900,000 routers tiny. The price is that every communication pattern must be planned at compile time, and every distinct pattern through a PE costs a color. Hold on to that: it is why colors become the scarcest resource at the end of this chapter. (Tenstorrent makes the opposite choice, with addressed packets, in Chapter 13.)</p>
+
+<p>Four shapes cover most programs:</p>
 <ul>
 <li><strong>Point to point:</strong> <code>rx RAMP → tx EAST</code> at the sender, <code>rx WEST → tx RAMP</code> at the receiver.</li>
 <li><strong>Pass-through:</strong> <code>rx WEST → tx EAST</code>. The wavelet crosses the PE without touching its CE.</li>
 <li><strong>Multicast:</strong> <code>rx NORTH → tx {RAMP, SOUTH}</code>. One wavelet is copied to the local CE <em>and</em> forwarded, so one send reaches a whole column (Lab 2's broadcast).</li>
+<li><strong>Corner turn:</strong> <code>rx WEST → tx SOUTH</code>. Routes need not go straight; a path can bend at any router.</li>
 </ul>
+
+<h3>Under the hood: one 16-bit register per color</h3>
+<p>Each color's route at a PE is one 16-bit configuration register <span class="tag sdk">SDK 2.10.1</span>. Five tx bits (WEST, EAST, SOUTH, NORTH, RAMP) may be set in any combination; that is all multicast is. The rx field differs by chip. On WSE-2 it is five more one-hot bits, so a color may accept from several ports. On WSE-3 it is a 3-bit code naming exactly one port (or "disabled"). I compiled Lab 2's layout with <code>.rx = .{WEST, NORTH}</code>: <code>--arch=wse2</code> accepted it, and <code>--arch=wse3</code> stopped with <code>error: expected at most 1 input direction(s) on 'wse3', got: 2</code> <span class="tag measured">Measured, cslc 2.10.1</span>. On WSE-3, multicast is free, but merging two inbound streams onto one color is impossible.</p>
+
+<figure>
+<svg viewBox="0 0 760 210" width="760" role="img" aria-label="Bit layout of the color route register on WSE-2 and WSE-3">
+  <g id="reg"></g>
+</svg>
+<figcaption><b>The route register for Lab 2's multicast</b> <code>rx NORTH, tx {RAMP, SOUTH}</code>. Bit values come from <code>target/wse2.csl</code> and <code>wse3.csl</code> (<code>fabric_io</code>) <span class="tag sdk">SDK 2.10.1</span>: TX = 0x10 | 0x04 = 0x14 on both chips. RX NORTH is 0x100 on WSE-2, giving 0x114, and the code 3 (0x60) on WSE-3, giving 0x74 <span class="tag derived">Derived</span>. Bits marked "other" hold settings this chapter does not use.</figcaption>
+</figure>
 
 <div class="widget" id="fab">
 <h4>Fabric simulator</h4>
-<p class="hint">Pick a pattern and press Run. Each tick is one cycle: wavelets advance one hop; the ramp costs an extra tick. Click any PE to see its route table — the exact <code>@set_color_config</code> it would need.</p>
+<p class="hint">Pick a pattern and press Run or Step. Each tick is one cycle. A hop costs 1 tick, going up or down a ramp costs 2, and a relaying CE adds 1 more. These are the papers' figures, schematic rather than measured <span class="tag indep">Indep</span>. Click or Tab to any PE (Enter) to see its <code>@set_color_config</code>. Start with <em>Broken: row reduce on ONE color</em>, then compare <em>Lab 2: row reduce</em>.</p>
 <div class="controls">
 <label>Pattern <select id="f-pat"></select></label>
 <button class="btn" id="f-run" type="button">Run</button>
 <button class="btn secondary" id="f-step" type="button">Step</button>
 <button class="btn secondary" id="f-reset" type="button">Reset</button>
-<span class="mono" id="f-tick"></span>
+<button class="btn secondary" id="f-fix" type="button" hidden>Fix it →</button>
 </div>
-<svg id="f-svg" viewBox="0 0 620 340" width="620" role="img" aria-label="Fabric simulation grid"></svg>
-<div class="readout" id="f-out">Click a PE to inspect its routes.</div>
+<div class="mono" id="f-tick" style="font-size:13.5px;margin:4px 0" aria-live="off"></div>
+<svg id="f-svg" viewBox="0 0 620 330" width="620" role="img" aria-label="Fabric simulation grid"></svg>
+<div class="fab-legend" id="f-legend"></div>
+<div class="readout" id="f-sum" aria-live="polite"></div>
+<div class="readout" id="f-out" aria-live="polite">Click a PE to inspect its routes.</div>
 </div>
 
 <h2>Why programs alternate colors</h2>
-<p>A router's configuration for one color is a single rule. Consider a middle PE in a chain that must <em>receive</em> a partial result from the west and <em>send</em> its own result east. With one color, the router would need both <code>rx WEST → tx RAMP</code> and <code>rx RAMP → tx EAST</code> on the same color — and an incoming wavelet from the west could not be told apart from an outgoing one. Two same-colored wavelets meeting at a router in the same cycle is undefined behaviour <span class="tag indep">Indep</span>. The fix is to alternate colors by column parity: even columns send on c0 and receive on c1, odd columns the reverse.</p>
+<p>A color's route at one router is one rx and one tx set, and the rule is "every wavelet arriving on an rx port goes to <em>every</em> tx port". Take a middle PE in a reduction chain. It must deliver the partial sum from the west to its CE, and send its own result east. On one color, the only way to say both is <code>rx = {WEST, RAMP}, tx = {RAMP, EAST}</code>. That route does the wrong thing twice. The partial sum from the west is copied east <em>as well as</em> down the ramp, so it skips this PE's addition. The PE's own result is copied back down its own ramp as well as east. The router has no notion of "this wavelet is mine, that one is passing through"; only the color separates traffic. (On WSE-3 the route will not even compile, because it has two rx ports. On WSE-2 it compiles and gives wrong answers.) Run the simulator's <em>Broken</em> pattern to watch both failures.</p>
+<p>The fix is to give the two roles different colors, alternating by column parity: even columns send on c0 and receive on c1, and odd columns do the reverse. Now each color has a simple one-in, one-out rule at every PE. The SDK and this course call this a <em>checkerboard</em>. Here it alternates by column only; a 2-D pattern alternates by row as well.</p>
+<p class="callout warn"><strong>A separate hazard.</strong> If two wavelets of the same color reach one router in the same cycle from different rx ports, the behaviour is undefined <span class="tag indep">Indep (arXiv:2605.07954)</span>. That is another reason never to merge streams on one color. The simulator flags it as a "collision".</p>
 
 <figure>
-<svg viewBox="0 0 760 170" width="760" role="img" aria-label="Checkerboard colors in a chain">
+<svg viewBox="0 0 760 190" width="760" role="img" aria-label="Checkerboard colors in a chain, with each PE's route rules">
   <defs>
     <marker id="m0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
     <marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
   </defs>
   <g id="chk"></g>
-  <text x="380" y="160" text-anchor="middle" font-size="13" class="muted">orange = c0 (sent by even columns) · blue = c1 (sent by odd columns)</text>
+  <text x="380" y="180" text-anchor="middle" font-size="13" class="muted">orange = c0 (sent by even columns) · blue = c1 (sent by odd columns)</text>
 </svg>
-<figcaption><b>The checkerboard.</b> Each middle PE receives on one color and sends on the other, so its router has two independent rules. The SDK's game-of-life benchmark needs 8 colors for this reason: 4 directions × 2 parities <span class="tag sdk">SDK 2.10.1</span>. Lab 3's heat stencil uses 4.</figcaption>
+<figcaption><b>The checkerboard</b>, exactly as in <code>programs/03-row-reduce/layout.csl</code>. Each middle PE has two independent one-in, one-out rules. The ends need only one. The SDK's game-of-life benchmark needs 8 colors for a 2-D version: 4 directions × 2 parities <span class="tag sdk">SDK 2.10.1</span>. Lab 3's 1-D heat stencil uses 4 (Chapter 12). WSE-2's <strong>color swap</strong> does the checkerboard in hardware. With <code>swap_color_x = true</code>, colors 0 and 1 differ only in their lowest bit, so a wavelet arriving from WEST as color 0 leaves EAST as color 1, with one identical route on every PE. "CSL currently does not support color swap on WSE-3" <span class="tag sdk">SDK 2.10.1, topic-14</span>, so WSE-3 code alternates by hand.</figcaption>
 </figure>
 
-<h2>Runtime flexibility: switches and filters</h2>
-<div class="grid2">
-<div>
-<h3>Switches</h3>
-<p>A color can hold up to four route <em>positions</em> (WSE-3 has 4 switch registers per color; WSE-2 has 1) <span class="tag sdk">SDK 2.10.1</span>. A special control wavelet advances the position — e.g. send east, then west, then south — saving colors. Subtlety: the router switches only <em>after</em> the control wavelet passes, so its own payload follows the old route.</p>
-</div>
-<div>
-<h3>Filters</h3>
-<p>A range filter lets a PE accept only wavelets whose upper 16 bits fall in <code>[min_idx, max_idx]</code>. A whole row can share one broadcast stream while each PE keeps only its slice. WSE-2 has two filter banks, WSE-3 one. <strong>Color swap</strong> (flipping a color bit on each hop) exists only on WSE-2: "CSL currently does not support color swap on WSE-3" <span class="tag sdk">SDK 2.10.1</span>.</p>
-</div>
-</div>
+<h2>Runtime flexibility: switches, filters and teardown</h2>
+<h3>Control wavelets</h3>
+<p>A <em>control wavelet</em> is a wavelet with its ctrl flag set (a fabric output DSD with <code>.control = true</code>). Instead of plain data, its 32 bits carry commands for the routers it passes through, plus an optional control-task ID and 16 bits of data for the receiving CE <span class="tag sdk">SDK 2.10.1, &lt;control&gt;</span>. A router that sees one executes its command: advance the switch, reset it, or enter teardown. If the command's CE-ignore bit is clear and the route reaches the RAMP, the CE also gets the wavelet, and the named control task runs with the 16-bit data (Chapter 5).</p>
+<figure>
+<svg viewBox="0 0 760 150" width="760" role="img" aria-label="Bit layout of a single-command control wavelet">
+  <g id="ctl"></g>
+</svg>
+<figcaption><b>Single-command control payload</b>, from <code>encode_single_payload()</code> in <code>&lt;control&gt;</code> <span class="tag sdk">SDK 2.10.1</span>. Opcodes are NOP 0, SWITCH_ADV 1, SWITCH_RST 2 and TEARDOWN 3. Entrypoint 31 means "no task". The multi-command form packs up to 8 (opcode, CE-ignore) pairs through the word, in fields that overlap the data and entrypoint. Routers can be set to <em>pop</em> the head command (<code>pop_mode</code>), so each hop can act on a different command. The collectives library relies on this <span class="tag derived">Derived from the pop_mode registers and collectives_2d comments</span>. Topic-06's payload, <code>encode_single_payload(SWITCH_ADV, true, {}, 0)</code>, is 0x015F0000 <span class="tag derived">Derived</span>.</figcaption>
+</figure>
+
+<h3>Switches: one color, several routes</h3>
+<p>A color can hold up to four route <em>positions</em>: the default (position 0) plus <code>pos1</code>–<code>pos3</code>. Both WSE-2 and WSE-3 support this, and the SDK's switches tutorial ships a build for each. The hardware just stores the state differently: <code>SWITCH_REGS_PER_COLOR</code> is 1 on WSE-2 and 4 on WSE-3. Not every color can switch: memcpy's source lists 0–9, 12, 13, 16, 17, 20 and 21 as switching-capable <span class="tag sdk">SDK 2.10.1</span>. A control wavelet with SWITCH_ADV moves the router to the next position. The subtlety: "a PE router will move to a new switch position only after the control wavelet carrying the switch command passes through that PE", so the control wavelet itself follows the <em>old</em> route <span class="tag sdk">SDK 2.10.1, topic-07</span>.</p>
+<div class="filename">tutorials/topic-06-switches/layout.csl (centre PE (1,1))</div>
+<pre><code><span class="b">@set_color_config</span>(1, 1, channel, .{
+  .routes   = .{ .rx = .{ RAMP }, .tx = .{ NORTH } },   <span class="c">// position 0</span>
+  .switches = .{ .pos1 = .{ .tx = WEST }, .pos2 = .{ .tx = EAST }, .pos3 = .{ .tx = SOUTH },
+                 .current_switch_pos = 1, .ring_mode = <span class="k">true</span> } });</code></pre>
+<p>The sender sends ctrl, 0, ctrl, 2, ctrl, 4, ctrl, 6, with the control wavelets marked CE-ignore. <code>run.py</code> asserts East = 0, South = 2, North = 4, West = 6 <span class="tag sdk">SDK 2.10.1</span>. Trace it:</p>
+<div class="table-wrap"><table class="mono-cells">
+<thead><tr><th>#</th><th>position before</th><th>wavelet</th><th>goes to</th><th>position after</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>pos1 (W)</td><td>ctrl SWITCH_ADV</td><td>West PE; its CE ignores it</td><td>pos2 (E)</td></tr>
+<tr><td>2</td><td>pos2 (E)</td><td>data 0</td><td>East PE → result 0</td><td>pos2</td></tr>
+<tr><td>3</td><td>pos2 (E)</td><td>ctrl</td><td>East (ignored)</td><td>pos3 (S)</td></tr>
+<tr><td>4</td><td>pos3 (S)</td><td>data 2</td><td>South → 2</td><td>pos3</td></tr>
+<tr><td>5</td><td>pos3 (S)</td><td>ctrl</td><td>South (ignored)</td><td>pos0 (N), wraps: ring_mode</td></tr>
+<tr><td>6</td><td>pos0 (N)</td><td>data 4</td><td>North → 4</td><td>pos0</td></tr>
+<tr><td>7</td><td>pos0 (N)</td><td>ctrl</td><td>North (ignored)</td><td>pos1 (W)</td></tr>
+<tr><td>8</td><td>pos1 (W)</td><td>data 6</td><td>West → 6</td><td>pos1</td></tr>
+</tbody></table></div>
+<p>Each control wavelet leaves on the old position and flips the switch behind it. That is why the program starts at <code>pos1</code> and not <code>pos0</code>. One color replaces four. Without <code>ring_mode</code>, the switch would presumably stick at pos3 rather than wrap (my inference; the tutorial does not test it). The simulator's <em>Switch</em> pattern replays this trace.</p>
+
+<h3>Filters: one stream, many slices</h3>
+<p>A <strong>range filter</strong> lets a PE's CE accept only wavelets whose upper 16 bits fall in <code>[min_idx, max_idx]</code>. This is the same index field that Chapter 5 uses for sparse data. In tutorial topic-08, PE 0 sends 12 wavelets packed as <code>(i &lt;&lt; 16) | f16(10 + i)</code>. PEs 1–3 route <code>rx WEST → tx {RAMP, EAST}</code> (PE 3 only RAMP) with <code>min_idx = 3k</code>, <code>max_idx = 3k + 2</code>. So PE 1 keeps 3–5, PE 2 keeps 6–8 and PE 3 keeps 9–11, while the stream still flows on east, and indices 0–2 are kept by no one <span class="tag sdk">SDK 2.10.1, topic-08</span>. The simulator's <em>Range filter</em> pattern replays it.</p>
+<p>A <strong>counter filter</strong> passes one wavelet to the CE each time its counter wraps. memcpy uses one on every row to deal a host stream round-robin. For a row of width w it sets <code>limit = w − 1</code> and starts PE p at <code>(w − p) mod w</code>, so on a row of 4 the stream x0 x4 x8 x12 x1 … is dealt PE 0: x0 x1 x2 x3, PE 1: x4 … x7, and so on <span class="tag sdk">SDK 2.10.1, memcpy/wse2/memcpyh2d.csl</span>. Both chips have 6 filters: WSE-2 splits them into two banks (4 + 2), and WSE-3 has one bank of 6 with a reworked counter (pass and drop counts in half-wavelets) <span class="tag sdk">SDK 2.10.1</span>.</p>
+
+<h3>Teardown: rewriting routes between phases</h3>
+<p>A color configured with <code>.teardown = true</code> can be put into teardown state by a TEARDOWN control wavelet. The router sets that color's bit in a teardown-pending register, which has one bit per routable color, and the CE runs local task 29. The handler rewrites the router (<code>@set_local_color_config</code>, plus <code>tile_config</code> calls for filters and switches) and then releases the color <span class="tag sdk">SDK 2.10.1, tile_config/teardown.csl, topic-16</span>. This is how <code>&lt;collectives_2d&gt;</code> provides MPI-style broadcast, scatter, gather and reduce, rooted at any PE, with just two colors per axis <span class="tag sdk">SDK 2.10.1, topic-11</span>. memcpy uses the same mechanism on its own colors. Never bind your own task to 29.</p>
+
+<h2>Reaching PEs you have no route to</h2>
+<p>The router never inspects destinations. If a destination is not on a configured path, a CE must receive the wavelet, decide, and send it again. The game-of-life benchmark gets diagonal neighbours this way: "each PE … also forwards the received state from its N and S neighbors to its E and W neighbors", so a PE hears its diagonals through the side links <span class="tag sdk">SDK 2.10.1, game-of-life</span>. The histogram-torus benchmark folds a ring onto the mesh and "actively reroute[s]" each wavelet east–west after a north–south leg <span class="tag sdk">SDK 2.10.1</span>. Each software hop costs ramp latency plus task time instead of one cycle, so these patterns are saved for irregular traffic.</p>
+<figure>
+<svg viewBox="0 0 620 200" width="620" role="img" aria-label="A diagonal neighbour's value reaching the centre in two hops through a CE relay">
+  <g id="sw"></g>
+</svg>
+<figcaption><b>Diagonals by relay.</b> NE's state reaches C in two fabric hops with a CE in between: NE → E (south), then E's CE forwards it west to C. No route goes diagonally.</figcaption>
+</figure>
 
 <h2>Colors are the scarcest resource</h2>
-<figure>
-<svg viewBox="0 0 760 120" width="760" role="img" aria-label="Color budget">
-  <g id="cbud"></g>
-  <text x="20" y="100" font-size="13">■ yours</text>
-  <text x="100" y="100" font-size="13" class="f-red">■ memcpy (20–23)</text>
-  <text x="250" y="100" font-size="13" class="muted">Colors used in this course: Lab 1 = 0, Lab 2 = 2, Lab 3 = 4</text>
-</svg>
-<figcaption><b>24 colors, 4 taken by the runtime.</b> memcpy reserves 21 (device→host data), 22 (command stream), 23 (host→device data) and 20 (context switch) <span class="tag sdk">SDK 2.10.1</span>. The SDK's 25-point stencil benchmark notes it is left with only 4 spare colors. Every new communication pattern spends colors, which is why switches, filters and the SdkLayout API's automatic color allocation exist.</figcaption>
-</figure>
+<p>Of the 24 routable colors, memcpy, the SDK's host-I/O runtime (Chapter 7), takes 20–23. That leaves 20 for your program <span class="tag sdk">SDK 2.10.1</span>. Tick the patterns one program needs and watch the budget fill.</p>
+<div class="widget" id="plan">
+<h4>Color-budget planner</h4>
+<div class="plan-list" id="plan-list"></div>
+<svg id="plan-svg" viewBox="0 0 760 150" width="760" role="img" aria-label="Color budget bar"></svg>
+<div class="readout" id="plan-out" aria-live="polite"></div>
+</div>
+<p>The real programs: Lab 1 = 1 color (its H2D stream on color 0), Lab 2 = 2 (c0/c1; the broadcast reuses color 0), Lab 3 = 4 <span class="tag sdk">course programs</span>. memcpy reserves 21 (device→host data), 22 (command stream), 23 (host→device data) and 20 (used internally by the runtime for switching) <span class="tag sdk">SDK 2.10.1</span>. The SDK's 25-point stencil benchmark spends 21 colors and task IDs on its communication, and its README says SdkRuntime "reserves 6 colors, so only 4 colors are left" for streaming transfers. (The library source names 4 routable system colors; the README's count of 6 is not broken down.) Every new pattern spends colors, which is why switches, filters, teardown and the SdkLayout API exist. SdkLayout is a Python layout layer that allocates colors for you (Chapter 9).</p>
 
-<p>The aggregate fabric numbers follow from this design: 32 bits × 4 directions × 2 × ~850k PEs × ~1 GHz ≈ 2 × 10<sup>17</sup> bit/s, matching the vendor's 220 Pb/s for WSE-2 <span class="tag derived">Derived</span>. Each individual link, though, is only ~4 GB/s — the fabric is fast in aggregate, not between any two distant PEs.</p>
+<h3>The router by the numbers</h3>
+<div class="table-wrap"><table>
+<thead><tr><th></th><th>WSE-2</th><th>WSE-3</th><th>source</th></tr></thead>
+<tbody>
+<tr><td>routable colors</td><td>24</td><td>24</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>route register per color</td><td>1 × 16-bit</td><td>1 × 16-bit</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>rx directions per color</td><td>several (one-hot)</td><td>exactly one</td><td><span class="tag measured">Measured, cslc</span></td></tr>
+<tr><td>switch positions</td><td>4 (1 register)</td><td>4 (4 registers)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>filters per PE</td><td>6 (4 + 2 banks)</td><td>6 (1 bank)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>input / output queues</td><td>8 / 6</td><td>8 / 8</td><td><span class="tag sdk">SDK 2.10.1</span> (Ch. 5)</td></tr>
+<tr><td>fabric coordinate field</td><td>10 bits (0x03ff)</td><td>11 bits (0x07ff)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>SDK-visible fabric</td><td>750 × 994 (CS-2)</td><td>not published</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>color swap</td><td>yes</td><td>no (in CSL)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>simulator cycles per hop</td><td>1.0</td><td>2.0</td><td><span class="tag measured">Measured</span></td></tr>
+<tr><td>clock</td><td>1.1 GHz</td><td>not published</td><td><span class="tag vendor">Vendor, HC22</span>; SDK assumes 850 MHz</td></tr>
+</tbody></table></div>
+
+<p>The aggregate fabric numbers follow from this design: 32 bits × 4 ports × 2 (in + out) × ~850k routers × 1.1 GHz ≈ 2.4 × 10<sup>17</sup> bit/s, or ≈ 2.1 × 10<sup>17</sup> with the 745,500 SDK-visible positions. The vendor's 220 Pb/s for WSE-2 sits in that range <span class="tag derived">Derived</span>. The "× 2" counts each link once from each end, as vendors appear to. Each individual link, though, carries only 3.4–4.4 GB/s per direction <span class="tag derived">Derived</span>: the fabric is fast in aggregate, not between any two distant PEs.</p>
 
 <div class="quiz">
 <h3>Check yourself</h3>
 <details><summary>Write the route for a PE that should forward color 5 from the north to the south without its CE seeing it.</summary><p><code>@set_color_config(x, y, c5, .{ .routes = .{ .rx = .{NORTH}, .tx = .{SOUTH} } });</code></p></details>
-<details><summary>How many cycles does it take a wavelet to cross 100 PEs?</summary><p>About 100 cycles of hops, plus ~2 cycles on each ramp. Latency grows linearly with distance, so algorithms favour nearest-neighbour communication.</p></details>
-<details><summary>Why can't a middle PE in a reduction chain send and receive on the same color?</summary><p>One color has one routing rule per router. It cannot both deliver westward-arriving wavelets to RAMP and forward RAMP wavelets east without ambiguity, and collisions are undefined.</p></details>
+<details><summary>Write the routes for a middle PE and for the bottom PE of a column multicast on color 3, with the root at the top.</summary><p>Middle: <code>.rx = .{NORTH}, .tx = .{RAMP, SOUTH}</code>. Bottom: <code>.rx = .{NORTH}, .tx = .{RAMP}</code>.</p></details>
+<details><summary>A wavelet must go east along row 0 and then turn south down column 5. What is the route at PE (5,0)?</summary><p><code>.rx = .{WEST}, .tx = .{SOUTH}</code>, or <code>.tx = .{RAMP, SOUTH}</code> if (5,0) also needs the data.</p></details>
+<details><summary>How long does a 1,000-wavelet stream take to cross 100 PEs, and what dominates?</summary><p>About 2 + 100 + 2 + 999 ≈ 1,100 cycles at 1 cycle per hop (≈ 1,200 at the WSE-3 simulator's 2). Length dominates: distance is paid once, because wavelets pipeline.</p></details>
+<details><summary>Why can't a middle PE in a reduction chain send and receive on the same color?</summary><p>Because a color's rule is "any rx port → all tx ports". With <code>rx = {WEST, RAMP}</code> and <code>tx = {RAMP, EAST}</code>, the incoming partial sum would also be forwarded east un-added, and the PE's own output would loop back to its own CE. On WSE-3 the route does not even compile (two rx ports).</p></details>
+<details><summary>Why does <code>.rx = .{WEST, NORTH}</code> compile for <code>wse2</code> but not for <code>wse3</code>?</summary><p>WSE-2's route register has five one-hot rx bits. WSE-3's has a 3-bit code that names a single port, so cslc rejects a second direction.</p></details>
+<details><summary>A 2-D stencil exchanges with all four neighbours. Why does it need 8 colors, and how many are left?</summary><p>4 directions × 2 parities = 8. 24 − 4 (memcpy) − 8 = 12 left for everything else.</p></details>
+<details><summary>In topic-06, why does the switch start at <code>pos1</code> when the first data wavelet should go east (pos2)?</summary><p>Each control wavelet travels on the current position and the switch advances only after it passes. The first control wavelet goes west (pos1, ignored by the CE) and flips the switch to pos2, so data 0 then goes east.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
-<script>
-(function () {
-  // ---- static checkerboard diagram ----
-  const chk = $("#chk");
-  for (let i = 0; i < 6; i++) {
-    el("rect", { x: 30 + i * 120, y: 40, width: 70, height: 60, rx: 8, class: "box", "stroke-width": 1.5 }, chk);
-    el("text", { x: 65 + i * 120, y: 76, "text-anchor": "middle", "font-size": 13 }, chk).textContent = `PE ${i}`;
-    if (i < 5) {
-      const even = i % 2 === 0;
-      el("path", { d: `M${100 + i * 120} 70 H${150 + i * 120}`, stroke: cssVar(even ? "--accent" : "--blue"), "stroke-width": 3, "marker-end": `url(#m${even ? 0 : 1})` }, chk);
-      el("text", { x: 125 + i * 120, y: 60, "text-anchor": "middle", "font-size": 12 }, chk).textContent = even ? "c0" : "c1";
-    }
-  }
-  // ---- color budget ----
-  const cb = $("#cbud");
-  for (let c = 0; c < 24; c++) {
-    const res = c >= 20;
-    el("rect", { x: 20 + c * 30, y: 20, width: 26, height: 40, rx: 4, class: res ? "red" : "grn", "stroke-width": 1.2 }, cb);
-    el("text", { x: 33 + c * 30, y: 45, "text-anchor": "middle", "font-size": 11 }, cb).textContent = c;
-  }
-
-  // ---- fabric simulator ----
-  const COLS = 6, ROWS = 4, CS = 78, OX = 40, OY = 30;
-  const palette = ["--accent", "--blue", "--green", "--purple"];
-  const DIR = { NORTH: [0, -1], SOUTH: [0, 1], EAST: [1, 0], WEST: [-1, 0] };
-  const OPP = { NORTH: "SOUTH", SOUTH: "NORTH", EAST: "WEST", WEST: "EAST" };
-  // pattern: routes {"x,y,c": {rx:[..], tx:[..]}}, sources [{x,y,c,n,t0}], relays {"x,y,c": {emit: c2, n}}
-  function R(routes, x, y, c, rx, tx) { routes[`${x},${y},${c}`] = { rx, tx }; }
-  const patterns = {
-    "Point to point (2 PEs, color 0)": () => { const r = {}; R(r, 0, 0, 0, ["RAMP"], ["EAST"]); R(r, 1, 0, 0, ["WEST"], ["RAMP"]);
-      return { routes: r, sources: [{ x: 0, y: 0, c: 0, n: 4, t0: 0 }], relays: {} }; },
-    "Pass-through across a row": () => { const r = {}; R(r, 0, 1, 0, ["RAMP"], ["EAST"]);
-      for (let x = 1; x < 5; x++) R(r, x, 1, 0, ["WEST"], ["EAST"]); R(r, 5, 1, 0, ["WEST"], ["RAMP"]);
-      return { routes: r, sources: [{ x: 0, y: 1, c: 0, n: 3, t0: 0 }], relays: {} }; },
-    "Lab 2: row reduce (checkerboard c0/c1)": () => { const r = {}, relays = {};
-      for (let x = 0; x < 6; x++) { const s = x % 2, rc = 1 - s;
-        if (x < 5) R(r, x, 0, s, ["RAMP"], ["EAST"]);
-        if (x > 0) R(r, x, 0, rc, ["WEST"], ["RAMP"]);
-        if (x > 0 && x < 5) relays[`${x},0,${rc}`] = { emit: s }; }
-      return { routes: r, sources: [{ x: 0, y: 0, c: 0, n: 3, t0: 0 }], relays }; },
-    "Lab 2: column multicast (tx = RAMP + SOUTH)": () => { const r = {};
-      R(r, 0, 0, 0, ["RAMP"], ["SOUTH"]); R(r, 0, 1, 0, ["NORTH"], ["RAMP", "SOUTH"]); R(r, 0, 2, 0, ["NORTH"], ["RAMP", "SOUTH"]); R(r, 0, 3, 0, ["NORTH"], ["RAMP"]);
-      return { routes: r, sources: [{ x: 0, y: 0, c: 0, n: 3, t0: 0 }], relays: {} }; },
-    "Lab 3: halo exchange (4 colors)": () => { const r = {}, src = [];
-      for (let x = 0; x < 4; x++) { const ev = x % 2 === 0;
-        const se = ev ? 0 : 1, rw = ev ? 1 : 0, sw = ev ? 2 : 3, re = ev ? 3 : 2;
-        if (x < 3) { R(r, x, 2, se, ["RAMP"], ["EAST"]); R(r, x, 2, re, ["EAST"], ["RAMP"]); src.push({ x, y: 2, c: se, n: 1, t0: 0 }); }
-        if (x > 0) { R(r, x, 2, sw, ["RAMP"], ["WEST"]); R(r, x, 2, rw, ["WEST"], ["RAMP"]); src.push({ x, y: 2, c: sw, n: 1, t0: 0 }); } }
-      return { routes: r, sources: src, relays: {} }; },
-  };
-  const sel = $("#f-pat"); Object.keys(patterns).forEach(k => sel.add(new Option(k, k)));
-  const svg = $("#f-svg");
-  let P, tick, flits, delivered, timer = null, selected = null;
-
-  function reset() {
-    if (timer) { clearInterval(timer); timer = null; }
-    P = patterns[sel.value](); tick = 0; flits = []; delivered = {};
-    P.sources.forEach(s => { for (let k = 0; k < s.n; k++) flits.push({ x: s.x, y: s.y, c: s.c, from: "RAMP", t: s.t0 + k + 2, stage: "up" }); });
-    draw();
-  }
-  function step() {
-    tick++;
-    const next = [];
-    for (const f of flits) {
-      if (f.t > tick) { next.push(f); continue; }
-      const key = `${f.x},${f.y},${f.c}`, rt = P.routes[key];
-      if (!rt || !rt.rx.includes(f.from)) { (delivered.dropped = (delivered.dropped || 0) + 1); continue; }
-      for (const d of rt.tx) {
-        if (d === "RAMP") {
-          delivered[key] = (delivered[key] || 0) + 1;
-          const rel = P.relays[key];
-          if (rel) next.push({ x: f.x, y: f.y, c: rel.emit, from: "RAMP", t: tick + 3 }); // CE adds, sends on its color
-        } else {
-          const [dx, dy] = DIR[d]; next.push({ x: f.x + dx, y: f.y + dy, c: f.c, from: OPP[d], t: tick + 1, dir: d });
-        }
-      }
-    }
-    flits = next; draw();
-    if (!flits.length && timer) { clearInterval(timer); timer = null; }
-  }
-  function cx(x) { return OX + x * (CS + 22) + CS / 2; } function cy(y) { return OY + y * CS + CS / 2 - 8; }
-  function draw() {
-    svg.innerHTML = "";
-    for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
-      const used = Object.keys(P.routes).some(k => k.startsWith(`${x},${y},`));
-      const g = el("g", { style: "cursor:pointer" }, svg);
-      el("rect", { x: cx(x) - 28, y: cy(y) - 24, width: 56, height: 48, rx: 8, class: used ? "blu" : "box",
-        "stroke-width": selected && selected[0] === x && selected[1] === y ? 3 : 1.2 }, g);
-      el("text", { x: cx(x), y: cy(y) + 4, "text-anchor": "middle", "font-size": 11, class: used ? "" : "muted" }, g).textContent = `(${x},${y})`;
-      const got = Object.keys(delivered).filter(k => k.startsWith(`${x},${y},`)).reduce((a, k) => a + delivered[k], 0);
-      if (got) el("text", { x: cx(x), y: cy(y) + 18, "text-anchor": "middle", "font-size": 10, class: "f-grn" }, g).textContent = `recv ${got}`;
-      g.onclick = () => { selected = [x, y]; inspect(); draw(); };
-    }
-    // routes as faint arrows
-    for (const k in P.routes) {
-      const [x, y, c] = k.split(",").map(Number), rt = P.routes[k];
-      rt.tx.forEach(d => { if (d === "RAMP") return; const [dx, dy] = DIR[d];
-        el("line", { x1: cx(x) + dx * 28, y1: cy(y) + dy * 24 + (c - 1.5) * 3, x2: cx(x + dx) - dx * 28, y2: cy(y + dy) - dy * 24 + (c - 1.5) * 3,
-          stroke: cssVar(palette[c]), "stroke-width": 2, opacity: .45 }, svg); });
-    }
-    // flits in flight
-    flits.filter(f => f.t <= tick + 1).forEach((f, i) => {
-      let px = cx(f.x), py = cy(f.y);
-      if (f.dir) { const [dx, dy] = DIR[f.dir]; const prog = 1 - (f.t - tick); px -= dx * (CS + 22) * (1 - prog) * 0.5; py -= dy * CS * (1 - prog) * 0.5; }
-      el("circle", { cx: px + (f.c - 1.5) * 4, cy: py - 14, r: 6, fill: cssVar(palette[f.c]), stroke: cssVar("--surface"), "stroke-width": 1.5 }, svg);
-    });
-    $("#f-tick").textContent = `cycle ${tick} · in flight ${flits.length}`;
-    if (selected) inspect();
-  }
-  function inspect() {
-    const [x, y] = selected; const lines = [];
-    for (const k in P.routes) { const [a, b, c] = k.split(",").map(Number); if (a === x && b === y) {
-      const rt = P.routes[k]; lines.push(`@set_color_config(${x}, ${y}, c${c}, .{ .routes = .{ .rx = .{${rt.rx.join(", ")}}, .tx = .{${rt.tx.join(", ")}} } });`); } }
-    $("#f-out").textContent = `PE (${x},${y})\n` + (lines.length ? lines.join("\n") : "no routes configured: this router ignores all colors in this pattern");
-  }
-  sel.onchange = reset;
-  $("#f-run").onclick = () => { if (timer) return; timer = setInterval(step, 420); };
-  $("#f-step").onclick = step; $("#f-reset").onclick = reset;
-  reset();
-})();
-</script>
+<script src="04-fabric.js"></script>
 </body>
 </html>
