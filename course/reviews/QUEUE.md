@@ -1,0 +1,43 @@
+# Review queue (coordinator tracking)
+running: accuracy ch01-15, pedagogy ch01-05
+queued:
+- pedagogy ch06
+- pedagogy ch07
+- pedagogy ch08
+- pedagogy ch09
+- pedagogy ch10
+- pedagogy ch11
+- pedagogy ch12
+- pedagogy ch13
+- pedagogy ch14
+- pedagogy ch15
+- visuals ch01
+- visuals ch02
+- visuals ch03
+- visuals ch04
+- visuals ch05
+- visuals ch06
+- visuals ch07
+- visuals ch08
+- visuals ch09
+- visuals ch10
+- visuals ch11
+- visuals ch12
+- visuals ch13
+- visuals ch14
+- visuals ch15
+- depth ch01
+- depth ch02
+- depth ch03
+- depth ch04
+- depth ch05
+- depth ch06
+- depth ch07
+- depth ch08
+- depth ch09
+- depth ch10
+- depth ch11
+- depth ch12
+- depth ch13
+- depth ch14
+- depth ch15
