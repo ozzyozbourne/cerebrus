@@ -67,11 +67,11 @@
     <g class="s-blu" stroke-width="2">
       <line x1="0" y1="-55" x2="0" y2="-100"/><line x1="0" y1="55" x2="0" y2="100"/>
       <line x1="55" y1="0" x2="130" y2="0"/><line x1="-55" y1="0" x2="-105" y2="0"/>
-      <line x1="40" y1="40" x2="75" y2="80"/>
+      <line x1="40" y1="40" x2="52" y2="80"/>
     </g>
     <text x="8" y="-90" font-size="12">NORTH</text><text x="8" y="100" font-size="12">SOUTH</text>
     <text x="80" y="-8" font-size="12">EAST</text><text x="-104" y="-8" font-size="12">WEST</text>
-    <rect x="58" y="80" width="96" height="44" rx="5" class="acc" stroke-width="1.3"/><text x="106" y="98" text-anchor="middle" font-size="12">RAMP → CE</text><text x="106" y="114" text-anchor="middle" font-size="11" class="muted">(WSE-3: input queue)</text>
+    <rect x="28" y="80" width="128" height="44" rx="5" class="acc" stroke-width="1.3"/><text x="92" y="98" text-anchor="middle" font-size="12">RAMP → CE</text><text x="92" y="114" text-anchor="middle" font-size="11" class="muted">(WSE-3: input queue)</text>
   </g>
 </svg>
 <figcaption><b>Wavelet + router.</b> The SDK library confirms <code>NUM_COLORS = 24</code> on both WSE-2 and WSE-3 <span class="tag sdk">SDK 2.10.1</span>. The 5-bit tag and the 8 non-routable IDs come from SDK-docs search extracts and the SpaDA paper <span class="tag indep">Indep (arXiv:2511.09447)</span>; how the header bits are laid out is not published, so the color and ctrl boxes are schematic. The 32-bit payload and the 16|16 split are exact <span class="tag sdk">SDK 2.10.1</span>. Each color has dedicated input buffers at each router, so the fabric is lossless and deadlock-free and a stalled color does not stall the other colors' buffers, though all colors share each link's bandwidth <span class="tag indep">Indep (arXiv:2209.15040)</span>.</figcaption>
@@ -142,7 +142,7 @@
 <p>Each color's route at a PE is one 16-bit configuration register <span class="tag sdk">SDK 2.10.1</span>. Five tx bits (WEST, EAST, SOUTH, NORTH, RAMP) may be set in any combination; that is all multicast is. The rx field differs by chip. On WSE-2 it is five more one-hot bits, so a color may accept from several ports. On WSE-3 it is a 3-bit code naming exactly one port (or "disabled"). I compiled Lab 2's layout with <code>.rx = .{WEST, NORTH}</code>: <code>--arch=wse2</code> accepted it, and <code>--arch=wse3</code> stopped with <code>error: expected at most 1 input direction(s) on 'wse3', got: 2</code> <span class="tag measured">Measured, cslc 2.10.1</span>. On WSE-3, multicast is free, but merging two inbound streams onto one color is impossible.</p>
 
 <figure>
-<svg viewBox="0 0 760 210" width="760" role="img" aria-label="Bit layout of the color route register on WSE-2 and WSE-3">
+<svg viewBox="0 0 760 200" width="760" role="img" aria-label="Bit layout of the color route register on WSE-2 and WSE-3">
   <g id="reg"></g>
 </svg>
 <figcaption><b>The route register for Lab 2's multicast</b> <code>rx NORTH, tx {RAMP, SOUTH}</code>. Bit values come from <code>target/wse2.csl</code> and <code>wse3.csl</code> (<code>fabric_io</code>) <span class="tag sdk">SDK 2.10.1</span>: TX = 0x10 | 0x04 = 0x14 on both chips. RX NORTH is 0x100 on WSE-2, giving 0x114, and the code 3 (0x60) on WSE-3, giving 0x74 <span class="tag derived">Derived</span>. Bits marked "other" hold settings this chapter does not use.</figcaption>
@@ -272,6 +272,450 @@
 </div>
 </main>
 <script src="assets/course.js"></script>
-<script src="04-fabric.js"></script>
+<script>
+(function () {
+  const T = (tag, attrs, parent, txt) => { const e = el(tag, attrs, parent); if (txt != null) e.textContent = txt; return e; };
+
+  // ---------- route register figure ----------
+  (function () {
+    const g = $("#reg"), W = 38, X0 = 70;
+    const rows = [
+      { name: "WSE-2", y: 40, val: 0x114, lab: b => b <= 4 ? "TX " + "WESNR"[b] : b <= 9 ? "RX " + "WESNR"[b - 5] : "other" },
+      { name: "WSE-3", y: 120, val: 0x74, lab: b => b <= 4 ? "TX " + "WESNR"[b] : b <= 7 ? "RX" : "other" },
+    ];
+    rows.forEach(r => {
+      T("text", { x: 10, y: r.y + 24, "font-weight": 700, "font-size": 13 }, g, r.name);
+      for (let b = 15; b >= 0; b--) {
+        const x = X0 + (15 - b) * W, on = (r.val >> b) & 1, lab = r.lab(b);
+        const cls = lab === "other" ? "box" : lab.startsWith("TX") ? "acc" : "blu";
+        T("rect", { x: x + 1, y: r.y, width: W - 2, height: 36, rx: 3, class: cls, "stroke-width": on ? 2.5 : 1, opacity: lab === "other" ? 0.55 : 1 }, g);
+        T("text", { x: x + W / 2, y: r.y + 23, "text-anchor": "middle", "font-size": 14, "font-weight": on ? 700 : 400, class: "mono" + (on ? "" : " muted") }, g, on);
+        T("text", { x: x + W / 2, y: r.y - 6, "text-anchor": "middle", "font-size": 10, class: "muted mono" }, g, b);
+        if (lab !== "other" && lab !== "RX") T("text", { x: x + W / 2, y: r.y + 52, "text-anchor": "middle", "font-size": 11, class: "muted" }, g, lab);
+      }
+      if (r.name === "WSE-3") T("text", { x: X0 + (15 - 6) * W + W / 2, y: r.y + 68, "text-anchor": "middle", "font-size": 11, class: "muted" }, g, "↑ RX code in bits 7–5: 3 = NORTH");
+      T("text", { x: 752, y: r.y + 24, "text-anchor": "end", "font-size": 13, class: "mono", "font-weight": 700 }, g, "0x" + r.val.toString(16).toUpperCase().padStart(3, "0"));
+    });
+  })();
+
+  // ---------- control wavelet figure ----------
+  (function () {
+    const g = $("#ctl"), W = 21, X0 = 26, Y = 40;
+    const fields = [[31, 25, "cmd1–7 slots / unused", "box"], [24, 24, "CE-ign", "amb"], [23, 22, "opcode", "pur"], [21, 16, "entrypoint (task ID)", "blu"], [15, 0, "16-bit data for the control task", "grn"]];
+    fields.forEach(([hi, lo, name, cls]) => {
+      const x = X0 + (31 - hi) * W, w = (hi - lo + 1) * W;
+      T("rect", { x: x + 1, y: Y, width: w - 2, height: 40, rx: 4, class: cls, "stroke-width": 1.5 }, g);
+      T("text", { x: x + w / 2, y: Y + 25, "text-anchor": "middle", "font-size": w < 50 ? 10 : 12 }, g, w < 30 ? "" : name);
+      T("text", { x: x + 3, y: Y - 6, "font-size": 10, class: "muted mono" }, g, hi);
+      if (lo !== hi) T("text", { x: x + w - 3, y: Y - 6, "text-anchor": "end", "font-size": 10, class: "muted mono" }, g, lo);
+    });
+    T("text", { x: X0 + 7 * W + W / 2, y: Y + 60, "text-anchor": "middle", "font-size": 11, class: "muted" }, g, "CE-ignore (bit 24)");
+    T("text", { x: X0, y: 130, "font-size": 12, class: "muted" }, g, "topic-06: opcode SWITCH_ADV = 1, CE-ignore = 1, entrypoint 31 (none), data 0  →  0x015F0000");
+  })();
+
+  // ---------- checkerboard figure ----------
+  (function () {
+    const chk = $("#chk");
+    for (let i = 0; i < 6; i++) {
+      const x0 = 30 + i * 120;
+      T("rect", { x: x0, y: 20, width: 70, height: 56, rx: 8, class: "box", "stroke-width": 1.5 }, chk);
+      T("text", { x: x0 + 35, y: 53, "text-anchor": "middle", "font-size": 13 }, chk, `PE ${i}`);
+      const send = i % 2 ? "c1" : "c0", recv = i % 2 ? "c0" : "c1", rules = [];
+      if (i > 0) rules.push([`${recv}: W→RAMP`, recv]);
+      if (i < 5) rules.push([`${send}: RAMP→E`, send]);
+      rules.forEach(([s, c], k) => T("text", { x: x0 + 35, y: 100 + k * 18, "text-anchor": "middle", "font-size": 12, class: "mono " + (c === "c0" ? "f-acc" : "f-blu") }, chk, s));
+      if (i < 5) {
+        const even = i % 2 === 0;
+        T("path", { d: `M${x0 + 70} 48 H${x0 + 118}`, stroke: cssVar(even ? "--accent" : "--blue"), "stroke-width": 3, "marker-end": `url(#m${even ? 0 : 1})` }, chk);
+        T("text", { x: x0 + 95, y: 40, "text-anchor": "middle", "font-size": 12 }, chk, even ? "c0" : "c1");
+      }
+    }
+    T("text", { x: 380, y: 158, "text-anchor": "middle", "font-size": 12, class: "muted" }, chk, "end PEs need one rule; middle PEs need two, one per color");
+  })();
+
+  // ---------- diagonal relay figure ----------
+  (function () {
+    const g = $("#sw"), names = [["NW", "N", "NE"], ["W", "C", "E"], ["SW", "S", "SE"]];
+    const px = c => 200 + c * 90, py = r => 20 + r * 58;
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+      const hot = names[r][c] === "NE" ? "acc" : names[r][c] === "E" ? "blu" : names[r][c] === "C" ? "grn" : "box";
+      T("rect", { x: px(c), y: py(r), width: 60, height: 44, rx: 7, class: hot, "stroke-width": 1.5 }, g);
+      T("text", { x: px(c) + 30, y: py(r) + 27, "text-anchor": "middle", "font-size": 13 }, g, names[r][c]);
+    }
+    const defs = T("defs", {}, g);
+    const mk = T("marker", { id: "mrel", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto" }, defs);
+    T("path", { d: "M0,0 L10,5 L0,10 z", class: "f-acc" }, mk);
+    T("path", { d: `M${px(2) + 30} ${py(0) + 44} V${py(1)}`, stroke: cssVar("--accent"), "stroke-width": 3, "marker-end": "url(#mrel)" }, g);
+    T("path", { d: `M${px(2)} ${py(1) + 22} H${px(1) + 60}`, stroke: cssVar("--accent"), "stroke-width": 3, "marker-end": "url(#mrel)" }, g);
+    T("text", { x: px(2) + 70, y: py(0) + 58, "font-size": 12 }, g, "1: fabric hop south");
+    T("text", { x: px(2) + 70, y: py(1) + 26, "font-size": 12 }, g, "2: E's CE receives,");
+    T("text", { x: px(2) + 70, y: py(1) + 42, "font-size": 12 }, g, "re-sends west");
+    T("text", { x: 20, y: py(1) + 18, "font-size": 12, class: "muted" }, g, "C hears NE through E:");
+    T("text", { x: 20, y: py(1) + 34, "font-size": 12, class: "muted" }, g, "ramp + task + ramp");
+  })();
+
+  // ---------- back-pressure widget ----------
+  (function () {
+    const svg = $("#bp-svg"), DEPTH = 2, HIST = 20;
+    let S, timer = null;
+    function reset() {
+      if (timer) { clearInterval(timer); timer = null; }
+      S = { cyc: 0, R: [[], []], D: [[], []], link: null, del: [0, 0], hist: [], acc: 0, rr: 0, stalled: [false, false], seq: [0, 0] };
+      draw();
+    }
+    function step() {
+      const stall0 = $("#bp-stall").checked, rate = +$("#bp-rate").value / 100;
+      S.cyc++;
+      const got = [0, 0];
+      if (S.D[1].length) { S.D[1].shift(); S.del[1]++; got[1] = 1; }
+      if (!stall0 && S.D[0].length) { S.D[0].shift(); S.del[0]++; got[0] = 1; }
+      S.link = null;
+      for (let k = 0; k < 2; k++) {
+        const c = (S.rr + k) % 2;
+        if (S.R[c].length && S.D[c].length < DEPTH) { S.D[c].push(S.R[c].shift()); S.link = c; S.rr = 1 - c; break; }
+      }
+      S.stalled[0] = S.R[0].length >= DEPTH;
+      if (!S.stalled[0]) S.R[0].push(S.seq[0]++);
+      S.acc = Math.min(1, S.acc + rate);
+      S.stalled[1] = false;
+      if (S.acc >= 1 - 1e-9) { if (S.R[1].length < DEPTH) { S.R[1].push(S.seq[1]++); S.acc -= 1; } else S.stalled[1] = true; }
+      S.hist.push(got); if (S.hist.length > HIST) S.hist.shift();
+      draw();
+    }
+    function slots(x, y, buf, c, vertical) {
+      for (let i = 0; i < DEPTH; i++) {
+        const sx = vertical ? x : x + i * 22, sy = vertical ? y + i * 22 : y;
+        T("rect", { x: sx, y: sy, width: 18, height: 18, rx: 3, class: "box", "stroke-width": 1 }, svg);
+        if (i < buf.length) T("circle", { cx: sx + 9, cy: sy + 9, r: 6, fill: cssVar(c ? "--blue" : "--accent") }, svg);
+      }
+    }
+    function draw() {
+      svg.innerHTML = "";
+      const defs = T("defs", {}, svg);
+      const mk = T("marker", { id: "mbp", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto" }, defs);
+      T("path", { d: "M0,0 L10,5 L0,10 z", class: "f-grn" }, mk);
+      // senders
+      T("rect", { x: 10, y: 130, width: 90, height: 44, rx: 7, class: S.stalled[0] ? "red" : "acc", "stroke-width": 1.5 }, svg);
+      T("text", { x: 55, y: 150, "text-anchor": "middle", "font-size": 12 }, svg, "sender c0");
+      T("text", { x: 55, y: 166, "text-anchor": "middle", "font-size": 11, class: S.stalled[0] ? "f-red" : "muted" }, svg, S.stalled[0] ? "STALLED" : "sending");
+      T("rect", { x: 160, y: 6, width: 100, height: 44, rx: 7, class: S.stalled[1] ? "red" : "blu", "stroke-width": 1.5 }, svg);
+      T("text", { x: 210, y: 26, "text-anchor": "middle", "font-size": 12 }, svg, "sender c1");
+      T("text", { x: 210, y: 42, "text-anchor": "middle", "font-size": 11, class: S.stalled[1] ? "f-red" : "muted" }, svg, S.stalled[1] ? "STALLED" : (+$("#bp-rate").value ? "sending" : "idle"));
+      // router R
+      T("rect", { x: 160, y: 100, width: 120, height: 104, rx: 10, class: "box", "stroke-width": 1.5 }, svg);
+      T("text", { x: 220, y: 196, "text-anchor": "middle", "font-size": 12, "font-weight": 700 }, svg, "router A");
+      T("line", { x1: 100, y1: 152, x2: 166, y2: 152, stroke: cssVar("--accent"), "stroke-width": 2 }, svg);
+      T("line", { x1: 210, y1: 50, x2: 210, y2: 106, stroke: cssVar("--blue"), "stroke-width": 2 }, svg);
+      slots(170, 143, S.R[0], 0, false);
+      slots(201, 108, S.R[1], 1, true);
+      T("text", { x: 170, y: 178, "font-size": 10, class: "muted" }, svg, "c0 buf");
+      T("text", { x: 226, y: 122, "font-size": 10, class: "muted" }, svg, "c1 buf");
+      // link
+      T("line", { x1: 280, y1: 152, x2: 418, y2: 152, stroke: cssVar("--green"), "stroke-width": 3, "marker-end": "url(#mbp)" }, svg);
+      T("text", { x: 349, y: 140, "text-anchor": "middle", "font-size": 12 }, svg, "one link EAST");
+      T("text", { x: 349, y: 186, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg, "1 wavelet / cycle");
+      if (S.link != null) T("circle", { cx: 349, cy: 152, r: 8, fill: cssVar(S.link ? "--blue" : "--accent"), stroke: cssVar("--surface"), "stroke-width": 2 }, svg);
+      // router B
+      T("rect", { x: 420, y: 100, width: 110, height: 104, rx: 10, class: "box", "stroke-width": 1.5 }, svg);
+      T("text", { x: 475, y: 196, "text-anchor": "middle", "font-size": 12, "font-weight": 700 }, svg, "router B");
+      slots(430, 116, S.D[0], 0, false); T("text", { x: 480, y: 130, "font-size": 10, class: "muted" }, svg, "c0");
+      slots(430, 150, S.D[1], 1, false); T("text", { x: 480, y: 164, "font-size": 10, class: "muted" }, svg, "c1");
+      const stall0 = $("#bp-stall").checked;
+      T("rect", { x: 580, y: 100, width: 110, height: 40, rx: 7, class: stall0 ? "red" : "acc", "stroke-width": 1.5 }, svg);
+      T("text", { x: 635, y: 125, "text-anchor": "middle", "font-size": 12 }, svg, stall0 ? "CE (c0): busy" : "CE (c0)");
+      T("rect", { x: 580, y: 160, width: 110, height: 40, rx: 7, class: "blu", "stroke-width": 1.5 }, svg);
+      T("text", { x: 635, y: 185, "text-anchor": "middle", "font-size": 12 }, svg, "CE (c1)");
+      T("line", { x1: 530, y1: 125, x2: 580, y2: 120, stroke: cssVar("--accent"), "stroke-width": 2 }, svg);
+      T("line", { x1: 530, y1: 159, x2: 580, y2: 180, stroke: cssVar("--blue"), "stroke-width": 2 }, svg);
+      T("text", { x: 10, y: 240, "font-size": 12, class: "muted" }, svg, "Buffer depth 2 is illustrative. Router B passes each color down its own ramp.");
+      const n = S.hist.length || 1, th = [0, 1].map(c => S.hist.reduce((a, h) => a + h[c], 0) / n);
+      $("#bp-out").textContent = `cycle ${S.cyc} · delivered c0 ${S.del[0]}, c1 ${S.del[1]} · throughput over last ${Math.min(HIST, S.hist.length)} cycles: c0 ${th[0].toFixed(2)}, c1 ${th[1].toFixed(2)} wavelets/cycle (sum ≤ 1: the link is shared)`;
+    }
+    $("#bp-run").onclick = () => { if (timer) { clearInterval(timer); timer = null; $("#bp-run").textContent = "Run"; return; } timer = setInterval(step, 350); $("#bp-run").textContent = "Pause"; };
+    $("#bp-step").onclick = step;
+    $("#bp-reset").onclick = () => { reset(); $("#bp-run").textContent = "Run"; };
+    $("#bp-rate").oninput = () => { $("#bp-rate-v").textContent = $("#bp-rate").value + "%"; draw(); };
+    $("#bp-stall").onchange = draw;
+    reset();
+  })();
+
+  // ---------- latency calculator ----------
+  (function () {
+    const svg = $("#lat-svg");
+    function upd() {
+      const d = +$("#lat-d").value, M = 2 ** +$("#lat-m").value, h = +$("#lat-h").value, f = +$("#lat-c").value;
+      $("#lat-dv").textContent = `${d} hops`; $("#lat-mv").textContent = `${M} wavelets`;
+      const ramp = 4, hops = d * h, stream = M - 1, tot = ramp + hops + stream, ns = tot / f;
+      svg.innerHTML = "";
+      const W = 660, parts = [["ramps", ramp, "amb"], ["hops", hops, "blu"], ["stream", stream, "grn"]];
+      let x = 20;
+      parts.forEach(([n, v, cls]) => { const w = Math.max(v ? 2 : 0, W * v / tot); if (w) T("rect", { x, y: 14, width: w, height: 30, class: cls, "stroke-width": 1 }, svg); x += w; });
+      x = 20; let lx = 20;
+      parts.forEach(([n, v]) => { T("text", { x: lx, y: 66, "font-size": 12, class: "muted" }, svg, `${n} ${v.toLocaleString()} (${(100 * v / tot).toFixed(0)}%)`); lx += 220; });
+      const bw = 4 * M / ns; // bytes per ns = GB/s
+      $("#lat-out").textContent = `first wavelet ≈ ${(ramp + hops).toLocaleString()} cycles · last ≈ ${tot.toLocaleString()} cycles ≈ ${ns >= 1000 ? (ns / 1000).toFixed(2) + " µs" : ns.toFixed(0) + " ns"}\neffective bandwidth ≈ ${bw.toFixed(2)} GB/s (link peak ${(4 * f).toFixed(1)} GB/s)` +
+        (d >= 1742 ? "\nd = 1,742 is CS-2 corner to corner (750 × 994 fabric)." : "");
+    }
+    ["lat-d", "lat-m", "lat-h", "lat-c"].forEach(id => { $("#" + id).oninput = upd; $("#" + id).onchange = upd; });
+    upd();
+  })();
+
+  // ---------- fabric simulator ----------
+  const COLS = 6, ROWS = 4, PX = 100, PY = 78, OX = 60, OY = 42, BW = 56, BH = 46;
+  const palette = ["--accent", "--blue", "--green", "--purple"], pclass = ["acc", "blu", "grn", "pur"];
+  const DIR = { NORTH: [0, -1], SOUTH: [0, 1], EAST: [1, 0], WEST: [-1, 0] };
+  const OPP = { NORTH: "SOUTH", SOUTH: "NORTH", EAST: "WEST", WEST: "EAST" };
+  const LANE = { EAST: [0, -6], WEST: [0, 6], SOUTH: [6, 0], NORTH: [-6, 0] };
+  function R(routes, x, y, c, rx, tx, extra) { routes[`${x},${y},${c}`] = Object.assign({ rx, tx }, extra || {}); }
+  function src(x, y, c, n, label) { const a = []; for (let k = 0; k < n; k++) a.push({ x, y, c, t: 2 + k, adds: label != null ? String(label) : String(x) }); return a; }
+  const patterns = {
+    "Point to point (2 PEs, color 0)": () => { const r = {}; R(r, 0, 0, 0, ["RAMP"], ["EAST"]); R(r, 1, 0, 0, ["WEST"], ["RAMP"]);
+      return { routes: r, sources: src(0, 0, 0, 4), expect: { "1,0": 4 } }; },
+    "Pass-through across a row": () => { const r = {}; R(r, 0, 1, 0, ["RAMP"], ["EAST"]);
+      for (let x = 1; x < 5; x++) R(r, x, 1, 0, ["WEST"], ["EAST"]); R(r, 5, 1, 0, ["WEST"], ["RAMP"]);
+      return { routes: r, sources: src(0, 1, 0, 3), expect: { "5,1": 3 } }; },
+    "Corner turn (east, then south)": () => { const r = {}; R(r, 0, 0, 0, ["RAMP"], ["EAST"]);
+      for (let x = 1; x < 4; x++) R(r, x, 0, 0, ["WEST"], ["EAST"]); R(r, 4, 0, 0, ["WEST"], ["SOUTH"]);
+      R(r, 4, 1, 0, ["NORTH"], ["SOUTH"]); R(r, 4, 2, 0, ["NORTH"], ["SOUTH"]); R(r, 4, 3, 0, ["NORTH"], ["RAMP"]);
+      return { routes: r, sources: src(0, 0, 0, 3), expect: { "4,3": 3 } }; },
+    "Broken: row reduce on ONE color": () => { const r = {}, relays = {};
+      R(r, 0, 0, 0, ["RAMP"], ["EAST"]);
+      for (let x = 1; x < 3; x++) { R(r, x, 0, 0, ["WEST", "RAMP"], ["RAMP", "EAST"]); relays[`${x},0,0`] = { emit: 0, budget: 3 }; }
+      R(r, 3, 0, 0, ["WEST"], ["RAMP"]);
+      return { routes: r, sources: src(0, 0, 0, 3), relays, expect: { "1,0": 3, "2,0": 3, "3,0": 3 }, want: "0+1+2", last: "3,0", fix: "Lab 2: row reduce (checkerboard c0/c1)" }; },
+    "Lab 2: row reduce (checkerboard c0/c1)": () => { const r = {}, relays = {}, expect = {};
+      for (let x = 0; x < 6; x++) { const s = x % 2, rc = 1 - s;
+        if (x < 5) R(r, x, 0, s, ["RAMP"], ["EAST"]);
+        if (x > 0) { R(r, x, 0, rc, ["WEST"], ["RAMP"]); expect[`${x},0`] = 3; }
+        if (x > 0 && x < 5) relays[`${x},0,${rc}`] = { emit: s, budget: 3 }; }
+      return { routes: r, sources: src(0, 0, 0, 3), relays, expect, want: "0+1+2+3+4", last: "5,0" }; },
+    "Lab 2: column multicast (tx = RAMP + SOUTH)": () => { const r = {};
+      R(r, 0, 0, 0, ["RAMP"], ["SOUTH"]); R(r, 0, 1, 0, ["NORTH"], ["RAMP", "SOUTH"]); R(r, 0, 2, 0, ["NORTH"], ["RAMP", "SOUTH"]); R(r, 0, 3, 0, ["NORTH"], ["RAMP"]);
+      return { routes: r, sources: src(0, 0, 0, 3), expect: { "0,1": 3, "0,2": 3, "0,3": 3 } }; },
+    "Lab 3: halo exchange (4 colors)": () => { const r = {}, s = [], expect = {};
+      for (let x = 0; x < 4; x++) { const ev = x % 2 === 0;
+        const se = ev ? 0 : 1, rw = ev ? 1 : 0, sw = ev ? 2 : 3, re = ev ? 3 : 2;
+        if (x < 3) { R(r, x, 2, se, ["RAMP"], ["EAST"]); R(r, x, 2, re, ["EAST"], ["RAMP"]); s.push(...src(x, 2, se, 1)); }
+        if (x > 0) { R(r, x, 2, sw, ["RAMP"], ["WEST"]); R(r, x, 2, rw, ["WEST"], ["RAMP"]); s.push(...src(x, 2, sw, 1)); }
+        expect[`${x},2`] = (x > 0) + (x < 3); }
+      return { routes: r, sources: s, expect }; },
+    "Switch: one color, four neighbours (topic-06)": () => { const r = {}, s = [];
+      R(r, 1, 1, 0, ["RAMP"], ["NORTH"], { sw: { pos: [["NORTH"], ["WEST"], ["EAST"], ["SOUTH"]], cur: 1, ring: true } });
+      R(r, 1, 0, 0, ["SOUTH"], ["RAMP"]); R(r, 0, 1, 0, ["EAST"], ["RAMP"]); R(r, 2, 1, 0, ["WEST"], ["RAMP"]); R(r, 1, 2, 0, ["NORTH"], ["RAMP"]);
+      [0, 2, 4, 6].forEach((v, k) => { s.push({ x: 1, y: 1, c: 0, t: 2 + 2 * k, ctrl: true, ceIgnore: true, adds: "ctrl" }); s.push({ x: 1, y: 1, c: 0, t: 3 + 2 * k, adds: String(v) }); });
+      return { routes: r, sources: s, expect: { "1,0": 1, "0,1": 1, "2,1": 1, "1,2": 1 }, showVals: true,
+        verdict: st => { const v = k => (st.got[k] || []).map(f => f.adds).join(","); const ok = v("2,1") === "0" && v("1,2") === "2" && v("1,0") === "4" && v("0,1") === "6";
+          return `East=${v("2,1")} South=${v("1,2")} North=${v("1,0")} West=${v("0,1")} · run.py expects E=0 S=2 N=4 W=6 → ` + (ok ? "<span class=good>match</span>" : "<span class=bad>mismatch</span>"); } }; },
+    "Range filter: one stream, slices (topic-08)": () => { const r = {}, s = [];
+      R(r, 0, 1, 1, ["RAMP"], ["EAST"]);
+      for (let k = 1; k < 4; k++) R(r, k, 1, 1, ["WEST"], k === 3 ? ["RAMP"] : ["RAMP", "EAST"], { filter: [3 * k, 3 * k + 2] });
+      for (let i = 0; i < 12; i++) s.push({ x: 0, y: 1, c: 1, t: 2 + i, idx: i, adds: String(i) });
+      return { routes: r, sources: s, expect: { "1,1": 3, "2,1": 3, "3,1": 3 }, showVals: true,
+        verdict: st => [1, 2, 3].map(k => `PE ${k} kept [${(st.got[`${k},1`] || []).map(f => f.idx).join(",")}]`).join(" · ") + " · indices 0–2 kept by no one" }; },
+  };
+  const sel = $("#f-pat"); Object.keys(patterns).forEach(k => sel.add(new Option(k, k)));
+  const svg = $("#f-svg");
+  let P, st, timer = null, selected = null, lastStep = 0, raf = 0, staticG, dynG, peText = {}, peRect = {};
+  const DUR = 400;
+  const cx = x => OX + x * PX, cy = y => OY + y * PY;
+
+  function reset() {
+    if (timer) { clearInterval(timer); timer = null; }
+    $("#f-run").textContent = "Run";
+    P = patterns[sel.value]();
+    P.relays = P.relays || {};
+    st = { tick: 0, flits: P.sources.map(s => Object.assign({ from: "RAMP", up: true }, s)), downs: [], got: {}, ignored: {}, filtered: {}, dropped: 0, coll: 0, collAt: {}, dropAt: {}, sw: {}, relayUsed: {}, done: false };
+    for (const k in P.routes) if (P.routes[k].sw) st.sw[k] = P.routes[k].sw.cur;
+    $("#f-fix").hidden = !P.fix;
+    if (selected && !P.routes) selected = null;
+    buildStatic(); render(1); summary();
+  }
+  function txOf(key) { const rt = P.routes[key]; return rt.sw ? rt.sw.pos[st.sw[key]] : rt.tx; }
+  function step() {
+    if (st.done) return;
+    st.tick++;
+    const tick = st.tick, keep = [], arr = st.flits.filter(f => f.t === tick);
+    // collisions: same router, same color, same cycle, different input ports
+    const groups = {};
+    arr.forEach(f => { const k = `${f.x},${f.y},${f.c}`; (groups[k] = groups[k] || new Set()).add(f.from); });
+    for (const k in groups) if (groups[k].size > 1) { st.coll++; const [x, y] = k.split(","); st.collAt[`${x},${y}`] = true; }
+    st.flits.forEach(f => { if (f.t > tick) keep.push(f); });
+    for (const f of arr) {
+      const key = `${f.x},${f.y},${f.c}`, rt = P.routes[key];
+      if (!rt || !rt.rx.includes(f.from)) { st.dropped++; st.dropAt[`${f.x},${f.y}`] = true; continue; }
+      for (const d of txOf(key)) {
+        if (d === "RAMP") st.downs.push(Object.assign({}, f, { t: tick + 2, key }));
+        else { const [dx, dy] = DIR[d]; keep.push(Object.assign({}, f, { x: f.x + dx, y: f.y + dy, from: OPP[d], t: tick + 1, dir: d, up: false, px: f.x, py: f.y })); }
+      }
+      if (f.ctrl && rt.sw) { let c = st.sw[key] + 1; if (c > 3) c = rt.sw.ring ? 0 : 3; st.sw[key] = c; }
+    }
+    const downs = [];
+    for (const f of st.downs) {
+      if (f.t !== tick) { downs.push(f); continue; }
+      const pe = `${f.x},${f.y}`, rt = P.routes[f.key];
+      if (f.ctrl && f.ceIgnore) { st.ignored[pe] = (st.ignored[pe] || 0) + 1; continue; }
+      if (rt.filter && (f.idx < rt.filter[0] || f.idx > rt.filter[1])) { st.filtered[pe] = (st.filtered[pe] || 0) + 1; continue; }
+      (st.got[pe] = st.got[pe] || []).push(f);
+      const rel = P.relays[f.key];
+      if (rel && (st.relayUsed[f.key] || 0) < rel.budget) {
+        st.relayUsed[f.key] = (st.relayUsed[f.key] || 0) + 1;
+        keep.push({ x: f.x, y: f.y, c: rel.emit, from: "RAMP", t: tick + 3, up: true, adds: f.adds + "+" + f.x });
+      }
+    }
+    st.downs = downs; st.flits = keep;
+    if (!keep.length && !downs.length) { st.done = true; if (timer) { clearInterval(timer); timer = null; $("#f-run").textContent = "Run"; } }
+    lastStep = performance.now(); animate(); summary();
+    if (selected) inspect();
+  }
+  function animate() {
+    cancelAnimationFrame(raf);
+    const loop = () => { const p = Math.min(1, (performance.now() - lastStep) / DUR); render(p); if (p < 1) raf = requestAnimationFrame(loop); };
+    loop();
+  }
+  function buildStatic() {
+    svg.innerHTML = ""; peText = {}; peRect = {};
+    const defs = T("defs", {}, svg);
+    palette.forEach((v, i) => { const m = T("marker", { id: `fm${i}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 5, markerHeight: 5, orient: "auto" }, defs); T("path", { d: "M0,0 L10,5 L0,10 z", fill: cssVar(v) }, m); });
+    staticG = T("g", {}, svg);
+    // route lines with direction lanes and arrowheads
+    for (const k in P.routes) {
+      const [x, y, c] = k.split(",").map(Number), rt = P.routes[k];
+      const txs = rt.sw ? [...new Set(rt.sw.pos.flat())] : rt.tx;
+      txs.forEach(d => { if (d === "RAMP") return; const [dx, dy] = DIR[d], [lx, ly] = LANE[d];
+        T("line", { x1: cx(x) + dx * BW / 2 + lx, y1: cy(y) + dy * BH / 2 + ly, x2: cx(x + dx) - dx * (BW / 2 + 2) + lx, y2: cy(y + dy) - dy * (BH / 2 + 2) + ly,
+          stroke: cssVar(palette[c]), "stroke-width": 2.2, opacity: rt.sw ? .5 : .75, "stroke-dasharray": rt.sw ? "4 3" : "none", "marker-end": `url(#fm${c})` }, staticG); });
+    }
+    for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+      const used = Object.keys(P.routes).some(k => k.startsWith(`${x},${y},`));
+      const g = T("g", { class: "pe", tabindex: 0, role: "button", "aria-label": `PE (${x},${y})`, style: "cursor:pointer" }, staticG);
+      peRect[`${x},${y}`] = T("rect", { x: cx(x) - BW / 2, y: cy(y) - BH / 2, width: BW, height: BH, rx: 8, class: used ? "blu" : "box", "stroke-width": selected && selected[0] === x && selected[1] === y ? 3 : 1.2 }, g);
+      T("text", { x: cx(x), y: cy(y) - 6, "text-anchor": "middle", "font-size": 12, class: used ? "mono" : "mono muted" }, g, `${x},${y}`);
+      peText[`${x},${y}`] = T("text", { x: cx(x), y: cy(y) + 14, "text-anchor": "middle", "font-size": 11 }, g);
+      const act = () => { selected = [x, y]; Object.values(peRect).forEach(r => r.setAttribute("stroke-width", 1.2)); peRect[`${x},${y}`].setAttribute("stroke-width", 3); inspect(); };
+      g.onclick = act; g.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); act(); } };
+    }
+    dynG = T("g", { "pointer-events": "none" }, svg);
+    // legend
+    const used = [...new Set(Object.keys(P.routes).map(k => +k.split(",")[2]))].sort();
+    $("#f-legend").innerHTML = used.map(c => `<span><i style="background:var(${palette[c]})"></i>c${c}</span>`).join("") +
+      (P.sources.some(s => s.ctrl) ? `<span><i class="hollow"></i>control wavelet</span>` : "") +
+      `<span>arrows: route direction (eastbound above, westbound below)</span>` + (P.routes && Object.values(P.routes).some(r => r.sw) ? `<span>dashed: switch positions</span>` : "");
+  }
+  function render(p) {
+    dynG.innerHTML = "";
+    for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+      const pe = `${x},${y}`, got = (st.got[pe] || []).length, exp = P.expect && P.expect[pe], t = peText[pe];
+      let s = "", cls = "f-grn";
+      if (P.showVals && got) s = (st.got[pe]).map(f => f.adds).join(",");
+      else if (got || exp) s = `recv ${got}` + (exp ? `/${exp}` : "");
+      if (exp != null && got > exp) cls = "f-red";
+      if (st.filtered[pe]) s += ` ✕${st.filtered[pe]}`;
+      t.textContent = s; t.setAttribute("class", cls + (P.showVals ? " mono" : ""));
+      if (st.collAt[pe] || st.dropAt[pe]) T("rect", { x: cx(x) - BW / 2 - 4, y: cy(y) - BH / 2 - 4, width: BW + 8, height: BH + 8, rx: 11, fill: "none", stroke: cssVar("--red"), "stroke-width": 2.5 }, dynG);
+    }
+    for (const k in st.sw) { const [x, y] = k.split(",").map(Number); const pos = st.sw[k];
+      T("text", { x: cx(x) + BW / 2 + 4, y: cy(y) - BH / 2 - 6, "font-size": 11, class: "f-pur mono" }, dynG, `pos${pos}: ${P.routes[k].sw.pos[pos][0]}`); }
+    const dot = (x, y, f, r) => {
+      const fill = f.ctrl ? cssVar("--surface") : cssVar(palette[f.c]);
+      T("circle", { cx: x, cy: y, r, fill, stroke: f.ctrl ? cssVar(palette[f.c]) : cssVar("--surface"), "stroke-width": f.ctrl ? 2.5 : 1.5 }, dynG);
+      if (P.showVals && !f.ctrl && r >= 7) T("text", { x, y: y + 3.5, "text-anchor": "middle", "font-size": 9, fill: cssVar("--on-accent"), "font-weight": 700 }, dynG, f.adds);
+    };
+    st.flits.forEach(f => {
+      if (f.dir && f.t === st.tick + 1) {
+        const [lx, ly] = LANE[f.dir], q = Math.min(1, p);
+        const ax = cx(f.px), ay = cy(f.py), bx = cx(f.x), by = cy(f.y);
+        dot(ax + (bx - ax) * (0.3 + 0.4 * q) + lx, ay + (by - ay) * (0.3 + 0.4 * q) + ly, f, 7);
+      } else if (f.up && f.t - st.tick <= 2) dot(cx(f.x) + BW / 2 - 7, cy(f.y) - BH / 2 + 8, f, 4.5);
+    });
+    st.downs.forEach(f => dot(cx(f.x) - BW / 2 + 7, cy(f.y) - BH / 2 + 8, f, 4.5));
+    const onFab = st.flits.filter(f => f.dir && f.t === st.tick + 1).length, ramps = st.flits.filter(f => f.up && f.t - st.tick <= 2).length + st.downs.length;
+    const queued = st.flits.length - onFab - st.flits.filter(f => f.up && f.t - st.tick <= 2).length;
+    const del = Object.values(st.got).reduce((a, l) => a + l.length, 0);
+    $("#f-tick").innerHTML = `cycle ${st.tick} · on links ${onFab} · on ramps ${ramps} · waiting in CE ${queued} · delivered ${del}` +
+      (st.dropped ? ` · <span style="color:var(--red);font-weight:700">dropped ${st.dropped}</span>` : "") +
+      (st.coll ? ` · <span style="color:var(--red);font-weight:700">same-cycle collisions ${st.coll}</span>` : "") + (st.done ? " · done" : "");
+  }
+  function summary() {
+    const out = $("#f-sum");
+    if (!st.done) { out.innerHTML = st.tick ? "running…" : "Press Run or Step."; return; }
+    let s = "";
+    if (P.verdict) s = P.verdict(st);
+    else if (P.want) {
+      const last = (st.got[P.last] || []).map(f => f.adds);
+      const ok = last.length === 3 && last.every(v => v === P.want);
+      s = `last PE received: ${last.join(" · ") || "nothing"}\nwanted 3 × ${P.want} → ` + (ok ? "<span class=good>correct</span>" : "<span class=bad>wrong</span>");
+      const over = Object.keys(P.expect).filter(k => (st.got[k] || []).length > P.expect[k]).map(k => `PE (${k}) got ${(st.got[k] || []).length}, expected ${P.expect[k]}`);
+      if (over.length) s += `\n<span class=bad>extra receipts:</span> ${over.join("; ")} (its own sends loop back down its ramp, and raw partials skip its add)`;
+    } else {
+      const bad = Object.keys(P.expect || {}).filter(k => (st.got[k] || []).length !== P.expect[k]);
+      s = bad.length || st.dropped ? `<span class=bad>unexpected deliveries at ${bad.join(" ")}</span>` : `<span class=good>all ${Object.values(st.got).reduce((a, l) => a + l.length, 0)} wavelets delivered as routed, 0 dropped</span>`;
+    }
+    out.innerHTML = s;
+  }
+  function inspect() {
+    const [x, y] = selected; const lines = [`PE (${x},${y})`];
+    for (const k in P.routes) { const [a, b, c] = k.split(",").map(Number); if (a !== x || b !== y) continue;
+      const rt = P.routes[k]; let extra = "";
+      if (rt.filter) extra = `, .filter = .{ .kind = .{ .range = true }, .min_idx = ${rt.filter[0]}, .max_idx = ${rt.filter[1]} }`;
+      if (rt.sw) extra = `,\n    .switches = .{ .pos1 = .{ .tx = ${rt.sw.pos[1]} }, .pos2 = .{ .tx = ${rt.sw.pos[2]} }, .pos3 = .{ .tx = ${rt.sw.pos[3]} },\n                   .current_switch_pos = ${rt.sw.cur}, .ring_mode = true }   // now at pos${st.sw[k]}`;
+      lines.push(`@set_color_config(${x}, ${y}, c${c}, .{ .routes = .{ .rx = .{${rt.rx.join(", ")}}, .tx = .{${rt.tx.join(", ")}} }${extra} });`);
+      lines.push(rt.rx.length > 1 ? "  WSE-3: NOT ALLOWED (cslc: expected at most 1 input direction); WSE-2: compiles" : "  WSE-2 and WSE-3: ok");
+    }
+    if (lines.length === 1) lines.push("no routes configured: this router ignores all colors in this pattern");
+    const pe = `${x},${y}`;
+    if (st.got[pe]) lines.push(`received: ${st.got[pe].map(f => f.adds).join(" · ")}`);
+    if (st.ignored[pe]) lines.push(`control wavelets ignored by CE: ${st.ignored[pe]}`);
+    if (st.filtered[pe]) lines.push(`rejected by filter: ${st.filtered[pe]}`);
+    $("#f-out").textContent = lines.join("\n");
+  }
+  sel.onchange = () => { selected = null; $("#f-out").textContent = "Click a PE to inspect its routes."; reset(); };
+  $("#f-run").onclick = () => {
+    if (timer) { clearInterval(timer); timer = null; $("#f-run").textContent = "Run"; return; }
+    if (st.done) reset();
+    step(); timer = setInterval(step, DUR + 60); $("#f-run").textContent = "Pause";
+  };
+  $("#f-step").onclick = () => { if (timer) { clearInterval(timer); timer = null; $("#f-run").textContent = "Run"; } step(); };
+  $("#f-reset").onclick = reset;
+  $("#f-fix").onclick = () => { if (P.fix) { sel.value = P.fix; sel.onchange(); } };
+  sel.value = "Broken: row reduce on ONE color";
+  reset();
+
+  // ---------- color-budget planner ----------
+  (function () {
+    const items = [
+      ["Lab 1: one H2D stream", 1, true], ["Lab 2: reduce chain (checkerboard)", 2, false], ["Lab 2: column broadcast", 1, false],
+      ["Lab 3: 1-D halo exchange", 4, false], ["2-D 4-neighbour exchange (game of life)", 8, false],
+      ["extra streaming H2D / D2H channel", 1, false], ["4-neighbour send WITHOUT switches", 4, false], ["4-neighbour send WITH switches (topic-06)", 1, false],
+      ["collectives_2d on both axes", 4, false],
+    ];
+    const SWC = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 16, 17, 20, 21]);
+    const list = $("#plan-list");
+    items.forEach(([n, c, on], i) => { const l = document.createElement("label"); l.innerHTML = `<input type="checkbox" data-i="${i}" ${on ? "checked" : ""}> ${n} <span class="mono" style="color:var(--muted)">(${c})</span>`; list.appendChild(l); });
+    const svg = $("#plan-svg");
+    function upd() {
+      const chosen = [...list.querySelectorAll("input")].filter(e => e.checked).map(e => items[+e.dataset.i]);
+      const need = chosen.reduce((a, it) => a + it[1], 0);
+      svg.innerHTML = "";
+      let owner = [], c = 0; chosen.forEach((it, k) => { for (let j = 0; j < it[1]; j++) owner.push(k); });
+      for (let i = 0; i < 24; i++) {
+        const res = i >= 20, mine = i < owner.length && !res;
+        const over = !res ? false : owner.length > 20 && i - 20 < owner.length - 20;
+        T("rect", { x: 20 + i * 30, y: 30, width: 26, height: 40, rx: 4, class: res ? "red" : mine ? pclass[owner[i] % 4] : "box", "stroke-width": over ? 3 : 1.2 }, svg);
+        T("text", { x: 33 + i * 30, y: 55, "text-anchor": "middle", "font-size": 12 }, svg, i);
+        if (SWC.has(i)) T("text", { x: 33 + i * 30, y: 22, "text-anchor": "middle", "font-size": 12, class: "muted" }, svg, "⇄");
+      }
+      T("text", { x: 620, y: 92, "text-anchor": "middle", "font-size": 12, class: "f-red" }, svg, "memcpy 20–23");
+      T("line", { x1: 20, y1: 80, x2: 616, y2: 80, stroke: cssVar("--green"), "stroke-width": 2 }, svg);
+      T("text", { x: 20, y: 98, "font-size": 12, class: "f-grn" }, svg, "20 usable by your program");
+      T("text", { x: 20, y: 124, "font-size": 12, class: "muted" }, svg, "⇄ = switching-capable color (memcpy/sys_params.csl); boxes fill from 0 in tick order.");
+      T("text", { x: 20, y: 142, "font-size": 12, class: "muted" }, svg, "Real layouts may pick any free IDs; switching patterns need ⇄ colors.");
+      const left = 20 - need;
+      $("#plan-out").innerHTML = `needed ${need} of 20 · ` + (left >= 0 ? `<span class=good>${left} left</span>` : `<span class=bad>over budget by ${-left}: share colors with switches, filters or teardown, or split the program into phases</span>`) +
+        `\ncounts: course programs and SDK tutorials/benchmarks (SDK 2.10.1); a sum assumes one program needs all ticked patterns at once.`;
+    }
+    list.onchange = upd; upd();
+  })();
+})();
+</script>
 </body>
 </html>
