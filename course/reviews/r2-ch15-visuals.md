@@ -3,7 +3,7 @@
 Page: `course/15-lab-cg.html` (generated from `course/src/15-lab-cg.html`; all fixes go in the src template).
 Method: Playwright/Chromium at 1100 px and 390 px, light and dark (`colorScheme`), plus the ◐ toggle at 1100 px. I tried every
 experiment in the budget widget on both chips, hovered the legend buttons, tried every chip/view pair in the iteration widget,
-every cost-model preset and both slider extremes, and took a screenshot of each figure. Screenshots: `/home/user/cerebras-sdk/tmp/r2-ch15-vis/`.
+every cost-model preset and both slider extremes, and took a screenshot of each figure. Screenshots were taken in `/home/user/cerebras-sdk/tmp/r2-ch15-vis/` and deleted after the review.
 
 Clean: there were no page or console errors in any of the four configurations or after the toggle. All SVGs follow the theme live. The page does
 not scroll sideways at 390 px. Wide figures and widgets scroll inside their boxes, as the shared fix intends. Halo text on the convergence labels
@@ -20,7 +20,7 @@ The output reads "no slot is claimed twice, except that on WSE-2 the stencil and
 Fix: "The shipped assignment: no slot is claimed twice on either chip. (Pick the WSE-2 queue experiment to see a slot that can be shared safely.)"
 
 **V3 · med · `#z-tab` (column-length table) is clipped at 390 px.**
-The table is 383 px wide at x = 17, so its right edge is at 400 px. The axpy column ("35…", "44…", "51…", "89…") is cut off, and nothing scrolls to reveal it (screenshot `z390.png`). The grid table and the other tables fit.
+The table is 383 px wide at x = 17, so its right edge is at 400 px. The axpy column ("35…", "44…", "51…", "89…") is cut off, and nothing scrolls to reveal it. The grid table and the other tables fit.
 Fix: wrap both scaling tables in a `<div style="overflow-x:auto">`. Alternatively, shorten the header "Z (cells per PE)" to "Z" and explain it in the lead-in sentence.
 
 **V4 · med · Cost-model widget: the bar is always 100% wide, so the scaling the section argues for is invisible.**
