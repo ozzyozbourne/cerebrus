@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 4: SUMMA GEMM</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+.halo-txt { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+#bud-mem .seg { stroke: var(--surface); stroke-width: 1; }
+.budget td:first-child { white-space: nowrap; }
+.okc { color: var(--green); font-weight: 650; } .badc { color: var(--red); font-weight: 650; } .unkc { color: var(--amber); font-weight: 650; }
+</style>
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 14 · Part III · Programming</div>
+<h1>Lab 4: 2-D GEMM with SUMMA</h1>
+<p class="lede">Every lab so far ran on a row or a column. This one uses a P × P grid of PEs to multiply two matrices with SUMMA, the textbook distributed GEMM. Each step broadcasts one block column of A along the rows and one block row of B down the columns, and then every PE multiplies the two tiles it received. The SDK's <code>&lt;collectives_2d&gt;</code> library does the broadcasts, rewriting the routes at run time and tearing them down after each step. We time each step on the tile's own counter. At realistic tile sizes the kernel spends almost all its time computing, which is the opposite of Lab 3's result. It still reaches only a third of the multiply-add rate, and the measurements show where the rest goes.</p>
+
+<div class="objectives">
+<h4>After this lab you can</h4>
+<ul>
+<li>Explain SUMMA as "P outer products of block columns and block rows", and map it onto a P × P grid with 2-D host I/O.</li>
+<li>Read <code>&lt;collectives_2d&gt;</code>: two colors per axis, routes rewritten per broadcast, a teardown wavelet, and a lock task that fires the callback.</li>
+<li>Build a task that waits for two independent networks (block + activate), and re-arm it every step.</li>
+<li>Time broadcast and compute separately with the TSC, compare them with a compute-bound estimate, and find the instruction and bank-clash overheads.</li>
+<li>Budget a kernel before writing it: memory, colors, task IDs, queues and microthreads, and a cycle model.</li>
+</ul>
+</div>
+
+<div class="callout ok">
+<strong>Run it yourself</strong>
+<p><code>source /home/user/cerebras-sdk/env.sh</code>, then in <code>course/programs/06-summa</code> run <code>bash commands.sh</code> (about 30 s wall time at the defaults). Knobs: <code>P</code> (grid side, default 4), <code>T</code> (tile size, default 8; or set <code>Mt</code>, <code>Kt</code>, <code>Nt</code> separately), <code>KERNEL</code> (0 = the SDK's column loop, 1 = the outer-product variant from the measurement section) and <code>ARCH</code> (<code>wse3</code> default, or <code>wse2</code>). Example: <code>P=6 T=16 KERNEL=1 ARCH=wse2 bash commands.sh</code>. Larger tiles take minutes: T = 32 at P = 4 took about 4 minutes of wall time.</p>
+</div>
+
+<h2 id="summa">From GEMV to SUMMA</h2>
+<p><a href="12-lab-neighbours.html#row-reduce">Chapter 12</a> composed a distributed GEMV from two collectives: broadcast slices of <code>x</code> down the columns, multiply locally, and reduce partial <code>y</code> along the rows. A GEMM, <code>C = A·B</code>, is many GEMVs at once (one per column of B), so you could run that pattern N times. SUMMA (Scalable Universal Matrix Multiplication Algorithm, van de Geijn and Watts, 1997) organises the same work so that <em>no reduction is needed at all</em>.</p>
+<p>Cut A (M × K), B (K × N) and C (M × N) into a P × P grid of blocks. PE (px, py) owns block row py and block column px of all three: <code>A(py, px)</code>, <code>B(py, px)</code> and <code>C(py, px)</code>. The owner of a block of C computes it:</p>
+<pre><code>C(py, px) = Σ_s  A(py, s) · B(s, px)        s = 0 … P−1</code></pre>
+<p>The term for step <em>s</em> needs block column <em>s</em> of A and block row <em>s</em> of B. So at step <em>s</em> the PEs in grid column <em>s</em> broadcast their A block along their row, the PEs in grid row <em>s</em> broadcast their B block down their column, and every PE adds one tile product into its C. After P steps each C block is complete, and it never moved. In matrix terms each step adds one rank-K/P update, an outer product of a block column and a block row.</p>
+<p><strong>The GEMV warm-up.</strong> Set <code>Nt=1</code> and the same program computes a matrix times P vectors at once (B is K × P): a batched GEMV. Each step still broadcasts an A tile along the rows, but the B "tile" is a column segment of only Kt words, and each PE does Kt multiply-adds per output element. Compared with Chapter 12's GEMV, the vector is broadcast and the result stays put, instead of the vector staying put and the result being reduced. The warm-up exercise runs it.</p>
+
+<div class="widget" id="st">
+<h4>SUMMA, one step at a time</h4>
+<p class="hint">Left: the P × P grid of PEs. At step <em>s</em>, the orange column of PEs sends its A tiles along the rows and the blue row sends its B tiles down the columns; arrows show the run-time routes (the root's router sends both ways, every other router passes the tile to its own PE and onward). Green fill is how much of each C tile is done. Right: the same step on the whole matrices. Click a PE to follow it. The cycle estimate uses the measured WSE-3 fits from this chapter (kernel 0, P = 4).</p>
+<div class="controls">
+<label>grid P <select id="st-p"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></label>
+<label>tile T <select id="st-t"><option>4</option><option selected>8</option><option>16</option><option>32</option></select></label>
+<button class="btn" id="st-play" type="button">Play</button>
+<button class="btn secondary" id="st-next" type="button">Next phase</button>
+<button class="btn secondary" id="st-reset" type="button">Reset</button>
+</div>
+<svg id="st-svg" viewBox="0 0 720 330" width="720" role="img" aria-label="SUMMA step animation"></svg>
+<div class="readout" id="st-out"></div>
+</div>
+
+<p><strong>Why it suits the wafer.</strong> Each step moves Mt·Kt + Kt·Nt words into every PE and does Mt·Kt·Nt multiply-adds there. For square tiles of side T that is 2T² words for T³ multiply-adds: the compute grows faster than the traffic, so large tiles are compute-bound. The broadcasts are multicasts (one send reaches the whole row, Chapter 12's program 05), so their cost barely depends on P. And C never moves, so the only data in flight is A and B.</p>
+
+<h2 id="layout">Data layout and host I/O on a 2-D grid</h2>
+<p>The host copies each matrix in a single <code>memcpy_h2d</code> over the whole P × P rectangle (<a href="07-host-io.html">Chapter 7</a>). With <code>MemcpyOrder.ROW_MAJOR</code>, the flat host array is consumed PE by PE in row-major order over the grid (py outer, px inner), Mt·Kt words per PE. So the host must arrange A so that each PE's tile is contiguous, and in the order the PE wants. This program stores every tile <em>column-major</em>, so that a column of the A tile, which is what the inner multiply-add streams over, is contiguous.</p>
+<figure>
+<svg id="lay-svg" viewBox="0 0 720 230" width="720" role="img" aria-label="Host array to per-PE tiles, column-major"></svg>
+<figcaption><b>One reshape and one transpose.</b> A 4 × 4 matrix on a 2 × 2 grid (Mt = Kt = 2). <code>A.reshape(P, Mt, P, Kt)</code> indexes (block row, row in tile, block column, column in tile). Transposing to (block row, block column, column, row) and flattening gives the wire order: PE (0,0)'s tile column by column, then PE (1,0)'s, and so on. The numbers are the original row-major positions. The SDK's <code>run.py</code> draws the same example in a comment <span class="tag sdk">SDK 2.10.1</span>.</figcaption>
+</figure>
+<p>Reading C back is the inverse: the device returns (py, px, column, row), and <code>transpose(0, 3, 1, 2)</code> brings it back to (block row, row, block column, column). Getting one axis wrong does not crash anything: the program just multiplies the wrong numbers, and the numpy check catches it. That check is the first line of defence in any 2-D program.</p>
+
+<h2 id="collectives">Inside <code>&lt;collectives_2d&gt;</code></h2>
+<p>Chapter 12 used the library in one dimension and measured its fixed cost at about 700 cycles <span class="tag measured">Measured, Ch. 12</span>. Here we need it in both dimensions, so it is worth opening up. The source is <code>csl-libs/collectives_2d/pe.csl</code> in the SDK image (1,312 lines) <span class="tag sdk">SDK 2.10.1</span>; the broadcast path is short.</p>
+
+<h3>What one instance owns</h3>
+<p>Each axis is a separate instance of the module (<code>row</code> and <code>col</code> in our program). Each one owns two colors (<code>DATA_COLOR_0</code>, <code>DATA_COLOR_1</code>), two local task IDs (an FSM task and a "lock" task), two input/output queue pairs and one DSD-register set. Broadcast uses only color 0; color 1 is for <code>reduce_fadds</code>, which needs the alternating checkerboard of Chapter 12's program 03. The layout calls <code>c2d.get_params(px, py, ids)</code>, which records only whether the PE sits at either end of its row and column. The PE reads its own coordinate at run time (<code>init()</code>), so the compiler builds a handful of ELF files instead of P². At load time color 0 is a broadcast network rooted at PE 0, in teardown mode.</p>
+
+<h3>Why the routes change at run time</h3>
+<p>A static route has a fixed input direction, and on WSE-3 a route accepts at most one input direction (<a href="04-fabric.html">Chapter 4</a>). In SUMMA the root of the row broadcast moves one column east every step: at step 0 every PE receives from the west side, at step P−1 from the east side, and in between the PEs left of the root receive from the east and the PEs right of it from the west. With static routes you would need a color per root, P colors per axis. The library uses one color and rewrites it before each broadcast:</p>
+<div class="filename">collectives_2d/pe.csl, configure_broadcast_network() (abridged)</div>
+<pre><code><span class="k">if</span> (pe_id == root) {                    <span class="c">// the root's CE feeds the router</span>
+  <span class="c">// ends of the line send one way, everyone else both ways</span>
+  color_config.reset_routes(addr, .{.tx = [2]direction{POS_DIR, NEG_DIR}, .rx = RAMP});
+} <span class="k">else if</span> (pe_id &lt; root) {               <span class="c">// left of / above the root</span>
+  color_config.reset_routes(addr, .{.tx = [2]direction{RAMP, NEG_DIR}, .rx = POS_DIR});
+} <span class="k">else</span> {                                 <span class="c">// right of / below the root</span>
+  color_config.reset_routes(addr, .{.tx = [2]direction{RAMP, POS_DIR}, .rx = NEG_DIR});
+}
+tile_config.teardown.exit(DATA_COLOR_0);  <span class="c">// leave teardown: traffic may flow</span></code></pre>
+<p>POS_DIR is EAST for the row instance and SOUTH for the column instance. Every non-root router passes the wavelet both to its own CE (RAMP) and onward, which is program 05's multicast with a run-time root.</p>
+
+<h3>One broadcast, end to end</h3>
+<ol>
+<li><strong><code>broadcast(root, buf, count, callback)</code></strong> blocks the lock task, records the root and the buffer, clears the filter and switch state left by any earlier gather or scatter, rewrites the routes as above, and leaves teardown mode.</li>
+<li><strong>Transfer.</strong> It activates its FSM task, which starts one asynchronous 32-bit move of <code>count</code> words: memory → fabric at the root, fabric → memory everywhere else. The move runs on the microthread of its queue (2 for the row instance, 3 for the column instance) and activates the FSM task again when it finishes.</li>
+<li><strong>Teardown.</strong> On that second run the FSM calls <code>initiate_teardowns()</code>. Only the root sends anything: one control wavelet with the TEARDOWN command and the CE-ignore bit set, on color 0. It follows the same routes as the data, so it reaches every router in the line after the last data wavelet, and each router puts color 0 back into teardown mode.</li>
+<li><strong>Lock.</strong> Entering teardown runs the CE's teardown handler, task 29 (<a href="04-fabric.html">Chapter 4</a>), which activates the lock task. The FSM unblocks the lock when its own transfer is done. So the lock runs only when <em>both</em> have happened: the data is in my memory, and the network is torn down and ready to be rewritten. The lock task then activates the user's callback (our <code>x_done</code> or <code>y_done</code>).</li>
+</ol>
+<p>The teardown is what makes the next step's rewrite safe: no PE can reconfigure color 0 while wavelets of the previous broadcast are still in its router. What happens to a root that starts step <em>s</em>+1 while a slower neighbour is still computing step <em>s</em>? Its data waits behind the neighbour's router, which is still in teardown mode, and the lossless fabric back-pressures the sender until the neighbour calls <code>broadcast</code> and leaves teardown. The library's comments describe this ordering ("if we clear TIP bit before routing is reconfigured, it stalls"); we did not isolate it in a separate experiment <span class="tag derived">Derived from the library source</span>.</p>
+
+<div class="callout">
+<strong>Chain or tree?</strong>
+<p>Both the library's broadcast and Chapter 12's program 05 are <em>chains</em>: the wavelets stream through every router of the line, one hop after another, and each router copies them to its CE on the way. A chain broadcast costs about (hops × hop cost) + words, and the hop cost is tiny (2.0 cycles on WSE-3, 1.0 on WSE-2 <span class="tag measured">Measured, Ch. 4</span>), so for a row of a few hundred PEs the word count dominates. Reductions are different, because each PE must add before forwarding. A chain reduce still streams (≈ 9.2 cycles per hop through a PE's compute on WSE-3, 6.0 on WSE-2, plus the words <span class="tag measured">Measured, Ch. 12</span>). A binary tree would need only log₂P levels but each level is a separate message, and Chapter 12 measured store-and-forward at more than 3× the streaming chain (348 vs 101 cycles at P = 8, M = 32) <span class="tag measured">Measured, Ch. 12</span>. With c ≈ 9 per hop, a chain over P PEs beats a store-and-forward tree until roughly 9·P &gt; log₂P · (≈ 15 + M), which for M = 32 is P in the hundreds <span class="tag derived">Derived</span>. SUMMA itself needs no reduction; <a href="15-lab-cg.html">Chapter 15</a>'s solver does.</p>
+</div>
+
+<h2 id="join">The task that waits on two networks</h2>
+<p>Each step needs both tiles before it can compute: the A tile from the row broadcast and the B tile from the column broadcast. They finish in either order. <a href="05-tasks.html">Chapter 5</a>'s join does this with two bits: the <code>compute</code> task starts <em>blocked</em>; <code>y_done</code> unblocks it and <code>x_done</code> activates it. A task runs only when it is both activated and unblocked, so <code>compute</code> runs exactly once, after the later of the two callbacks. At the end of <code>compute</code>, <code>@block(COMPUTE)</code> re-arms the join for the next step before <code>start_step()</code> issues the next pair of broadcasts.</p>
+<p>Why not count, as Lab 3 did with <code>pending</code>? That works too, but it needs a counter, a decrement in each callback and a test. The join is free: the hardware task picker evaluates it.</p>
+
+<h2 id="code">Walking through the code</h2>
+<p>The layout file is short. Two calls per PE: the library parameters with our colors and entrypoint task IDs, and the PE program with the tile sizes. The resource map at the top is the budget sheet the design section below fills in.</p>
+{{code:programs/06-summa/layout.csl}}
+<p>The PE program. The library instances come first, each with its own queues and DSD registers. <code>main()</code> is the RPC; it returns immediately and the rest is a chain of tasks: <code>start_step</code> → two broadcasts → <code>x_done</code>/<code>y_done</code> → <code>compute</code> → <code>start_step</code> … → <code>exit</code>, which unblocks the host. Kernel 0 is the SDK's loop; kernel 1 is explained in the measurement section.</p>
+{{code:programs/06-summa/pe_program.csl}}
+<p>Notes on the details:</p>
+<ul>
+<li><strong>Home tile or buffer.</strong> At step <em>s</em> the root of the row broadcast is the PE whose <code>px == s</code>. It sends from its own <code>A_tile</code>; everyone else receives into <code>A_buf</code>. <code>compute</code> makes the same choice, so a PE multiplies its own tile when it is the root. The two buffers cost 2 extra tiles of memory, the price of not overwriting home tiles that later steps still need to send.</li>
+<li><strong>Kernel 0's loop.</strong> For each k and j it reads the scalar <code>B[k, j]</code> and issues one <code>@fmacs</code> of length Mt: <code>C[:, j] += A[:, k] · B[k, j]</code>. That is Kt·Nt vector instructions per step, each moving a DSD with <code>@increment_dsd_offset</code> (<a href="06-dsds.html">Chapter 6</a>).</li>
+<li><strong>Timestamps.</strong> <code>stamp_now(k)</code> writes the 48-bit TSC into slot k of an exported array: once at <code>main()</code>, three times per step (broadcasts issued, compute starts, compute ends) and once in <code>exit</code>. The host reads them with a 16-bit memcpy, as in Lab 3. All differences are taken on one PE (note 19 of the course's cross-chapter rules: counters on different PEs start at different times).</li>
+</ul>
+<p>The host script: tile, copy, launch, read C and the stamps, check against numpy, then report one PE's split.</p>
+{{code:programs/06-summa/run.py}}
+{{code:programs/06-summa/commands.sh}}
+{{out:programs/06-summa/expected_output.txt}}
+<p>The result matches numpy to <code>rtol = 1e-5</code> on both chips <span class="tag measured">Measured</span>; the summation order differs from numpy's, so it is not bit-identical. The fabric is 11 × 6 for P = 4: the rectangle plus memcpy's 7 columns and 2 rows (<a href="07-host-io.html">Chapter 7</a>).</p>
+
+<h2 id="measure">Measurements and the compute-bound regime</h2>
+<p>All numbers are TSC cycles on the far-corner PE (P−1, P−1), SDK 2.10.1 simulator, square tiles T = Mt = Kt = Nt <span class="tag measured">Measured</span>. "Broadcast" is the time from issuing the two broadcasts to the start of <code>compute</code>, summed over the steps; it includes the library's set-up and teardown and the wait for the slower of the two networks. "Compute" is the time inside <code>compute</code>. The kernel time on the other PEs differs by less than 1% (the run prints the min and max).</p>
+<div class="table-wrap"><table id="mtab">
+<tr><th>Chip, kernel</th><th>P</th><th>T</th><th>Kernel cycles</th><th>Broadcast</th><th>Compute</th><th>Compute per step</th><th>Ideal T³</th></tr>
+<tbody id="mtab-body"></tbody>
+</table></div>
+
+<div class="widget" id="ch">
+<h4>Cycles per step: measured against the model</h4>
+<p class="hint">Points are measured (P = 4). Lines are the fitted models from the text, and the dashed line is the compute-bound ideal: one f32 multiply-add per cycle per PE, T³ cycles per step (<code>@fmacs</code> streams 1 element per cycle on both chips when its operands do not collide, <a href="06-dsds.html">Chapter 6</a>). Drag the tile size to read off the split; hover a point for its numbers.</p>
+<div class="controls">
+<label>chip <select id="ch-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>y axis <select id="ch-y"><option value="step">cycles per step</option><option value="mac">cycles per multiply-add</option></select></label>
+<label>tile T <input type="range" id="ch-t" min="4" max="45" value="16"> <span id="ch-tv" class="mono"></span></label>
+</div>
+<svg id="ch-svg" viewBox="0 0 700 330" width="700" role="img" aria-label="Cycles per step versus tile size"></svg>
+<div class="readout" id="ch-out"></div>
+</div>
+
+<h3>What the numbers say</h3>
+<ul id="findings">
+<!--FINDINGS-->
+</ul>
+
+<!--BANK-->
+
+<h2 id="design">A design method, applied to this kernel</h2>
+<p>Each lab so far handed you a finished program. Here is the procedure behind one, using the budgets from Chapters 4, 5, 7 and 10 in order. Do it on paper before writing CSL; every line below took one compile-and-measure cycle to discover the hard way.</p>
+<div class="table-wrap"><table class="budget">
+<tr><th>Step</th><th>Question</th><th>For 06-summa</th></tr>
+<tr><td>1. Placement</td><td>Which PE owns which data, and what must move?</td><td>PE (px, py) owns block (py, px) of A, B, C. C never moves; per step, A tiles move along rows and B tiles down columns. No reduction.</td></tr>
+<tr><td>2. Memory</td><td>Bytes per PE, against what the linker gives you</td><td>4 bytes × (2·Mt·Kt + 2·Kt·Nt + Mt·Nt), +Mt·Nt for kernel 1, + 6·(3P + 2) bytes of timestamps. Library and memcpy code come first: measured limits below.</td></tr>
+<tr><td>3. Colors</td><td>One per distinct route pattern through a PE; 20–23 are taken</td><td>4: two per axis for the library (colors 0–3). Routes change at run time, so the count does not grow with P.</td></tr>
+<tr><td>4. Task IDs</td><td>Local tasks in 8–20; never 29</td><td>8: library FSM + lock per axis (8–11), exit, compute, x_done, y_done (12–15). Task 29 is the library's teardown handler.</td></tr>
+<tr><td>5. Queues and microthreads</td><td>0/1 are memcpy's; one microthread per concurrent fabric op</td><td>Queues 2, 4 (row) and 3, 5 (column). Two moves run at once, on microthreads 2 and 3. Same IDs on both chips.</td></tr>
+<tr><td>6. Fabric</td><td>Rectangle + memcpy frame</td><td>(P + 7) × (P + 2), offsets 4, 1.</td></tr>
+<tr><td>7. Cycle model</td><td>Predict before you measure</td><td>Per step ≈ broadcast + compute, with the fits above; kernel ≈ P × step. Write the prediction down.</td></tr>
+<tr><td>8. Code and validate</td><td>Smallest size first, check against numpy</td><td>P = 2, T = 4 runs in seconds; a layout bug shows up as a wrong C, not a crash.</td></tr>
+<tr><td>9. Measure</td><td>TSC on one PE, split the phases, compare with the model</td><td>Stamps per step; the model was off by 2× on compute until the operand collision was found.</td></tr>
+</table></div>
+
+<div class="widget" id="bud">
+<h4>Budget calculator</h4>
+<p class="hint">Change the grid, the tile sizes, the kernel and the chip. Memory uses the measured link limits of this program (largest square tile that linked, and smallest that failed); between them the answer is "try it". Cycles use the fits from this chapter. Wafer-scale lines are <span class="tag derived">Derived</span>: they assume the SDK-visible WSE-2 fabric (750 × 994, Chapter 13) and the clock you pick, and leave out host I/O.</p>
+<div class="controls">
+<label>P <input type="number" id="b-p" min="2" max="743" value="4" style="width:5.5em"></label>
+<label>Mt <input type="number" id="b-m" min="1" max="64" value="8" style="width:4.5em"></label>
+<label>Kt <input type="number" id="b-k" min="1" max="64" value="8" style="width:4.5em"></label>
+<label>Nt <input type="number" id="b-n" min="1" max="64" value="8" style="width:4.5em"></label>
+<label>kernel <select id="b-ker"><option value="0">0 · column @fmacs</option><option value="1">1 · outer product</option></select></label>
+<label>chip <select id="b-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>clock <select id="b-clk"><option value="0.85">850 MHz (SDK assumption)</option><option value="1.1">1.1 GHz (WSE-2, HC22)</option></select></label>
+</div>
+<svg id="bud-mem" viewBox="0 0 680 92" width="680" role="img" aria-label="Memory budget bar"></svg>
+<div class="readout" id="b-out"></div>
+</div>
+
+<h2 id="scale">Scaling up <span class="tag derived">Derived</span></h2>
+<!--SCALE-->
+
+<h2 id="ex">Exercises</h2>
+<ol>
+<!--EXERCISES-->
+</ol>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Why does SUMMA need no reduction, while Chapter 12's GEMV did?</summary><p>The owner of a C block accumulates every term of its own sum: at step s it receives the A and B blocks it needs. In the GEMV the A blocks stayed put and each PE produced a partial sum of a y block that lived on several PEs, so the partials had to be added along the row.</p></details>
+<details><summary>Why does the library rewrite routes before every broadcast instead of declaring them in the layout?</summary><p>The root moves every step, so the direction each router receives from changes. A static route has one input direction (on WSE-3 at most one is allowed), so static routes would need one color per possible root. Rewriting one color at run time keeps it to two colors per axis.</p></details>
+<details><summary>What does the teardown wavelet protect against?</summary><p>Rewriting a router while wavelets of the previous broadcast are still passing through it. The root sends the teardown after its last data wavelet, on the same route, so each router enters teardown only after the data has gone by, and the next <code>broadcast()</code> may then reconfigure it.</p></details>
+<details><summary><code>x_done</code> runs, then <code>y_done</code>. How many times does <code>compute</code> run, and what if the order is reversed?</summary><p>Once, either way. <code>compute</code> starts blocked; one callback activates it and the other unblocks it, and the task picker runs it only when both bits are set. <code>compute</code> blocks itself again before starting the next step.</p></details>
+<details><summary>Kernel 0 at T = 32 needs 101 cycles per <code>@fmacs</code> of 32 elements. Where do they go?</summary><p>About 2 cycles per element (64), because the two source streams collide in the same memory bank so <code>@fmacs</code> runs at half speed, plus about 37 cycles per instruction for the loop: reading the scalar, moving the DSD and starting the op.</p></details>
+<details><summary>Doubling P at fixed tile size: what happens to the time per step and to the total?</summary><p>The time per step stays almost constant (the multicast's hop cost is tiny), so the kernel takes twice as long in total, for a matrix twice as large in each dimension: 8× the work in 2× the time, on 4× the PEs.</p></details>
+<details><summary>Your design needs a third axis instance of the library. What runs out first?</summary><p>Check each budget: 2 more colors (fine), 2 more task IDs (fine), and 2 more queues and a microthread for a third concurrent move. On WSE-3, queues 0–1 are memcpy's and 2–5 are taken, so you need queues 6/7 and their microthreads; on WSE-2 the queue and microthread counts are smaller (Chapter 5), so that is where to look first.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+/*SCRIPT*/
+</script>
+</body>
+</html>

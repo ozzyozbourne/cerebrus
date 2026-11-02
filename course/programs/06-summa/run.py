@@ -22,7 +22,8 @@ def to_tiles(X, tr, tc):
 def from_tiles(flat, tr, tc):
   return flat.reshape(P, P, tc, tr).transpose(0, 3, 1, 2).reshape(P * tr, P * tc)
 
-rt = SdkRuntime(args.name, cmaddr=args.cmaddr)
+# suppress_simfab_trace: large tiles would otherwise write gigabytes of simulator traces.
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr, suppress_simfab_trace=True)
 rt.load(); rt.run()
 kw = dict(streaming=False, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=False)
 # One memcpy per matrix covers the whole P x P rectangle: the wire order is

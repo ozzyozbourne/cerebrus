@@ -25,7 +25,7 @@
 <li>Write CG and sort its steps into local, neighbour and global work, and say which one limits a wafer-sized solve.</li>
 <li>Combine library modules on one PE: give each its colors, task IDs, queues, microthreads and DSRs, and check the budget.</li>
 <li>Explain how the SDK's allreduce reroutes one color three times per call, and why it acts as a barrier.</li>
-<li>Compare a host-driven loop with an on-device loop, in simulated cycles and on real hardware.</li>
+<li>Compare a host-driven loop with an on-device loop in simulated cycles, and estimate the gap on a real system.</li>
 <li>Measure a per-iteration cost split with the TSC and predict how it scales with the grid and the column height.</li>
 </ul>
 </div>
@@ -103,7 +103,17 @@
 <div class="readout" id="bud-out"></div>
 </div>
 
-%%CLASH%%
+<p>Every outcome in the widget came from compiling and running a one-line change to the shipped program (3 iterations, 5 × 5 PEs) <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>Change</th><th>Chip</th><th>Result</th></tr>
+<tr><td>allreduce queue 2 → 4 (the stencil's first input queue)</td><td>WSE-3</td><td>compile error in the stencil library: <code>initialization for this queue has already been set</code></td></tr>
+<tr><td>allreduce color 8 → 7 (a stencil color)</td><td>WSE-3</td><td>compile error: <code>config for this color has already been set</code></td></tr>
+<tr><td>allreduce color 8 → 22 (memcpy's command stream)</td><td>WSE-3</td><td>compile error, this time in the allreduce library: <code>config for this color has already been set</code></td></tr>
+<tr><td>state task 12 → 14 (a stencil task)</td><td>WSE-3</td><td>compile error: <code>task ID '14' bound to more than one task</code></td></tr>
+<tr><td>stencil microthread 3 → 2 (the allreduce's)</td><td>WSE-3</td><td>compiles, runs, correct; 4,595 instead of 4,574 cycles per iteration</td></tr>
+<tr><td>allreduce queue 2 → 3 (the stencil's output queue)</td><td>WSE-2</td><td>compiles, runs, correct; 4,180 instead of 4,186 cycles per iteration</td></tr>
+</table></div>
+<p>Colors, task IDs and initialized queues are checked by the compiler, and a clash names the library line where the second claim happens. Two things are not checked. A microthread is only in use while an asynchronous operation runs on it. On WSE-2 an output queue is not tied to a color (the color comes from the <code>fabout_dsd</code>; only WSE-3 code calls <code>@initialize_queue</code> on an output queue, which is why the WSE-3 stencil needs four output queues and the WSE-2 stencil one). Those two shared slots work here only because the program never runs the stencil and the allreduce at the same time. A program that overlapped them would break silently, so keep the ledger even for slots the compiler does not police.</p>
 
 <div class="callout bug">
 <strong>The import path trap</strong>
@@ -120,9 +130,123 @@
 <p>Between stages each PE calls <code>reset_routes</code>, clears its switch position and exits teardown mode on that color (<code>tile_config</code>). The teardown wavelet is how the PEs agree that a stage is over: each PE's teardown handler activates the task that moves the library's state machine on. That is why it needs only one color, one queue and four task IDs. The cost is that a stage can only start once the previous one has drained, so the three stages run strictly one after another, and every message is a single wavelet whose cost is almost all latency.</p>
 <div class="callout key">
 <strong>Why the allreduce is a barrier</strong>
-<p>No PE gets the sum back until the broadcast reaches it, and the broadcast cannot start until the bottom-right PE has every row's partial sum. So no PE leaves an allreduce before the last PE has entered it. A PE that reaches the allreduce early just waits inside it. You can see this in the profile: on the default 5 × 5 grid every PE spends exactly the same %%PERIT%% cycles per iteration, but the share spent inside the allreduce varies from PE to PE by %%ARSPREAD%% cycles <span class="tag measured">Measured</span>. The fast PEs absorb the difference as waiting.</p>
+<p>No PE gets the sum back until the broadcast reaches it, and the broadcast cannot start until the bottom-right PE has every row's partial sum. So no PE leaves an allreduce before the last PE has entered it. A PE that reaches the allreduce early just waits inside it. You can see this in the profile: on the default 5 × 5 grid every PE spends exactly the same 4,574 cycles per iteration, but the share spent inside the allreduce varies from PE to PE by 228 cycles <span class="tag measured">Measured</span>. The fast PEs absorb the difference as waiting.</p>
 </div>
 <p>The SDK also ships a general-purpose 2-D library, <code>&lt;collectives_2d&gt;</code>, introduced in <a href="12-lab-neighbours.html#collectives">Chapter 12</a>. It uses two colors per dimension and also rewrites routes at runtime; <a href="14-lab-gemm.html">Chapter 14</a> uses it for SUMMA's row and column broadcasts and goes into its parameters. Chapter 12's review measured its fixed overhead at about 700 cycles per operation <span class="tag measured">Measured</span>, the same order as the allreduce here.</p>
+<h2 id="code">The code</h2>
+<p>The layout imports the layout half of each library with the colors and task IDs it reserves for it, then hands every PE its three parameter structs. The comment at the top is the budget the widget above draws.</p>
+{{code:programs/07-cg/layout.csl}}
+<p>The PE program holds both loops. The five CG phases are ordinary functions. Each one either finishes by itself (<code>update_p</code>) or ends by calling a library that finishes later (<code>spmv_Ap</code> ends in the stencil, <code>eta_dot</code> and <code>update_x_r_rho</code> in the allreduce). Either way control comes back to <code>phase_done()</code>.</p>
+{{code:programs/07-cg/pe_program.csl}}
+
+<h3>Two loops, one program</h3>
+<p>The only difference between the loops is what <code>phase_done()</code> does next.</p>
+<ul>
+<li><strong>Host-driven.</strong> The host calls <code>f_update_p</code>, <code>f_spmv_Ap</code>, <code>f_eta</code> and <code>f_update_x_r_rho</code> one after another with <code>launch(…, nonblock=False)</code>, then copies <code>rho</code> back and decides whether to go on. <code>phase_done()</code> calls <code>unblock_cmd_stream()</code>, so each <code>launch</code> returns only when its phase has finished on every PE. This is the SDK's <code>run.py</code> with <code>kernel.csl</code>, and it is how you would first port a CG written in numpy: the loop stays in Python.</li>
+<li><strong>Device-driven.</strong> The host makes one call, <code>f_cg</code>. Now <code>phase_done()</code> activates task <code>STATE</code> (<code>next_phase</code>), which looks at the phase that just finished and starts the next one. After the ⟨r, r⟩ allreduce it tests the stopping rule itself. That is the SDK's <code>device_run.py</code> with <code>kernel_cg.csl</code>.</li>
+</ul>
+<p>The device loop decides when to stop without any extra message because the allreduce leaves the <em>same</em> ρ on every PE, so every PE takes the same branch at the same iteration. <code>run.py</code> checks that all W·H copies of the ρ history are identical. Unlike Lab 3's step chain, the iteration here is gated by the allreduce, a global barrier, rather than by neighbours. That is why a single counter of finished operations is enough and no PE can run an iteration ahead.</p>
+<p>The host script builds the matrix as a numpy function, runs the same f32 recurrence as a reference, then runs both loops on the device and compares the solution and the residual history with numpy:</p>
+{{code:programs/07-cg/run.py}}
+<p><code>commands.sh</code> sizes the fabric to the W × H rectangle plus memcpy's frame, as in every lab:</p>
+{{code:programs/07-cg/commands.sh}}
+{{out:programs/07-cg/expected_output.txt}}
+<p>Both loops take the same iterations as numpy, and the device result agrees with numpy to 2.4e-7 (the solution is of order 0.1). The default run converges to 1e-5 in 15 iterations. WSE-2 gives the same 15 iterations at 4,186 cycles per iteration <span class="tag measured">Measured</span>.</p>
+
+<h2 id="profile">Where an iteration's cycles go</h2>
+<p>With <code>PROFILE=1</code> every phase calls <code>mark()</code>, which reads the timestamp counter, adds the time since the last mark to the running bucket and opens the next one. All readings are on one PE's own counter, so they are valid (Chapter 12 explains why readings from different PEs are not comparable). The profile starts after the initial residual, so it covers CG iterations only. Time spent waiting inside a library, for neighbours or for the global sum, counts towards that library's bucket.</p>
+<div class="stat-row">
+<div class="stat"><div class="v">4,574</div><div class="l">cycles per iteration, device loop, 5 × 5 × 5 <span class="tag measured">Measured</span></div></div>
+<div class="stat"><div class="v">41%</div><div class="l">of it in the two allreduces <span class="tag measured">Measured</span></div></div>
+<div class="stat"><div class="v">41%</div><div class="l">in the stencil SpMV <span class="tag measured">Measured</span></div></div>
+<div class="stat"><div class="v">+1,224</div><div class="l">cycles per iteration when the host drives <span class="tag measured">Measured</span></div></div>
+</div>
+
+<div class="widget" id="tl">
+<h4>One CG iteration on the centre PE</h4>
+<p class="hint">Measured split of one iteration (TSC on PE (2,2), 5 × 5 PEs, 5 cells each, averaged over 15 iterations in the device loop and 3 in the host loop). Hover a segment for its cycles. The last option scales the host loop to a real system using the SDK's 200 µs per host command (Chapter 7); that bar is <span class="tag derived">Derived</span>, not simulated.</p>
+<div class="controls">
+<label>chip <select id="tl-arch"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>view <select id="tl-view"><option value="sim">simulated cycles</option><option value="real">real system, host loop at 200 µs per command</option></select></label>
+</div>
+<svg id="tl-svg" viewBox="0 0 720 210" width="720" role="img" aria-label="Per-iteration cycle split, host loop versus device loop"></svg>
+<div class="readout" id="tl-out"></div>
+</div>
+
+<p>Four things stand out.</p>
+<ol>
+<li><strong>The SpMV is not the arithmetic.</strong> 7 multiply-adds on 5 cells is 35 flops, yet the stencil phase takes 1,866 cycles. Almost all of it is the library's message protocol: four directions, each a send and a receive of 2-wavelet blocks, each with its own task. Lab 3 measured the same thing on a much smaller scale (one message ≈ 15 cycles, plus instruction start-up ≈ 15 cycles each).</li>
+<li><strong>The allreduce costs as much as the SpMV</strong>, for two single-float sums. As the scaling section shows, that cost grows with the grid's side while the SpMV's does not.</li>
+<li><strong>Every PE takes the same time per iteration.</strong> All 25 PEs measured exactly 4,574 cycles per iteration, but their allreduce share ranged from 1,898 to 2,126 <span class="tag measured">Measured</span>. The allreduce is a barrier: PEs that finish their own work early wait inside it.</li>
+<li><strong>Profiling is not free.</strong> With <code>PROFILE=0</code> the device loop takes 4,261 cycles per iteration on WSE-3 (3,782 on WSE-2), so the eight <code>mark()</code> calls cost about 310–400 cycles per iteration, 7–10% <span class="tag measured">Measured</span>. Use the profile to see the split, and the <code>PROFILE=0</code> number for the speed.</li>
+</ol>
+
+<h3>Host loop or device loop</h3>
+<p>In the simulator the host loop costs 1,224 extra cycles per iteration on WSE-3 and 1,147 on WSE-2, all of it in the control bucket <span class="tag measured">Measured</span>. The simulator charges only the device side of each launch: memcpy's command task decoding the RPC and the <code>unblock_cmd_stream()</code> at the end, five times per iteration (four launches and one copy of ρ). The host side costs nothing in simulated time, because the simulator has no network. With 15 host iterations instead of 3 the per-iteration figure is 5,783 instead of 5,798, so it is stable <span class="tag measured">Measured</span>.</p>
+<p>On a real system each of those five commands crosses the network. Chapter 7 uses the SDK's figure of about 200 µs of overhead per transfer <span class="tag sdk">SDK 2.10.1</span>. Five per iteration is about 1 ms, against 4,261 cycles ≈ 5 µs for the iteration itself at the SDK's 850 MHz, so a host-driven CG would spend about 99.5% of its time waiting for the host <span class="tag derived">Derived</span>. The simulator's 27% gap understates the real one by two orders of magnitude. For any iterative solver, put the loop on the device, and copy results back once at the end.</p>
+
+<h2 id="scaling">How it scales</h2>
+<p>Two knobs change the cost of an iteration: the grid of PEs (W × H) and the column on each PE (Z). They act on different phases.</p>
+<p><strong>Grid size.</strong> With Z = 5 fixed, the stencil, axpy and dot phases take the same cycles on every grid from 3 × 3 to 16 × 16: each PE does the same local work and talks to the same four neighbours. Only the allreduce grows <span class="tag measured">Measured</span>, WSE-3, 6 iterations each:</p>
+<div class="table-wrap"><table id="grid-tab">
+<tr><th>PEs (W × H)</th><th>cycles / iteration</th><th>allreduce (2 per iteration)</th><th>fit 958 + 100·W + 88·H</th></tr>
+</table></div>
+<p>A plane fits all seven grids to within 30 cycles: <strong>allreduce ≈ 958 + 100·W + 88·H cycles</strong> for the two calls in an iteration on WSE-3 <span class="tag derived">Derived</span>. On WSE-2 the allreduce grows from 1,561 cycles at 5 × 5 to 2,705 at 12 × 12, about 82 cycles per PE of W + H against 94 on WSE-3 <span class="tag measured">Measured</span>. The extra cost per PE is about 50 cycles per call per PE along a row and 44 along a column. A router hop costs 2 cycles on WSE-3 (Chapter 4), so distance is not what costs. In the row and column reduce stages the values reach the last PE one at a time, each with its own send, switch-advance wavelet and fabric add, so the cost is per <em>value</em>, not per hop. That makes this allreduce linear in the grid's side, and serial.</p>
+<p><strong>Column length.</strong> With the grid fixed at 5 × 5, the allreduce stays at 1,898 cycles whatever Z is, and the stencil grows <span class="tag measured">Measured</span>, WSE-3:</p>
+<div class="table-wrap"><table id="z-tab">
+<tr><th>Z (cells per PE)</th><th>BLOCK</th><th>cycles / iteration</th><th>stencil SpMV</th><th>local dot</th><th>axpy</th></tr>
+</table></div>
+<p>With 2-wavelet blocks the stencil costs about 276 cycles per extra cell, over 100 times its 7 multiply-adds per cell. Bigger blocks remove almost all of it: at Z = 100 the stencil drops from 27,782 cycles (50 blocks per direction) to 6,483 (10 blocks) and 1,957 (one block) <span class="tag measured">Measured</span>. Each block saved is worth about 500–530 cycles, one send and one receive in each of four directions, so roughly 65 cycles per message <span class="tag derived">Derived</span>. The price is memory: <code>BLOCK_SIZE</code> sizes the library's temporary communication buffers (the SDK's own comment), so they grow with it. The SDK benchmark ships with <code>BLOCK_SIZE:2</code> <span class="tag sdk">SDK 2.10.1</span>; this program keeps that default and exposes it as <code>BLOCK</code>. The local dot is a scalar <code>@map</code> loop at 10 cycles per cell, so at Z = 100 it costs more than the whole stencil with one block. At <code>BLOCK=100</code> the allreduce also rose from 1,898 to 2,292 cycles; we did not track down why.</p>
+
+<div class="widget" id="cost">
+<h4>Predict a solve</h4>
+<p class="hint">A cost model built from the measurements above (WSE-3, BLOCK = 2, device loop, profiling on). The allreduce uses the fit; the other phases use the measured value at that Z. The iteration count is CG's guaranteed bound for reducing the error to 1e-5 of its start (Theorem 10.2.6) and the measured count where we ran it. Past 16 PEs a side the model is an extrapolation, so treat it as a trend, not a prediction.</p>
+<div class="controls">
+<label>W <input type="range" id="c-w" min="2" max="1000" value="5"><span id="c-wv" class="mono"></span></label>
+<label>H <input type="range" id="c-h" min="2" max="1000" value="5"><span id="c-hv" class="mono"></span></label>
+<label>Z <select id="c-z"><option>5</option><option>20</option><option>50</option><option>100</option></select></label>
+<label>preset <select id="c-p"><option value="">choose…</option><option value="5,5,5">5 × 5 × 5 (default)</option><option value="8,8,8">8 × 8 × 8</option><option value="12,12,12">12 × 12 × 12</option><option value="16,16,5">16 × 16 PEs, Z = 5</option><option value="950,950,100">≈ whole wafer, Z = 100</option></select></label>
+</div>
+<svg id="cost-svg" viewBox="0 0 720 150" width="720" role="img" aria-label="Predicted per-iteration cost split"></svg>
+<div class="readout" id="cost-out"></div>
+</div>
+
+<p><strong>Iterations grow too.</strong> The condition number of the N × N × N Laplacian grows like N², so CG's iteration count grows like N. Measured iterations to 1e-5 on WSE-3: %%CONV%% <span class="tag measured">Measured</span>, against the bound's 23, 35 and 51. CG usually beats its bound because the right-hand side does not excite the worst eigenvectors equally.</p>
+<figure>
+<svg id="conv-svg" viewBox="0 0 720 300" width="720" role="img" aria-label="Measured CG convergence on three grid sizes"></svg>
+<figcaption><b>Convergence.</b> Measured |r<sub>k</sub>|/|b| on the device (log scale) for an N × N × N box with N × N PEs and N cells each, with CG's bound 2·((√κ − 1)/(√κ + 1))<sup>k</sup> dashed in the same colour. The bound bounds the error in the A-norm, not the residual, so it is a guide to the trend, not a hard ceiling on these curves.</figcaption>
+</figure>
+
+<div class="callout key">
+<strong>The scaling law of this solver</strong>
+<p>Grow the box in x and y with a fixed column, and the time per solve grows like the square of the side: the number of iterations grows like N, and each iteration's allreduce cost grows like N. At 16 × 16 PEs the two allreduces already take 60% of an iteration (3,966 of 6,650 cycles) <span class="tag measured">Measured</span>. Extrapolated to a whole wafer (about 900,000 PEs, say 950 × 950) the fit gives roughly 180,000 cycles of allreduce per iteration against about 2,700 of other work <span class="tag derived">Derived</span>. That is an extrapolation sixty times beyond the largest grid we simulated, but the direction is clear. Algorithms for big wafers therefore attack the global sums: pipelined or tree-shaped reductions whose cost grows with hops rather than values, putting more cells on each PE so the local work hides the sum, or CG variants that merge the two dot products into one reduction per iteration.</p>
+</div>
+
+<h2 id="exercises">Exercises</h2>
+<ol>
+<li><p><strong>Read the profile.</strong> Run <code>W=12 H=12</code> and <code>W=16 H=4</code> (both with <code>ITERS=6 EPS=1e-12 HOST_ITERS=1</code> so the run lasts exactly 6 iterations). Before running, predict the allreduce cycles from the fit.</p>
+<details><summary>Expected result</summary><p>3,214 and 2,910 cycles per iteration in the allreduce; the fit gives 3,214 and 2,910.</p></details></li>
+<li><p><strong>Block size.</strong> At <code>Z=100</code>, compare <code>BLOCK=2</code>, <code>10</code> and <code>100</code>. Explain the stencil's change from what one message costs.</p>
+<details><summary>Hints</summary><p>The stencil sends Z/BLOCK messages in each of four directions and receives as many. Each message has a fixed cost (start an operation, run a completion task) on top of its wavelets.</p></details></li>
+<li><p><strong>One reduction per iteration.</strong> Chronopoulos and Gear's CG variant computes ⟨r, r⟩ and ⟨w, r⟩ together, so an iteration needs one allreduce of two values. The library's <code>allreduce(n, …)</code> takes a length. Measure what a 2-value allreduce costs compared to two 1-value calls, before you rewrite the solver.</p>
+<details><summary>Hints</summary><p>Call <code>reduce_mod.allreduce(2, &amp;buf, …)</code> on a two-element array from a test RPC and time it with <code>now()</code>. If it costs much less than two calls, the variant pays off on big grids.</p></details></li>
+<li><p><strong>Move a module.</strong> Give the allreduce color 9 and tasks 21–24 instead of 8 and 17–20, and the state machine task 11. Which edits does it take, and in which files?</p>
+<details><summary>Hints</summary><p>Only <code>layout.csl</code> (and the ledger comment). The libraries never pick their own IDs. Check the result against Chapter 5's ranges for local task IDs.</p></details></li>
+</ol>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Which CG steps need data from more than one PE, and what kind?</summary><p>The stencil (w = A p) needs the four neighbouring PEs' columns. The two dot products need every PE: a local sum, then an allreduce. The axpys are local.</p></details>
+<details><summary>Why does no library in this program choose its own colors or task IDs?</summary><p>Several modules share one PE. Only the top level sees all of them, so it hands each its slots as parameters and keeps the ledger. A clash on a color, task ID or initialized queue is then a compile error at a single place.</p></details>
+<details><summary>How does each PE know when to stop the device loop without asking the host?</summary><p>The allreduce leaves the same ρ = ⟨r, r⟩ on every PE, so every PE evaluates the same test with the same values and stops at the same iteration.</p></details>
+<details><summary>All 25 PEs take exactly 4,574 cycles per iteration, but their allreduce times differ by 228 cycles. Why?</summary><p>The allreduce is a barrier: no PE gets the sum back until all have contributed. A PE that reaches it early waits inside it, so the waiting shows up in its allreduce bucket and the iteration time comes out the same everywhere.</p></details>
+<details><summary>The simulator says the host loop costs 27% more per iteration. Why is that misleading for a real system?</summary><p>The simulator only charges the device's part of each launch. On a real system each of the five host commands per iteration has about 200 µs of overhead, so the host loop is roughly 200 times slower, not 27%.</p></details>
+<details><summary>You double both W and H, keeping Z. What happens to the time per iteration, and to the time per solve?</summary><p>Per iteration only the allreduce grows, by about 100·W + 88·H more cycles. The condition number grows too, so the solve needs more iterations as well. Together the allreduce part of a solve grows roughly like the square of the side.</p></details>
+</div>
 </main>
+<script src="assets/course.js"></script>
+<script>
+%%SCRIPT%%
+</script>
 </body>
 </html>

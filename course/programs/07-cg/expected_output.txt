@@ -1,0 +1,10 @@
+5 x 5 PEs x 5 cells = 125 unknowns; stop at |r| <= 1e-05 |b| or 30 iterations
+host-driven loop  : 3 iterations, 5798 cycles/iteration on PE (2,2)  [axpy 323, stencil SpMV 1866, local dot 165, allreduce 1895, control 1557]
+device-driven loop: 15 iterations, 4574 cycles/iteration on PE (2,2)  [axpy 352, stencil SpMV 1866, local dot 165, allreduce 1898, control 295]
+  all 25 PEs: 4574-4574 cycles/iteration, of which allreduce 1898-2126 (PE (2,2) 1898)
+|r_k|/|b|, k = 0..15 (device):
+[1.00e+00 9.71e-01 6.08e-01 4.25e-01 1.91e-01 6.81e-02 2.44e-02 9.91e-03 5.82e-03 3.29e-03 1.59e-03
+ 5.05e-04 1.28e-04 4.02e-05 1.87e-05 5.74e-06]
+true residual |b - A x|/|b| = 5.71e-06; max |x_wse - x_numpy| = 2.4e-07
+SUCCESS!
+[145166 simulated cycles, WSE-3]
