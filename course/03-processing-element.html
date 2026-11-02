@@ -5,29 +5,54 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Inside a Processing Element</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+  /* chapter-local styles */
+  #anat .hl { stroke: var(--accent) !important; stroke-width: 4 !important; }
+  #anat text.hl { fill: var(--accent) !important; stroke: none !important; font-weight: 700; }
+  ol.journey li { margin: 4px 0; padding: 2px 6px; border-radius: 6px; }
+  ol.journey li.on { background: var(--accent-soft); outline: 1px solid var(--accent); }
+  .ok-t { color: var(--green); font-weight: 700; }
+  .bad-t { color: var(--red); font-weight: 700; }
+  .warn-t { color: var(--amber); font-weight: 700; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: var(--surface-2); color: var(--text); border: none; padding: 6px 10px; font: 600 13.5px var(--sans); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.on { background: var(--accent); color: var(--on-accent); }
+  .chain { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin: 14px 0; }
+  .chain > div { flex: 1 1 150px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+  .chain > div b { display: block; font-size: 16px; }
+  @media (max-width: 680px) { main .tag { white-space: normal; } }
+  svg .wav { cursor: pointer; }
+  svg .wav:focus { outline: none; }
+  svg .wav:focus rect, svg .wav.sel rect { stroke-width: 3; }
+</style>
 </head>
 <body>
 <main>
 <div class="kicker">Chapter 3 · Part II · The machine</div>
 <h1>Inside a processing element</h1>
-<p class="lede">The wafer is 900,000 copies of one small computer. Each processing element (PE) is a compute engine with 48 KB of private memory, wired to a five-port router. Understand one PE and you understand the building block of everything else.</p>
+<p class="lede">The WSE-3 wafer is about 900,000 copies of one small computer <span class="tag vendor">Vendor</span>. Each processing element (PE) is a compute engine with 48 KB of private memory, wired to a five-port router. (Cerebras also calls it a core or a tile; this course says PE.) Understand one PE and you understand the building block of everything else.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
 <ul>
-<li>Draw a PE and name its parts: CE, SRAM banks, registers, DSRs, microthreads, router.</li>
-<li>Budget a PE's 48 KB for code and data.</li>
-<li>Explain why the WSE has no caches and why sparsity is "free".</li>
+<li>Draw a PE, name its parts, and trace one wavelet through them.</li>
+<li>Budget a PE's 48 KB with the real fixed overheads, and say which bank an address lands in.</li>
+<li>Estimate how fast one PE runs an f32 or f16 kernel, and explain what eight microthreads do and do not buy.</li>
+<li>Explain why the WSE has no caches, and how dataflow lets it skip zeros (and what that costs).</li>
 </ul>
 </div>
 
 <h2>The anatomy</h2>
 <figure>
-<svg viewBox="0 0 760 420" width="760" role="img" aria-label="Exploded view of a processing element">
-  <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
+<svg id="anat" viewBox="0 0 760 456" width="760" role="img" aria-label="Exploded view of a processing element: compute engine with SRAM banks, cache, registers, SIMD datapath, task picker and microthreads, plus a router with five bidirectional ports">
+  <defs>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
+  </defs>
+  <g transform="translate(0,34)">
   <!-- PE outline -->
-  <rect x="20" y="20" width="520" height="380" rx="14" fill="none" class="s-muted" stroke-width="1.5" stroke-dasharray="6 4"/>
-  <text x="34" y="44" font-weight="700">One PE (one "tile")</text>
+  <rect x="20" y="20" width="540" height="380" rx="14" fill="none" class="s-muted" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="34" y="44" font-weight="700">One PE (also called a core or tile)</text>
 
   <!-- CE -->
   <rect x="40" y="60" width="340" height="320" rx="10" class="box" stroke-width="1.5"/>
@@ -35,156 +60,663 @@
 
   <!-- SRAM banks -->
   <text x="56" y="110" font-size="13" font-weight="600">SRAM · 48 KB = 8 banks × 6 KB</text>
-  <g id="banks"></g>
-  <text x="56" y="182" font-size="12" class="muted">single-cycle · interleaved by 32-bit word · code AND data</text>
+  <g id="banks" data-j="banks"><title>SRAM: 48 KB in 8 single-ported banks, single-cycle access. Holds code and data.</title></g>
+  <text x="56" y="182" font-size="11" class="muted">single-cycle · banked (see Memory) · code AND data</text>
 
+  <g><title>Software-managed cache: 256 B on WSE-2, 512 B on WSE-3, for hot data such as accumulators</title>
   <rect x="56" y="196" width="96" height="44" rx="6" class="pur" stroke-width="1.3"/>
   <text x="104" y="215" text-anchor="middle" font-size="12" font-weight="600">SW cache</text>
-  <text x="104" y="231" text-anchor="middle" font-size="11" class="muted">256 B → 512 B</text>
+  <text x="104" y="231" text-anchor="middle" font-size="11" class="muted">256 B → 512 B</text></g>
+  <g><title>16 general-purpose registers (GPRs) for scalars and addresses (WSE-3)</title>
   <rect x="160" y="196" width="96" height="44" rx="6" class="blu" stroke-width="1.3"/>
   <text x="208" y="215" text-anchor="middle" font-size="12" font-weight="600">16 GPRs</text>
-  <text x="208" y="231" text-anchor="middle" font-size="11" class="muted">WSE-3</text>
-  <rect x="264" y="196" width="100" height="44" rx="6" class="acc" stroke-width="1.3"/>
+  <text x="208" y="231" text-anchor="middle" font-size="11" class="muted">scalars (WSE-3)</text></g>
+  <g><title>48 data-structure registers (DSRs), each holding one DSD (Chapter 6)</title>
+  <rect id="j-dsr" x="264" y="196" width="100" height="44" rx="6" class="acc" stroke-width="1.3"/>
   <text x="314" y="215" text-anchor="middle" font-size="12" font-weight="600">48 DSRs</text>
-  <text x="314" y="231" text-anchor="middle" font-size="11" class="muted">hold DSDs (Ch. 6)</text>
+  <text x="314" y="231" text-anchor="middle" font-size="11" class="muted">hold DSDs (Ch. 6)</text></g>
 
-  <rect x="56" y="252" width="308" height="50" rx="6" class="grn" stroke-width="1.3"/>
-  <text x="210" y="272" text-anchor="middle" font-size="13" font-weight="600">SIMD datapath</text>
+  <g><title>SIMD datapath: 8-way FP16/BF16, 16-way INT8 on WSE-3; f32 measured at about 1 multiply-add per cycle</title>
+  <rect id="j-simd" x="56" y="252" width="308" height="50" rx="6" class="grn" stroke-width="1.3"/>
+  <text x="210" y="269" text-anchor="middle" font-size="13" font-weight="600">SIMD datapath (one, shared)</text>
   <g id="lanes"></g>
+  <text x="210" y="298" text-anchor="middle" font-size="10" class="muted">8 × FP16 lanes, 16 × INT8 (WSE-3) · f32 ≈ 1 FMA/cycle</text></g>
 
-  <rect x="56" y="312" width="150" height="56" rx="6" class="amb" stroke-width="1.3"/>
+  <g><title>Task picker: runs a task that is activated and not blocked (Chapter 5)</title>
+  <rect id="j-pick" x="56" y="312" width="150" height="56" rx="6" class="amb" stroke-width="1.3"/>
   <text x="131" y="332" text-anchor="middle" font-size="12" font-weight="600">task picker</text>
-  <text x="131" y="348" text-anchor="middle" font-size="11" class="muted">activated ∧ unblocked</text>
-  <text x="131" y="362" text-anchor="middle" font-size="11" class="muted">(Ch. 5)</text>
-  <rect x="214" y="312" width="150" height="56" rx="6" class="amb" stroke-width="1.3"/>
-  <text x="289" y="332" text-anchor="middle" font-size="12" font-weight="600">8 microthreads</text>
+  <text x="131" y="347" text-anchor="middle" font-size="11" class="muted">activated AND not blocked</text>
+  <text x="131" y="361" text-anchor="middle" font-size="11" class="muted">(Ch. 5)</text></g>
+  <g><title>8 microthreads: hardware contexts, each holding one in-flight vector operation. They share the one datapath.</title>
+  <rect id="j-ut" x="214" y="312" width="150" height="56" rx="6" class="amb" stroke-width="1.3"/>
+  <text x="289" y="330" text-anchor="middle" font-size="12" font-weight="600">8 microthreads</text>
   <g id="uts"></g>
+  <text x="289" y="362" text-anchor="middle" font-size="10" class="muted">in-flight ops, one datapath</text></g>
 
   <!-- Router -->
-  <rect x="420" y="150" width="100" height="100" rx="10" class="blu" stroke-width="2"/>
-  <text x="470" y="196" text-anchor="middle" font-weight="700">Router</text>
-  <text x="470" y="214" text-anchor="middle" font-size="11" class="muted">24 colors</text>
-  <path d="M470 150 V100" class="s-blu" stroke-width="2" marker-end="url(#a4)"/><text x="478" y="112" font-size="12">N</text>
-  <path d="M470 250 V300" class="s-blu" stroke-width="2" marker-end="url(#a4)"/><text x="478" y="296" font-size="12">S</text>
-  <path d="M520 200 H580" class="s-blu" stroke-width="2" marker-end="url(#a4)"/><text x="560" y="192" font-size="12">E</text>
-  <path d="M420 200 H385" class="s-blu" stroke-width="2" marker-end="url(#a4)"/>
-  <text x="398" y="190" font-size="12" font-weight="600">RAMP</text>
-  <text x="470" y="268" text-anchor="middle" font-size="11" class="muted">(WEST port omitted for clarity)</text>
+  <g><title>Router: five bidirectional ports (N, E, S, W and the RAMP to its own CE); 24 colors select routes (Chapter 4)</title>
+  <rect id="j-router" x="440" y="150" width="100" height="100" rx="10" class="blu" stroke-width="2"/>
+  <text x="490" y="196" text-anchor="middle" font-weight="700">Router</text>
+  <text x="490" y="212" text-anchor="middle" font-size="10.5" class="muted">24 colors</text>
+  <text x="490" y="226" text-anchor="middle" font-size="10.5" class="muted">(route tags, Ch. 4)</text></g>
+  <path id="j-n" d="M490 150 V98" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="498" y="112" font-size="12" font-weight="600">N</text>
+  <path id="j-s" d="M490 250 V302" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="498" y="296" font-size="12" font-weight="600">S</text>
+  <path id="j-e" d="M540 200 H606" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="590" y="192" font-size="12" font-weight="600">E</text>
+  <path id="j-w" d="M440 168 H408 V-14 H10" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/>
+  <text id="j-wl" x="40" y="-20" font-size="11.5" font-weight="600">W ← to the west neighbour (drawn over the CE for room)</text>
+  <path id="j-ramp" d="M440 222 H386" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/>
+  <text x="413" y="242" font-size="11.5" font-weight="600" text-anchor="middle">RAMP</text>
 
   <!-- notes -->
   <text x="580" y="70" font-size="13" font-weight="700">Not here:</text>
-  <text x="580" y="92" font-size="13" class="muted">✕ DRAM</text>
-  <text x="580" y="112" font-size="13" class="muted">✕ hardware cache</text>
-  <text x="580" y="132" font-size="13" class="muted">✕ instruction cache</text>
-  <text x="580" y="152" font-size="13" class="muted">✕ OS / threads</text>
+  <text x="580" y="92" font-size="12.5" class="muted">✕ DRAM</text>
+  <text x="580" y="111" font-size="12.5" class="muted">✕ hardware cache</text>
+  <text x="580" y="130" font-size="12.5" class="muted">✕ instruction cache</text>
+  <text x="594" y="146" font-size="11" class="muted">(none documented)</text>
+  <text x="580" y="166" font-size="12.5" class="muted">✕ OS / software threads</text>
   <text x="580" y="320" font-size="13" font-weight="700">Size</text>
-  <text x="580" y="340" font-size="13" class="muted">~0.05 mm² per PE</text>
-  <text x="580" y="360" font-size="13" class="muted">≈ ½ logic, ½ SRAM</text>
+  <text x="580" y="339" font-size="12" class="muted">WSE-2: 0.039 mm² (HC22)</text>
+  <text x="580" y="356" font-size="12" class="muted">WSE-3: ~0.05 mm² (blog)</text>
+  <text x="580" y="373" font-size="12" class="muted">≈ ½ logic, ½ SRAM (WSE-2)</text>
+  </g>
 </svg>
-<figcaption><b>A 48 KB computer with a router attached.</b> Figures are WSE-3 <span class="tag vendor">Vendor, Hot Chips 2024</span> unless noted. The RAMP is the router's fifth port, connecting it to its own CE. WSE-2 register counts were not found.</figcaption>
+<figcaption><b>A 48 KB computer with a router attached.</b> 48 KB, the 512 B cache, 16 GPRs, 48 DSRs and the SIMD widths are WSE-3 figures <span class="tag vendor">Vendor, Hot Chips 2024</span>. The 8 single-ported banks, single-cycle access, the 256 B WSE-2 cache, the WSE-2 core size and the ½ : ½ logic/SRAM split come from the WSE-2 talk <span class="tag vendor">Vendor, Hot Chips 2022</span>; the WSE-3 size from a Cerebras blog <span class="tag vendor">Vendor</span>, and the sources differ (Chapter 2). The 6 KB bank size comes from academic papers <span class="tag indep">Independent</span>. The 24 colors, the task picker rule and the microthread rules come from the SDK <span class="tag sdk">SDK 2.10.1</span>; "eight microthreads" is a WSE-2 vendor statement <span class="tag vendor">Vendor</span>. The f32 rate is measured in this chapter <span class="tag measured">Measured</span>. All five router links, the RAMP included, carry traffic in both directions. WSE-2 register counts were not found. Hover a block for a one-line description.</figcaption>
 </figure>
 
-<h3>Memory: 48 KB, one cycle, nothing else</h3>
-<p>The SRAM is 8 single-ported banks of 6 KB, interleaved by 32-bit word, single-cycle access. Interleaving lets a vector instruction read and write several consecutive words per cycle without bank conflicts. This 48 KB holds <em>everything</em> the PE knows: its code, its stack, its data, and the buffers the runtime needs. The SDK's own benchmarks keep data under about 46 KB, implying ~2 KB for code and runtime in those configurations <span class="tag sdk">SDK 2.10.1</span>. A quick sanity check: 21 PB/s ÷ 900,000 PEs ≈ 23 GB/s per PE, a few 32-bit accesses per cycle at ~1 GHz <span class="tag derived">Derived</span>.</p>
+<h3>Wavelets, colors and the router, in one paragraph</h3>
+<p>PEs share no memory. They exchange <strong>wavelets</strong>: 32-bit messages that hop one router per cycle <span class="tag indep">Indep</span>. Each wavelet carries a <strong>color</strong>, one of 24 tags <span class="tag sdk">SDK 2.10.1</span>; at every router the color selects a pre-configured route, and at the receiver it selects what to do with the data. The router has five ports: N, E, S, W to the neighbours, and the <strong>RAMP</strong> down to its own CE. Chapter 4 covers routing in full. For now the key fact is that a wavelet coming down the RAMP is what wakes the CE.</p>
 
-<p>There is a tiny <strong>software-managed cache</strong> (256 B on WSE-2, 512 B on WSE-3) for hot values such as accumulators — "software-managed" meaning the compiler decides what goes there; nothing is cached automatically.</p>
+<div class="widget" id="journey">
+<h4>One wavelet's journey through a PE</h4>
+<p class="hint">Lab 2 (Chapter 11) sums a vector along a row of PEs from west to east. A middle PE runs one instruction, <code>@fadds(out_dsd, in_dsd, v_dsd, .{ .async = true, .activate = exit_id })</code>: "add what arrives from the west to my <code>v</code>, and send the sum east". Step through it; the parts involved light up in the diagram above.</p>
+<div class="controls">
+<button class="btn secondary" type="button" id="j-prev">◀ Back</button>
+<button class="btn" type="button" id="j-next">Next step ▶</button>
+<span id="j-count" class="mono" aria-live="polite"></span>
+</div>
+<ol class="journey" id="j-list">
+<li>Earlier, a task issued the <code>@fadds</code>. Its three operands (fabric-in, memory <code>v</code>, fabric-out) were loaded into <b>DSRs</b> and the operation was handed to a <b>microthread</b>. The task then ended; nothing waits in a loop.</li>
+<li>A wavelet arrives at the <b>router's W port</b>. The router looks up its color: "deliver to my own CE".</li>
+<li>It goes down the <b>RAMP</b> into one of the CE's input queues (on WSE-3 the program bound queue 2 to that color).</li>
+<li>The microthread now has its fabric operand. The <b>datapath</b> adds it to <code>v[i]</code>, read from the <b>SRAM banks</b> in one cycle.</li>
+<li>The sum goes back up the <b>RAMP</b> through an output queue; the router sends it out of the <b>E port</b> on the next color.</li>
+<li>After the last element the microthread finishes and activates <code>exit_id</code>. The <b>task picker</b> runs that task once it is activated and not blocked.</li>
+</ol>
+<p class="hint" style="margin:0">Every later chapter zooms into one of these steps: routing (Chapter 4), tasks (Chapter 5), DSDs (Chapter 6).</p>
+</div>
+
+<h2>Memory: 48 KB, one cycle, nothing else</h2>
+<p>The SRAM is 8 single-ported banks with single-cycle access <span class="tag vendor">Vendor, HC22</span>, each 6 KB <span class="tag indep">Academic papers</span>. This 48 KB holds <em>everything</em> the PE knows: its code, its stack, its data, its task table and the buffers the runtime needs. Internally the PE addresses memory in 16-bit units: the CSL target library defines <code>word_size = 2</code> and its registers as <code>u16</code> <span class="tag sdk">SDK 2.10.1, csl-libs/target</span>, so 48 KB is 24,576 words and an f32 is two of them.</p>
+
+<h3>Which bank does an address land in? Two sources disagree</h3>
+<p>The research behind this course gives the bank layout as "successive 32-bit words in successive banks", from academic papers (arXiv:2605.07954, read through a search extract) <span class="tag indep">Independent</span>. The SDK says something different. The manual page of its <code>cs_readelf</code> tool states: "The bank a memory access lies in is determined by bits [3:1] of the address. So, for example, a 16-bit read of 0x1234 lies in bank 2. A 32-bit read of the same address is broken into two 16-bit reads, one from bank 2 and one from bank 3. Bank conflicts where concurrent reads and writes target the same bank or the same bank modulo 4 may result in cycle delays." <span class="tag sdk">SDK 2.10.1, cs_readelf(1)</span>. Its <code>--sym</code> output prints a "Banks" column for every variable, and in our builds it follows that rule: 2-byte variables at 0xe64, 0xe68, 0xe6c, 0xe70 sit in banks 2, 4, 6, 0 <span class="tag measured">Measured, cslc 2.10.1 ELFs, WSE-2 and WSE-3</span>.</p>
+<p><strong>What you can observe in the SDK is the second model</strong>: bank = (byte address ÷ 2) mod 8, a 16-byte stripe, so one f32 spans two banks and four consecutive f32s cover all eight. The SDK's matvec benchmark pads rows to 16 bytes "to avoid bank conflicts", and the WSE-3 library sets <code>FIFO_MIN_ALIGNMENT = 16</code> (WSE-2: 8) <span class="tag sdk">SDK 2.10.1</span>, both consistent with a 16-byte stripe. The two descriptions could be views of different things (address numbering versus physical bank width), but no source says so. One hint that 16-bit numbering is not the whole story: a contiguous f32 add moves at least 19 bytes per cycle (below), more than 8 banks × 16 bits per cycle could supply <span class="tag derived">Derived</span>. The physical bank width is not published.</p>
+
+<div class="widget" id="bankw">
+<h4>Address → bank explorer</h4>
+<p class="hint">A vector operation walks an array of 32 elements with a stride. Each cell is one element; its colour is the bank (or banks) it touches. The bars count how often each bank is hit. Switch models to compare the SDK rule with the academic one.</p>
+<div class="controls">
+<span class="seg" role="group" aria-label="Bank model"><button type="button" data-m="sdk" class="on">SDK rule: bits [3:1]</button><button type="button" data-m="acad">Academic: 32-bit words</button></span>
+<label>dtype <select id="bk-t"><option value="4">f32 (4 B)</option><option value="2">f16 (2 B)</option></select></label>
+<label>stride <input type="range" id="bk-s" min="1" max="16" value="1" aria-describedby="bk-out"> <span id="bk-sv" class="mono"></span></label>
+<label>start element <input type="range" id="bk-o" min="0" max="7" value="0" aria-describedby="bk-out"> <span id="bk-ov" class="mono"></span></label>
+</div>
+<svg id="bk-svg" viewBox="0 0 680 220" width="680" role="img" aria-label="Elements walked by a strided access, coloured by bank, with per-bank hit counts"></svg>
+<div class="readout" id="bk-out" aria-live="polite"></div>
+</div>
+<p>The measured cost of a stride, for one synchronous operation over 256 f32 elements with both operands strided alike <span class="tag measured">Measured, simulator, SDK 2.10.1, cycles from the PE's timestamp counter</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>256 × f32</th><th>stride 1</th><th>stride 2</th><th>stride 4</th><th>stride 8</th></tr>
+<tr><td><code>@fadds</code> a = a + b, WSE-3</td><td>162</td><td>290</td><td>546</td><td>799</td></tr>
+<tr><td><code>@fadds</code> a = a + b, WSE-2</td><td>294</td><td>–</td><td>550</td><td>804</td></tr>
+<tr><td><code>@fmovs</code> a = b, WSE-3</td><td>92</td><td>–</td><td>284</td><td>–</td></tr>
+</table></div>
+<p>Contiguous access is where WSE-3 gains: its stride-1 add is 1.8× faster than WSE-2's. At stride 4 or more the two generations are equal at roughly 2–3 cycles per element <span class="tag derived">Derived</span>. The bank rule explains the direction (stride 4 in f32 puts every element in banks 0 and 1) but not the exact numbers, since strides 4 and 8 touch the same banks and still differ. So lay arrays out to be walked contiguously, and pad rows to 16 bytes as the SDK does. (The WSE-3 stride 1 and 2 to 8 rows were rerun for this chapter; the others come from the depth review's runs.)</p>
+
+<h3>Is memory fast enough to feed the math?</h3>
+<p>This is the per-PE version of Chapter 1's roofline. Start from the vendor total and divide:</p>
+<div class="chain">
+<div><b>21 PB/s</b>WSE-3 memory bandwidth <span class="tag vendor">Vendor</span></div>
+<div><b>÷ 900,000 PEs</b><span class="tag vendor">Vendor</span></div>
+<div><b>≈ 23 GB/s per PE</b><span class="tag derived">Derived</span></div>
+<div><b>≈ 21–27 B/cycle</b>about 5–7 f32 accesses per cycle at 1.1 GHz (WSE-2's published clock <span class="tag vendor">Vendor, HC22</span>) to 850 MHz (the SDK's assumption <span class="tag sdk">SDK 2.10.1</span>); no WSE-3 clock is published <span class="tag derived">Derived</span></div>
+</div>
+<p>Now compare what a kernel needs. An f32 matrix-vector multiply-add reads an element of A, reads y, and writes y: 12 bytes for 2 FLOPs, about 0.17 FLOP/byte. On an H100 that intensity would leave the chip ~1,800× below its HBM ridge of ~295 FLOP/byte (Chapter 1). On a PE it runs at full rate: the SDK matvec benchmark measured 4,214 cycles for a 64 × 64 f32 matvec, about one multiply-add per cycle, while the SRAM served 49,408 bytes, 11.7 bytes every cycle <span class="tag measured">Measured, simulator, WSE-3</span>. That is about three f32 accesses per cycle, roughly half of the derived 5–7. The contiguous <code>@fadds</code> in the table moves 3,072 bytes in 162 cycles, at least 19 bytes per cycle with its start-up included <span class="tag derived">Derived</span>. Memory is matched to the core, which is the WSE's answer to the memory wall.</p>
+
+<p>There is also a tiny <strong>software-managed cache</strong>, 256 B on WSE-2 <span class="tag vendor">Vendor, HC22</span> and 512 B on WSE-3 <span class="tag vendor">Vendor, HC2024</span>, for hot values such as accumulators. "Software-managed" means nothing is cached automatically by hardware. The public sources do not say how CSL exposes it, and the CSL standard library never mentions it; nothing in this course controls it.</p>
+
+<h3>Where the 48 KB goes: a real memory map</h3>
+<p>Here is the section layout of a compiled PE program, the SDK's single-tile matvec benchmark at N = 8 with the memcpy runtime, read with <code>llvm-readelf -S</code> and <code>cs_readelf -m</code> <span class="tag measured">Measured, cslc 2.10.1</span>. Its own arrays (A, x, y) are only 324 bytes, yet it uses 4,960 bytes on WSE-3 and 3,458 on WSE-2. The rest is fixed overhead: code (yours plus the memcpy runtime), runtime variables and, on WSE-3, a 1 KB task table.</p>
+<div class="widget" id="mapw">
+<h4>PE memory map</h4>
+<div class="controls"><span class="seg" role="group" aria-label="Architecture"><button type="button" data-a="wse3" class="on">WSE-3</button><button type="button" data-a="wse2">WSE-2</button></span></div>
+<svg id="map-svg" viewBox="0 0 700 250" width="700" role="img" aria-label="Address map of a PE: sections of a compiled program in the low addresses, SRAM ending at 48 KB, memory-mapped configuration registers near the top of a 64 KB address space"></svg>
+<div class="readout" id="map-out" aria-live="polite"></div>
+</div>
+<p>Two things stand out. The overhead is about <strong>4.5 KB on WSE-3</strong> (4,636 bytes; the cross-chapter notes round it to 4.6 kB) and <strong>3.1 KB on WSE-2</strong> (3,134 bytes) for a minimal memcpy program <span class="tag measured">Measured</span>, and more code needs more. A capacity probe on WSE-3 confirms the ceiling: at N = 104 (A is 43,268 bytes) the program links and uses 48,736 of 49,152 bytes; at N = 106 the linker stops with <code>ran out of PE memory for data (section .bss)</code> and <code>ran out of PE memory for task table</code> <span class="tag measured">Measured, cslc 2.10.1</span>. So about <strong>44 KB</strong> (≈ 44,500 bytes) is usable for your arrays on WSE-3, consistent with the SDK benchmarks keeping data under 46 KB <span class="tag sdk">SDK 2.10.1, spmv-hypersparse</span>. Second, the router tables, filters, queue configuration, the task active/blocked bits and the timestamp counter live at addresses <em>above</em> 48 KB, in a 64 KB address space: the CSL target library lists them as memory-mapped registers (for example <code>TIMESTAMP_COUNTER</code>, <code>SWITCH_CONFIG</code>, <code>TASK_PRIORITY</code>) <span class="tag sdk">SDK 2.10.1, csl-libs/target</span>. Configuring the router or the task picker is just writing to an address.</p>
 
 <div class="widget" id="budget">
 <h4>Budget a PE's 48 KB</h4>
-<p class="hint">Suppose each PE holds an M × N block of a matrix plus a few vectors in f32. How big can the block be?</p>
+<p class="hint">Suppose each PE computes y = A·x + b on its own M × N block of A (x has N entries; y and b have M). Pick a chip: the fixed overhead is the measured one above. The right-hand view shows the same memory as the 8 banks: because addresses stripe across banks every 16 bytes, every array fills all eight banks evenly.</p>
 <div class="controls">
-<label>M <input type="range" id="b-m" min="8" max="128" step="4" value="48"> <span id="b-mv" class="mono"></span></label>
-<label>N <input type="range" id="b-n" min="8" max="128" step="4" value="48"> <span id="b-nv" class="mono"></span></label>
+<label>M <input type="range" id="b-m" min="8" max="160" step="2" value="64" aria-describedby="b-out"> <span id="b-mv" class="mono"></span></label>
+<label>N <input type="range" id="b-n" min="8" max="160" step="2" value="64" aria-describedby="b-out"> <span id="b-nv" class="mono"></span></label>
 <label>dtype <select id="b-t"><option value="4">f32 (4 B)</option><option value="2">f16 (2 B)</option></select></label>
+<label>chip <select id="b-a"><option value="4636">WSE-3 (overhead 4,636 B)</option><option value="3134">WSE-2 (overhead 3,134 B)</option></select></label>
 </div>
-<svg id="b-svg" viewBox="0 0 640 90" width="640" role="img" aria-label="Memory budget bar"></svg>
-<div class="readout" id="b-out"></div>
+<svg id="b-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Memory budget bar and the same budget spread over the eight banks"></svg>
+<div class="readout" id="b-out" aria-live="polite"></div>
 </div>
 
-<h3>Compute: SIMD lanes driven by descriptors</h3>
-<p>The WSE-3 datapath is <strong>8-way SIMD for FP16/BF16 and 16-way for INT8</strong>, up from 4-wide FP16 on earlier generations <span class="tag vendor">Vendor</span>. You almost never write per-element loops: the CE executes a whole vector operation from one instruction whose operands are <em>data structure descriptors</em> held in the 48 DSRs — base address, length, stride (Chapter 6). It can run up to <strong>eight such operations at once, one per microthread</strong>. On WSE-3 microthread IDs are exposed to the programmer; two operations must never share one at the same time <span class="tag sdk">SDK 2.10.1</span> — a rule that caused a real hang in Lab 3.</p>
+<h2>Compute</h2>
+<h3>SIMD lanes driven by descriptors</h3>
+<p>The WSE-3 datapath is <strong>8-way SIMD for FP16/BF16 and 16-way for INT8</strong> <span class="tag vendor">Vendor, HC2024</span>, reportedly up from 4-wide FP16 on WSE-1/2 <span class="tag indep">Secondary source</span>. No f32 width is published. You almost never write per-element loops: the CE executes a whole vector operation from one instruction. The CE has 16 general-purpose registers (GPRs) for scalars and addresses, and 48 data-structure registers (DSRs) that each hold one <em>data structure descriptor</em> (DSD): base address, length, stride (Chapter 6) <span class="tag vendor">Vendor, HC2024</span>.</p>
+<p>DSRs are real, named registers that a program can load directly. The SDK's matvec benchmark loads A's descriptor once and lets it advance by itself (<code>.save_address = true</code>), so each <code>@fmacs</code> continues where the previous one stopped and A streams column by column <span class="tag sdk">SDK 2.10.1, single-tile-matvec</span>:</p>
+<pre><code><span class="k">const</span> y_dest_dsr = <span class="b">@get_dsr</span>(dsr_dest, 0);   <span class="c">// three roles: destination,</span>
+<span class="k">const</span> y_src0_dsr = <span class="b">@get_dsr</span>(dsr_src0, 0);   <span class="c">// source 0 and source 1</span>
+<span class="k">const</span> A_src1_dsr = <span class="b">@get_dsr</span>(dsr_src1, 0);
+<span class="b">@load_to_dsr</span>(A_src1_dsr, local_A_dsd, .{ .save_address = <span class="k">true</span> });
+<span class="b">@map</span>(gemv_static_step_A, x_dsd);  <span class="c">// calls @fmacs(y_dest_dsr, y_src0_dsr, A_src1_dsr, curX)</span></code></pre>
+
+<h3>How fast is one PE?</h3>
+<p>The vendor widths are lane counts, not delivered rates. We timed the SDK's matvec benchmark (y = A·x on one PE, inner loop only, cycles from the PE's timestamp counter, host I/O excluded) and an f16 copy of it using <code>@fmach</code> <span class="tag measured">Measured, simulator, SDK 2.10.1</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>N × N</th><th>multiply-adds</th><th>f32 WSE-3</th><th>f32 WSE-2</th><th>f16 WSE-3</th><th>f16 WSE-2</th></tr>
+<tr><td>8</td><td>64</td><td>126</td><td>119</td><td>94</td><td>88</td></tr>
+<tr><td>64</td><td>4,096</td><td><b>4,214</b></td><td><b>4,216</b></td><td>1,335</td><td>2,165</td></tr>
+<tr><td>96</td><td>9,216</td><td>9,366</td><td>9,372</td><td>–</td><td>–</td></tr>
+<tr><td>128</td><td>16,384</td><td>does not fit</td><td>–</td><td><b>5,046</b></td><td><b>8,377</b></td></tr>
+</table></div>
+<ul>
+<li><strong>f32 multiply-add runs at about one element per cycle on both generations.</strong> A fit is cycles ≈ 54 + N + N²: a fixed start-up of about 54 cycles, about one cycle per column, and one cycle per multiply-add <span class="tag derived">Derived</span>. Treat f32 as 1-wide; WSE-3 is no faster than WSE-2 here.</li>
+<li><strong>f16 reaches about 3.2 per cycle on WSE-3 and 2.0 on WSE-2</strong> at N = 128 <span class="tag derived">Derived</span>, well below the 8 and 4 lanes. A likely reason is that each multiply-add also reads and writes y in SRAM, so memory traffic rather than lane count sets the rate; that is an inference, the simulator does not say why.</li>
+<li>So one PE does about 2 f32 FLOPs per cycle: 1.7 GFLOP/s at 850 MHz, and about 1.5 PFLOP/s f32 across 900,000 PEs <span class="tag derived">Derived</span>, against the 125 PF sparse FP16 headline (Chapter 2).</li>
+</ul>
+<p>The 64 × 64 and 128 × 128 cells were rerun for this chapter and matched the depth review's numbers exactly; the rest come from its runs. These are simulator counts, not hardware.</p>
+
+<h3>Microthreads: overlap, not more FLOPs</h3>
+<p>A <strong>microthread</strong> is a hardware context that holds one in-flight vector operation: its DSD operands, its progress, and what to activate or unblock when it finishes. A PE has eight of them <span class="tag vendor">Vendor (WSE-2 blog)</span>, so up to eight vector operations can be <em>in flight</em> at once: for example receiving from the west, sending east and adding locally. They share the single datapath, and the hardware interleaves them according to which one has operands ready <span class="tag indep">Secondary source</span>. The main thread (the running task's own instructions) competes too: the SDK lets you set its priority from <code>MEDIUM_LOW</code> to <code>HIGH</code> relative to microthread priorities <span class="tag sdk">SDK 2.10.1, tile_config</span>. The gain is overlap: waiting for wavelets no longer stalls the datapath. It is not 8× the FLOPs, since the measured f32 rate above is already the datapath's. Microthreads are not software threads either: there is no scheduler, stack or OS behind them.</p>
+<p>You get a microthread by adding <code>.async = true</code> to an operation (Chapters 5 and 6). The compiler insists that such an operation has a fabric or DSR operand: an async <code>@fadds</code> on plain memory DSDs is rejected with "'async' requires at least one fabric or DSR operand" <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
+
+<div class="widget" id="utw">
+<h4>Microthread occupancy timeline</h4>
+<p class="hint">A toy PE step: receive 8 blocks from the west (they arrive one every few steps), compute 10 blocks locally, send 8 blocks east. Each block needs the one datapath for one step. Compare running the three operations one after another with running them as async ops on three microthreads. The third preset puts two ops on one microthread, as the first version of Lab 3 did.</p>
+<div class="controls">
+<span class="seg" role="group" aria-label="Execution mode"><button type="button" data-u="serial" class="on">one at a time</button><button type="button" data-u="async">async, 3 microthreads</button><button type="button" data-u="clash">two ops, one microthread</button></span>
+<label>wavelet arrival every <input type="range" id="ut-arr" min="1" max="4" value="2" aria-describedby="ut-out"> <span id="ut-arrv" class="mono"></span> steps</label>
+</div>
+<svg id="ut-svg" viewBox="0 0 680 270" width="680" role="img" aria-label="Timeline: eight microthread lanes and the shared datapath, showing which operation uses the datapath at each step"></svg>
+<div class="readout" id="ut-out" aria-live="polite"></div>
+<p class="hint" style="margin:8px 0 0">An illustrative model <span class="tag derived">Derived</span>: the real arbiter's policy and timings are not published. It shows the shape of the effect, not cycle counts.</p>
+</div>
+<p>On WSE-2 an async fabric operation always runs on the microthread whose ID matches its queue. WSE-3 exposes microthread IDs: you can pick one with <code>.ut_id</code>, and if you do not, it defaults to the queue ID. Either way, two operations must never use one microthread at the same time <span class="tag sdk">SDK 2.10.1, topic-15</span>. Nothing checks this at build time. This course's own heat-stencil program broke the rule: rebuilt with input queues 2 and 3 next to output queues 2 and 3, it fails on both chips with <code>trying to term ut_instr[3], but it's not ours</code> in <code>sim.log</code> at about cycle 2,123 (WSE-3) and 2,125 (WSE-2), and the host then waits forever <span class="tag measured">Measured, simulator</span>. Chapter 5 tells the story and has a collision explorer; Chapter 12 measures the fixed program.</p>
+<div class="table-wrap"><table>
+<tr><th>Microthreads and queues</th><th>WSE-2</th><th>WSE-3</th></tr>
+<tr><td>microthreads</td><td>8</td><td>8 (IDs 0–7)</td></tr>
+<tr><td>input / output queues</td><td>8 / 6</td><td>8 / 8</td></tr>
+<tr><td>microthread of an async fabric op</td><td>= its queue ID, always</td><td>any, via <code>.ut_id</code>; defaults to the queue ID</td></tr>
+<tr><td>data task IDs come from</td><td>colors</td><td>input queues</td></tr>
+</table></div>
+<p class="hint">Queue counts from <code>csl-libs/target/wse2.csl</code> and <code>wse3.csl</code>; the rest from topic-15 and Chapter 5 <span class="tag sdk">SDK 2.10.1</span>.</p>
 
 <h3>Control: tasks, not a program counter marching through main</h3>
-<p>There is no operating system and no long-running main loop. Code is a set of <strong>tasks</strong>, and a hardware picker runs whichever task is activated and not blocked. Arriving data activates tasks. Chapter 5 is devoted to this.</p>
+<p>There is no operating system and no long-running main loop. Code is a set of <strong>tasks</strong>, and a hardware picker runs whichever task is activated and not blocked. Arriving data activates data tasks; other tasks are activated by code or by a finishing vector operation <span class="tag sdk">SDK 2.10.1</span>. Chapter 5 is devoted to this.</p>
 
 <h2>Why no caches?</h2>
 <p>A cache exists to hide the distance between compute and a large, slow memory. On the WSE there is no large slow memory on the wafer: the "main memory" is the 48 KB beside the core, and it is already single-cycle. A hardware cache would add area and power to fix a problem the PE does not have. The cost moves to the programmer: whatever data a PE needs must already be in its 48 KB, or must arrive over the fabric.</p>
+<p>The SDK's single-tile matvec benchmark makes this concrete by counting memory traffic two ways <span class="tag sdk">SDK 2.10.1</span>. <strong>"Relative"</strong> is the minimum traffic on a traditional cached machine: read A and x once, keep the running y in registers or cache, write y once: 4(N² + 2N) bytes. <strong>"Absolute"</strong> is what the WSE kernel really does: it walks A column by column and reads and writes all of y for every column: 4(3N² + N) bytes. The difference is about <em>y</em>, not x; x is read once in both counts. Step through it:</p>
+<div class="widget" id="mvw">
+<h4>Matvec memory-traffic stepper</h4>
+<p class="hint">y = A·x, one column per step: y += A[:, j] · x[j]. Orange cells are read this step, green are written. The cached machine keeps y on chip and writes it once at the end.</p>
+<div class="controls">
+<label>N <input type="range" id="mv-n" min="4" max="12" value="6"> <span id="mv-nv" class="mono"></span></label>
+<button class="btn secondary" type="button" id="mv-step">Step</button>
+<button class="btn" type="button" id="mv-play">Play</button>
+<button class="btn secondary" type="button" id="mv-reset">Reset</button>
+</div>
+<svg id="mv-svg" viewBox="0 0 680 300" width="680" role="img" aria-label="Matrix A, vectors x and y, and running byte counters for the cached machine and the WSE"></svg>
+<div class="readout" id="mv-out" aria-live="polite"></div>
+</div>
+<p>For N = 64 the benchmark reports 16,896 relative bytes against 49,408 absolute, 2.9× more, and still runs at about one multiply-add per cycle (4,214 cycles) <span class="tag measured">Measured, simulator, WSE-3</span>. Nothing absorbs the accumulator's reuse; the design bets that private single-cycle SRAM can serve the extra traffic, and here it does, at 11.7 bytes per cycle. The benchmark is written for CS-2 and converts cycles to seconds at 850 MHz <span class="tag sdk">SDK 2.10.1</span>.</p>
 
-<figure>
-<svg viewBox="0 0 760 170" width="760" role="img" aria-label="Relative versus absolute bandwidth">
-  <text x="20" y="22" font-weight="700">GEMV y = A·x on one PE</text>
-  <rect x="20" y="40" width="330" height="110" rx="8" class="box"/>
-  <text x="34" y="64" font-size="13" font-weight="600">A cached machine</text>
-  <text x="34" y="86" font-size="13" class="muted">reads x once into cache, reuses it</text>
-  <text x="34" y="106" font-size="13" class="muted">for every row → counts "relative"</text>
-  <text x="34" y="126" font-size="13" class="muted">bandwidth that never touches DRAM</text>
-  <rect x="410" y="40" width="330" height="110" rx="8" class="grn" stroke-width="1.3"/>
-  <text x="424" y="64" font-size="13" font-weight="600">The WSE</text>
-  <text x="424" y="86" font-size="13">every operand is an actual SRAM access:</text>
-  <text x="424" y="106" font-size="13">"absolute" bandwidth = real traffic,</text>
-  <text x="424" y="126" font-size="13">and SRAM is fast enough to take it</text>
-</svg>
-<figcaption><b>The SDK's single-tile matvec benchmark reports both numbers</b> <span class="tag sdk">SDK 2.10.1</span>: "relative" bandwidth (what a cache would have to supply) and "absolute" (what the SRAM really serves). It is a neat demonstration that reuse is not absorbed by a cache here.</figcaption>
-</figure>
+<h2>Sparsity: skipping zeros with dataflow</h2>
+<p>Because computation is triggered by arriving data, a zero that is never sent never triggers work. Senders filter zeros and receivers only compute on what arrives <span class="tag vendor">Vendor, HC22 / MICRO-54</span>. This dataflow zero-skipping is a hardware feature, and it is what Cerebras's sparse-FLOPS headline numbers rely on. Those peaks count the skipped multiplies as if they were done, at an assumed sparsity ratio (Chapter 2). The SDK shows a software convention on top: a wavelet is 32 bits, so a sparse value can travel as 16 bits of data plus a 16-bit index in the upper half, and the receiving data task gets both halves as two arguments <span class="tag sdk">SDK 2.10.1, topic-04</span>.</p>
 
-<h2>Sparsity comes free with dataflow</h2>
-<p>Because computation is triggered by arriving data, a zero that is never sent never triggers work. Senders filter zeros; receivers only compute on what arrives. The SDK shows the software side: a wavelet is 32 bits, so a sparse value can travel as 16 bits of data plus a 16-bit index in the upper half <span class="tag sdk">SDK 2.10.1, topic-04</span>. This mechanism is what Cerebras's sparse-FLOPS headline numbers assume.</p>
+<div class="widget" id="spw">
+<h4>Sparse wavelet encoder</h4>
+<p class="hint">A 16-element i16 vector. Dense, it costs 16 wavelets and 16 task activations at the receiver. Sparse, each non-zero travels as one wavelet with its index in the upper 16 bits. Drag the sparsity, then click a wavelet to see its bits.</p>
+<div class="controls">
+<label>zeros <input type="range" id="sp-z" min="0" max="90" step="10" value="60"> <span id="sp-zv" class="mono"></span></label>
+<button class="btn secondary" type="button" id="sp-r">New random vector</button>
+</div>
+<svg id="sp-svg" viewBox="0 0 680 280" width="680" role="img" aria-label="Dense vector, the stream of index-plus-value wavelets for its non-zeros, and the bit layout of one wavelet"></svg>
+<div class="readout" id="sp-out" aria-live="polite"></div>
+</div>
+<p><strong>What skipping zeros costs.</strong></p>
+<ul>
+<li>The sender still has to look at every value to decide whether to send it.</li>
+<li>Index plus value leaves only 16 bits for the value, so the f32 data every lab in this course uses does not fit. You would send f16/bf16 (losing precision) or spend two wavelets per value.</li>
+<li>A 16-bit index covers any one PE's array (48 KB holds at most 24,576 16-bit values), but not a position in a large global tensor <span class="tag derived">Derived</span>. The tutorial declares it <code>i16</code>, so as written it covers 0–32,767.</li>
+<li>Each non-zero is one data-task activation on the receiver, plus a scattered write (<code>result[index] = wavelet_data</code>), instead of one streaming vector op.</li>
+<li>PEs that get more non-zeros finish last, so uneven sparsity becomes load imbalance.</li>
+</ul>
+<p>Skipping zeros pays off when sparsity is high and unstructured enough that a dense SIMD op would mostly multiply zeros.</p>
 
-<figure>
-<svg viewBox="0 0 760 120" width="760" role="img" aria-label="A 32-bit wavelet carrying a sparse value">
-  <rect x="80" y="30" width="300" height="44" class="pur" stroke-width="1.5"/>
-  <rect x="380" y="30" width="300" height="44" class="grn" stroke-width="1.5"/>
-  <text x="230" y="57" text-anchor="middle" font-weight="600">upper 16 bits: index</text>
-  <text x="530" y="57" text-anchor="middle" font-weight="600">lower 16 bits: f16 value</text>
-  <text x="80" y="96" font-size="12" class="muted">bit 31</text>
-  <text x="680" y="96" font-size="12" class="muted" text-anchor="end">bit 0</text>
-  <text x="380" y="20" text-anchor="middle" font-size="13">one wavelet payload (32 bits) — only non-zeros are sent</text>
-</svg>
-<figcaption><b>Index + value in one wavelet.</b> The receiving data task gets both halves as two 16-bit arguments: <code>task main_task(wavelet_data: i16, index: i16)</code>.</figcaption>
-</figure>
+<h2>What changed per PE, WSE-2 → WSE-3</h2>
+<div class="table-wrap"><table>
+<tr><th>Resource</th><th>WSE-2</th><th>WSE-3</th><th>Source</th></tr>
+<tr><td>SRAM</td><td>48 KB, 8 banks</td><td>48 KB, 8 banks</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Software-managed cache</td><td>256 B</td><td>512 B</td><td><span class="tag vendor">Vendor, HC22 / HC2024</span></td></tr>
+<tr><td>FP16 SIMD lanes</td><td>4 (secondary)</td><td>8 (INT8: 16)</td><td><span class="tag indep">Secondary</span> / <span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Measured f32 multiply-add</td><td>≈ 1 / cycle</td><td>≈ 1 / cycle</td><td><span class="tag measured">Measured, simulator</span></td></tr>
+<tr><td>Measured f16 multiply-add</td><td>≈ 2.0 / cycle</td><td>≈ 3.2 / cycle</td><td><span class="tag measured">Measured, simulator</span></td></tr>
+<tr><td>Contiguous f32 add (256 elements)</td><td>294 cycles</td><td>162 cycles</td><td><span class="tag measured">Measured, simulator</span></td></tr>
+<tr><td>Fixed memory overhead, minimal memcpy program</td><td>≈ 3.1 KB</td><td>≈ 4.5 KB (1 KB task table)</td><td><span class="tag measured">Measured, cslc 2.10.1</span></td></tr>
+<tr><td>Output queues</td><td>6</td><td>8</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>Microthread IDs</td><td>fixed = queue ID</td><td>exposed, <code>.ut_id</code></td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>FIFO minimum alignment</td><td>8 B</td><td>16 B</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>Colors</td><td>24</td><td>24</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>Clock</td><td>1.1 GHz</td><td>not published (SDK assumes 850 MHz)</td><td><span class="tag vendor">Vendor, HC22</span> / <span class="tag sdk">SDK</span></td></tr>
+</table></div>
+
+<details class="callout">
+<summary><strong>Try it yourself: time one PE and read its memory map</strong></summary>
+<p>No new program is needed; copy the SDK benchmark to a directory outside <code>/tmp</code> (cs_python fails there). <code>$EX</code> is the SDK examples directory.</p>
+<pre><code>cp -r $EX/benchmarks/single-tile-matvec ~/stm &amp;&amp; cd ~/stm
+cslc src/layout_matvec.csl --arch wse3 --fabric-dims=8,3 --fabric-offsets=4,1 \
+  --params=width:1,height:1,tile_size:64,iters:1 -o out --memcpy --channels=1
+cs_python run.py --name out --verify    <span class="c"># Max cycles: 4214, absolute 49408 bytes</span>
+cs_readelf -m out/bin/out_0_0.elf       <span class="c"># Memory used, in bytes and 16-bit words</span>
+cs_readelf --sym out/bin/out_0_0.elf    <span class="c"># every symbol with its address and Banks</span></code></pre>
+<p>Variations: <code>--arch wse2</code>; <code>tile_size:104</code> (fits) against <code>tile_size:106</code> (link error).</p>
+</details>
 
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>Your PE program needs two 64 × 64 f32 matrices. Does it fit?</summary><p>2 × 64 × 64 × 4 B = 32 KB. It fits in 48 KB, but leaves ~14 KB for code, runtime buffers and everything else. Two 96 × 96 matrices (72 KB) would not.</p></details>
-<details><summary>Why would a hardware cache be wasted on a PE?</summary><p>Its only memory is already single-cycle SRAM beside it. There is no slower level to hide.</p></details>
-<details><summary>What limits how many vector operations a WSE-3 PE runs concurrently?</summary><p>The 8 microthreads. Each async DSD operation occupies one, and two concurrent operations cannot share one.</p></details>
+<details><summary>Your WSE-3 PE program needs two 64 × 64 f32 matrices. Does it fit?</summary><p>2 × 64 × 64 × 4 B = 32 KB. It fits in 48 KB, but leaves only 16 KB, of which about 4.5 KB (4,636 B) is the fixed overhead of a minimal program (code, runtime, task table). That leaves about 11 KB for every other array, and more if your code is bigger. Two 96 × 96 matrices (72 KB) would not fit.</p></details>
+<details><summary>About how many cycles does a 64 × 64 f32 matvec take on one PE?</summary><p>At about one multiply-add per cycle plus overheads: ≈ 54 + 64 + 4,096 ≈ 4,200. The simulator measured 4,214 on WSE-3 and 4,216 on WSE-2. WSE-3's wider SIMD does not help f32.</p></details>
+<details><summary>Eight microthreads: does that make a PE eight times faster?</summary><p>No. They share one datapath. They let up to eight vector operations (usually ones started with <code>.async = true</code>) be in flight together, so sending, receiving and computing overlap and the datapath does not sit idle waiting for wavelets. Two in-flight operations may not use the same microthread.</p></details>
+<details><summary>In the matvec benchmark the WSE moves ~3× more bytes than a cached machine. Why is that acceptable?</summary><p>The extra traffic is the y accumulator re-read and re-written for every column. It hits single-cycle SRAM private to that PE, and ~900k such SRAMs work in parallel, so there is no shared slow memory to protect. The measured run still does about one multiply-add per cycle.</p></details>
+<details><summary>An f32 array is walked with stride 4. Which banks does it touch under the SDK rule, and what does that cost?</summary><p>An f32 at byte address a covers banks (a/2) mod 8 and the next one. With stride 4 the address advances 16 bytes per element, a full stripe, so every element lands in the same two banks (0 and 1 for an aligned start). The measured 256-element add took 546 cycles against 162 for stride 1 on WSE-3, about 3.4× slower.</p></details>
+<details><summary>A layer's activations are 90% zeros and stored as f32. Can you use the topic-04 index trick directly?</summary><p>Not as is. Index plus value leaves only 16 bits for the value, so you would send f16/bf16 (losing precision) or spend two wavelets per value. You also pay one task activation and one scattered write per non-zero on the receiver.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
 <script>
 (function () {
+  /* ---------- anatomy drawing ---------- */
   const b = $("#banks");
   for (let i = 0; i < 8; i++) {
     el("rect", { x: 56 + i * 39, y: 118, width: 34, height: 48, rx: 4, class: "grn", "stroke-width": 1.2 }, b);
-    el("text", { x: 73 + i * 39, y: 146, "text-anchor": "middle", "font-size": 11 }, b).textContent = "6K";
+    el("text", { x: 73 + i * 39, y: 140, "text-anchor": "middle", "font-size": 11 }, b).textContent = "6K";
+    el("text", { x: 73 + i * 39, y: 156, "text-anchor": "middle", "font-size": 9.5, class: "muted" }, b).textContent = "b" + i;
   }
   const l = $("#lanes");
-  for (let i = 0; i < 8; i++) el("rect", { x: 74 + i * 34, y: 280, width: 28, height: 14, rx: 3, fill: cssVar("--green"), opacity: .75 }, l);
+  for (let i = 0; i < 8; i++) el("rect", { x: 74 + i * 34, y: 276, width: 28, height: 10, rx: 3, class: "f-grn", opacity: .75 }, l);
   const u = $("#uts");
-  for (let i = 0; i < 8; i++) el("circle", { cx: 230 + i * 17, cy: 352, r: 6, fill: cssVar("--amber"), opacity: .8 }, u);
+  for (let i = 0; i < 8; i++) el("circle", { cx: 230 + i * 17, cy: 345, r: 6, class: "f-amb", opacity: .8 }, u);
 
-  function budget() {
-    const M = +$("#b-m").value, N = +$("#b-n").value, t = +$("#b-t").value;
-    $("#b-mv").textContent = M; $("#b-nv").textContent = N;
-    const A = M * N * t, vec = (2 * M + N) * t, code = 2048, total = 48 * 1024;
-    const svg = $("#b-svg"); svg.innerHTML = "";
-    const Wd = 600, x0 = 20, s = Wd / total;
-    let x = x0;
-    const parts = [["matrix A", A, "--accent"], ["vectors x,y,b", vec, "--blue"], ["code + runtime (~2 KB)", code, "--purple"]];
-    el("rect", { x: x0, y: 20, width: Wd, height: 34, rx: 6, class: "box" }, svg);
-    for (const [name, sz, c] of parts) {
-      const w = Math.min(sz * s, x0 + Wd - x);
-      if (w > 0) el("rect", { x, y: 20, width: w, height: 34, fill: cssVar(c), opacity: .85 }, svg);
-      x += sz * s;
+  /* ---------- wavelet journey ---------- */
+  const JSTEPS = [["j-dsr", "j-ut", "j-pick"], ["j-w", "j-wl", "j-router"], ["j-ramp"], ["j-ut", "j-simd", "banks"], ["j-ramp", "j-router", "j-e"], ["j-ut", "j-pick"]];
+  let js = -1;
+  function journey() {
+    document.querySelectorAll("#anat .hl").forEach(e => e.classList.remove("hl"));
+    const lis = document.querySelectorAll("#j-list li");
+    lis.forEach((li, i) => li.classList.toggle("on", i === js));
+    if (js >= 0) for (const id of JSTEPS[js]) {
+      const e = document.getElementById(id);
+      if (!e) continue;
+      if (e.tagName === "g") e.querySelectorAll("rect").forEach(r => r.classList.add("hl")); else e.classList.add("hl");
     }
-    const used = A + vec + code, ok = used <= total;
-    el("line", { x1: x0 + Wd, x2: x0 + Wd, y1: 12, y2: 62, stroke: cssVar("--red"), "stroke-width": 2 }, svg);
-    el("text", { x: x0 + Wd, y: 78, "text-anchor": "end", "font-size": 12 }, svg).textContent = "48 KB";
-    el("text", { x: x0, y: 78, "font-size": 12, class: "muted" }, svg).textContent = "■ A   ■ vectors   ■ code/runtime";
-    $("#b-out").textContent = `A: ${M}×${N}×${t} B = ${(A / 1024).toFixed(1)} KB   vectors: ${(vec / 1024).toFixed(2)} KB   code≈2 KB\n` +
-      `total ${(used / 1024).toFixed(1)} KB of 48 KB → ${ok ? "FITS (" + ((total - used) / 1024).toFixed(1) + " KB free)" : "DOES NOT FIT — split the matrix over more PEs"}`;
+    $("#j-count").textContent = js < 0 ? "press Next to start" : `step ${js + 1} of ${JSTEPS.length}`;
+    $("#j-prev").disabled = js < 0;
+    $("#j-next").textContent = js >= JSTEPS.length - 1 ? "Start over ↺" : "Next step ▶";
   }
-  ["#b-m", "#b-n", "#b-t"].forEach(s => $(s).oninput = budget); budget();
+  $("#j-next").onclick = () => { js = js >= JSTEPS.length - 1 ? -1 : js + 1; journey(); };
+  $("#j-prev").onclick = () => { if (js >= 0) js--; journey(); };
+  journey();
+
+  /* small helper: segmented control */
+  function seg(root, attr, cb) {
+    const bs = root.querySelectorAll("button");
+    bs.forEach(bt => bt.onclick = () => { bs.forEach(x => x.classList.toggle("on", x === bt)); cb(bt.dataset[attr]); });
+  }
+  const BANKCLS = ["acc", "blu", "grn", "pur", "amb", "red", "box", "acc"];
+
+  /* ---------- bank explorer ---------- */
+  let bkModel = "sdk";
+  const MEAS = { 1: "WSE-3 162 · WSE-2 294 cycles", 2: "WSE-3 290 cycles", 4: "WSE-3 546 · WSE-2 550 cycles", 8: "WSE-3 799 · WSE-2 804 cycles" };
+  function banksOf(addr, t) {
+    const s = new Set();
+    if (bkModel === "sdk") { for (let a = addr; a < addr + t; a += 2) s.add((a >> 1) & 7); }
+    else { for (let a = addr; a < addr + t; a += 4) s.add((a >> 2) & 7); if (t === 2) s.add((addr >> 2) & 7); }
+    return [...s];
+  }
+  function bank() {
+    const t = +$("#bk-t").value, st = +$("#bk-s").value, o = +$("#bk-o").value;
+    $("#bk-sv").textContent = st; $("#bk-ov").textContent = o;
+    const svg = $("#bk-svg"); svg.innerHTML = "";
+    const L = 32, hits = new Array(8).fill(0);
+    el("text", { x: 20, y: 18, "font-size": 12.5, "font-weight": 600 }, svg).textContent =
+      `Elements touched (${L} of them), as byte addresses from an aligned base · ${bkModel === "sdk" ? "bank = (addr ÷ 2) mod 8" : "bank = (addr ÷ 4) mod 8"}`;
+    for (let i = 0; i < L; i++) {
+      const addr = (o + i * st) * t, bs = banksOf(addr, t);
+      bs.forEach(k => hits[k]++);
+      const col = i % 16, row = Math.floor(i / 16), x = 20 + col * 40, y = 28 + row * 46;
+      const w = 36 / bs.length;
+      bs.forEach((k, j) => el("rect", { x: x + j * w, y, width: w, height: 22, class: BANKCLS[k], "stroke-width": .8 }, svg));
+      el("rect", { x, y, width: 36, height: 22, rx: 3, fill: "none", class: "s-muted", "stroke-width": .8 }, svg);
+      el("text", { x: x + 18, y: y + 15, "text-anchor": "middle", "font-size": 10, class: "mono" }, svg).textContent = bs.join("+");
+      el("text", { x: x + 18, y: y + 34, "text-anchor": "middle", "font-size": 9, class: "mono muted" }, svg).textContent = "0x" + addr.toString(16);
+    }
+    const max = Math.max(...hits, 1), by = 210, bh = 80;
+    el("text", { x: 20, y: 130, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "Hits per bank";
+    for (let k = 0; k < 8; k++) {
+      const h = hits[k] / max * bh, x = 120 + k * 64;
+      el("rect", { x, y: by - bh, width: 44, height: bh, rx: 3, class: "box" }, svg);
+      if (h > 0) el("rect", { x, y: by - h, width: 44, height: h, rx: 3, class: BANKCLS[k], "stroke-width": 1.5 }, svg);
+      el("text", { x: x + 22, y: by - h - 4 < 128 ? 142 : by - h - 4, "text-anchor": "middle", "font-size": 11, class: "mono" }, svg).textContent = hits[k];
+      el("text", { x: x + 22, y: by + 2 + 10, "text-anchor": "middle", "font-size": 11 }, svg).textContent = "bank " + k;
+    }
+    const used = hits.filter(h => h > 0).length;
+    let msg = `${t === 4 ? "f32" : "f16"}, stride ${st}: ${L} accesses spread over ${used} of 8 banks (busiest bank hit ${max}×).`;
+    if (bkModel === "sdk") msg += `\nSDK rule: an access lies in bank = bits [3:1] of the address; an f32 is two 16-bit reads.`;
+    else msg += `\nAcademic model: successive 32-bit words in successive banks. Not what cs_readelf reports.`;
+    if (t === 4 && MEAS[st]) msg += `\nMeasured @fadds over 256 f32 at stride ${st}: ${MEAS[st]} (simulator).`;
+    else if (t === 4) msg += `\nNo measurement for this stride (measured: 1, 2, 4, 8).`;
+    else msg += `\nThe stride measurements are for f32 only.`;
+    $("#bk-out").textContent = msg;
+  }
+  seg($("#bankw .seg"), "m", m => { bkModel = m; bank(); });
+  ["#bk-t", "#bk-s", "#bk-o"].forEach(s => $(s).oninput = bank); bank();
+
+  /* ---------- memory map ---------- */
+  const MAPS = {
+    wse3: { secs: [[".data.lo", 0x0, 56, "f-pur"], [".text", 0x38, 3192, "f-acc"], [".data", 0xcb0, 48, "f-blu"], [".bss", 0xce0, 640, "f-blu"], [".task_table", 0xf60, 1024, "f-amb"]],
+      cfg: [0xf680, 0xfc40], used: 4960, note: "WSE-3: .text 3,192 B · .data+.bss 688 B (324 B are A, x, y) · .task_table 1,024 B · total 4,960 B" },
+    wse2: { secs: [[".data.lo", 0x0, 712, "f-pur"], [".text", 0x2c8, 2232, "f-acc"], [".task_table (5 pieces)", 0xb80, 512, "f-amb"], [".data.hi", 0xd80, 2, "f-blu"]],
+      cfg: [0xfc04, 0xfef0], used: 3458, note: "WSE-2: .data.lo 712 B (DSR images, user and runtime data) · .text 2,232 B · task table ≈ 512 B in pieces · total 3,458 B" }
+  };
+  let mapArch = "wse3";
+  function memmap() {
+    const m = MAPS[mapArch], svg = $("#map-svg"); svg.innerHTML = "";
+    const x0 = 20, W = 660, full = 65536, k = W / full;
+    el("text", { x: x0, y: 18, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "Whole 64 KB address space";
+    el("rect", { x: x0, y: 26, width: W, height: 30, rx: 4, class: "box" }, svg);
+    el("rect", { x: x0, y: 26, width: 49152 * k, height: 30, rx: 4, class: "grn", opacity: .55 }, svg);
+    el("rect", { x: x0, y: 26, width: Math.max(2, m.used * k), height: 30, class: "f-acc" }, svg);
+    el("rect", { x: x0 + m.cfg[0] * k, y: 26, width: (m.cfg[1] - m.cfg[0]) * k, height: 30, class: "f-pur" }, svg);
+    el("line", { x1: x0 + 49152 * k, x2: x0 + 49152 * k, y1: 20, y2: 64, class: "s-red", "stroke-width": 2 }, svg);
+    el("text", { x: x0 + 49152 * k - 4, y: 76, "text-anchor": "end", "font-size": 11 }, svg).textContent = "0xC000 = 48 KB: end of SRAM";
+    el("text", { x: x0 + 140, y: 46, "font-size": 11 }, svg).textContent = "free SRAM for your arrays";
+    el("text", { x: x0 + W, y: 76, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = "config registers ↑";
+    el("text", { x: x0, y: 76, "font-size": 11, class: "muted" }, svg).textContent = "0x0000 ↑ program";
+    // zoom
+    const zEnd = 0x1400, kz = W / zEnd, zy = 120;
+    el("text", { x: x0, y: zy - 14, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "Zoom: the first 5 KB (0x0000–0x1400)";
+    el("path", { d: `M${x0} 56 L${x0} ${zy} M${x0 + zEnd * k} 56 L${x0 + W} ${zy}`, class: "s-muted", "stroke-dasharray": "3 3", fill: "none" }, svg);
+    el("rect", { x: x0, y: zy, width: W, height: 40, rx: 4, class: "box" }, svg);
+    m.secs.forEach(([nm, a, sz, c], i) => {
+      el("rect", { x: x0 + a * kz, y: zy, width: Math.max(2, sz * kz), height: 40, class: c, opacity: .85 }, svg);
+      const lx = x0 + (a + sz / 2) * kz, ly = zy + 58 + (i % 2) * 16;
+      el("line", { x1: lx, x2: lx, y1: zy + 40, y2: ly - 10, class: "s-muted" }, svg);
+      el("text", { x: Math.min(Math.max(lx, x0 + 30), x0 + W - 40), y: ly, "text-anchor": "middle", "font-size": 11 }, svg).textContent = `${nm} ${sz.toLocaleString()} B`;
+    });
+    el("line", { x1: x0 + m.used * kz, x2: x0 + m.used * kz, y1: zy - 6, y2: zy + 46, class: "s-acc", "stroke-width": 2 }, svg);
+    el("text", { x: x0 + m.used * kz + 4, y: zy - 2, "font-size": 11 }, svg).textContent = `used: ${m.used.toLocaleString()} B`;
+    el("text", { x: x0, y: 236, "font-size": 11, class: "muted" }, svg).textContent =
+      `Config block ≈ 0x${m.cfg[0].toString(16)}–0x${m.cfg[1].toString(16)}: routes, switches, filters, queues, task active/blocked bits, PRNG, FP control`;
+    $("#map-out").textContent = m.note + `\nNon-user overhead: ${(m.used - 324).toLocaleString()} B (measured, single-tile-matvec N = 8, --memcpy --channels=1)`;
+  }
+  seg($("#mapw .seg"), "a", a => { mapArch = a; memmap(); }); memmap();
+
+  /* ---------- budget ---------- */
+  function budget() {
+    const M = +$("#b-m").value, N = +$("#b-n").value, t = +$("#b-t").value, ov = +$("#b-a").value;
+    $("#b-mv").textContent = M; $("#b-nv").textContent = N;
+    const A = M * N * t, vec = (2 * M + N) * t, total = 48 * 1024, used = A + vec + ov, ok = used <= total;
+    const svg = $("#b-svg"); svg.innerHTML = "";
+    const x0 = 20, Wd = 420, scale = Math.max(total, used), s = Wd / scale;
+    const parts = [["matrix A", A, "f-acc"], ["vectors x, y, b", vec, "f-blu"], ["fixed overhead", ov, "f-pur"]];
+    el("text", { x: x0, y: 16, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "Address view";
+    el("rect", { x: x0, y: 24, width: total * s, height: 34, rx: 6, class: "box" }, svg);
+    let x = x0;
+    for (const [, sz, c] of parts) { if (sz > 0) el("rect", { x, y: 24, width: sz * s, height: 34, class: c, opacity: .85 }, svg); x += sz * s; }
+    if (!ok) el("rect", { x: x0 + total * s, y: 24, width: (used - total) * s, height: 34, fill: "none", class: "s-red", "stroke-width": 2.5, "stroke-dasharray": "5 3" }, svg);
+    el("line", { x1: x0 + total * s, x2: x0 + total * s, y1: 18, y2: 66, class: "s-red", "stroke-width": 2 }, svg);
+    el("text", { x: x0 + total * s, y: 80, "text-anchor": ok ? "end" : "middle", "font-size": 12 }, svg).textContent = "48 KB";
+    if (!ok) el("text", { x: x0 + Wd, y: 80, "text-anchor": "end", "font-size": 12, class: "f-red" }, svg).textContent = `over by ${((used - total) / 1024).toFixed(1)} KB`;
+    // legend
+    let lx = x0;
+    for (const [nm, , c] of parts) {
+      el("rect", { x: lx, y: 96, width: 11, height: 11, class: c, opacity: .85 }, svg);
+      el("text", { x: lx + 16, y: 106, "font-size": 12 }, svg).textContent = nm; lx += 130;
+    }
+    // bank view
+    const bx = 480, bw = 20, bh = 150, by = 180, perBank = total / 8, ks = bh / perBank;
+    el("text", { x: bx, y: 16, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "Bank view (each 6 KB)";
+    for (let k = 0; k < 8; k++) {
+      const xb = bx + k * 24;
+      el("rect", { x: xb, y: by - bh, width: bw, height: bh, rx: 3, class: "box" }, svg);
+      let yy = by;
+      for (const [, sz, c] of parts) {
+        const h = Math.min(sz / 8 * ks, Math.max(0, yy - (by - bh)));
+        if (h > 0) el("rect", { x: xb, y: yy - h, width: bw, height: h, class: c, opacity: .85 }, svg);
+        yy -= sz / 8 * ks;
+      }
+      if (!ok) { const ovh = Math.min((used - total) / 8 * ks, by - bh - 22); el("rect", { x: xb, y: by - bh - ovh, width: bw, height: ovh, fill: "none", class: "s-red", "stroke-dasharray": "3 2", "stroke-width": 1.5 }, svg); }
+      el("text", { x: xb + bw / 2, y: by + 13, "text-anchor": "middle", "font-size": 10, class: "muted" }, svg).textContent = "b" + k;
+    }
+    el("line", { x1: bx - 4, x2: bx + 8 * 24, y1: by - bh, y2: by - bh, class: "s-red", "stroke-width": 1.5 }, svg);
+    // largest square block
+    let big = 0; for (let n = 2; n <= 400; n++) if (n * n * t + 3 * n * t + ov <= total) big = n;
+    const free = total - used;
+    let verdict;
+    if (!ok) verdict = `<span class="bad-t">DOES NOT FIT</span>: over by ${(-free / 1024).toFixed(1)} KB. Split the matrix over more PEs.`;
+    else if (free < 1024) verdict = `<span class="warn-t">FITS, barely</span>: ${free} B spare. Any extra code or buffer breaks it.`;
+    else verdict = `<span class="ok-t">FITS</span>: ${(free / 1024).toFixed(1)} KB free.`;
+    $("#b-out").innerHTML =
+      `A: ${M} × ${N} × ${t} B = ${(A / 1024).toFixed(1)} KB\nvectors x, y, b: ${(vec / 1024).toFixed(2)} KB\nfixed overhead: ${ov.toLocaleString()} B ≈ ${(ov / 1024).toFixed(1)} KB (measured)\n` +
+      `total: ${(used / 1024).toFixed(1)} KB of 48 KB\n${verdict}\nlargest square block at this dtype and chip: ${big} × ${big}`;
+  }
+  ["#b-m", "#b-n", "#b-t", "#b-a"].forEach(s => $(s).oninput = budget); budget();
+
+  /* ---------- microthread timeline ---------- */
+  let utMode = "serial";
+  function simulate(arr) {
+    // ops: R receive (8 blocks, block k ready at 1 + k*arr), C compute (10), S send (8)
+    const ops = [
+      { id: "R", name: "receive W → mem", ut: 2, n: 8, ready: k => 1 + k * arr, c: "f-blu" },
+      { id: "C", name: "compute locally", ut: 5, n: 10, ready: () => 0, c: "f-grn" },
+      { id: "S", name: "send mem → E", ut: 4, n: 8, ready: () => 0, c: "f-acc" }];
+    const dp = []; ops.forEach(o => { o.done = 0; o.start = null; o.end = null; });
+    if (utMode === "serial") {
+      let t = 0;
+      for (const o of ops) {
+        o.start = t;
+        while (o.done < o.n) { if (o.ready(o.done) <= t) { dp[t] = o; o.done++; } t++; }
+        o.end = t;
+      }
+      return { ops, dp, T: t };
+    }
+    ops.forEach(o => o.start = 0);
+    let t = 0, rr = 0;
+    while (ops.some(o => o.done < o.n) && t < 200) {
+      const ready = ops.filter(o => o.done < o.n && o.ready(o.done) <= t);
+      if (ready.length) { const o = ready[rr % ready.length]; rr++; dp[t] = o; o.done++; if (o.done === o.n) o.end = t + 1; }
+      t++;
+    }
+    return { ops, dp, T: t };
+  }
+  function utdraw() {
+    const arr = +$("#ut-arr").value; $("#ut-arrv").textContent = arr;
+    const svg = $("#ut-svg"); svg.innerHTML = "";
+    const x0 = 120, W = 540, TMAX = 64, k = W / TMAX, rowH = 22, y0 = 14;
+    const sim = simulate(arr);
+    if (utMode === "clash") sim.ops[2].ut = 2;
+    for (let i = 0; i < 8; i++) {
+      const y = y0 + i * rowH;
+      el("rect", { x: x0, y, width: W, height: rowH - 4, rx: 3, class: "box" }, svg);
+      el("text", { x: x0 - 8, y: y + 13, "text-anchor": "end", "font-size": 11.5, class: "mono" }, svg).textContent = "ut" + i;
+    }
+    const byUt = {};
+    for (const o of sim.ops) {
+      const y = y0 + o.ut * rowH, end = utMode === "clash" ? TMAX * .9 : o.end;
+      const bar = el("rect", { x: x0 + o.start * k, y, width: (end - o.start) * k, height: rowH - 4, rx: 3, class: o.c, opacity: .35 }, svg);
+      el("title", {}, bar).textContent = o.name;
+      (byUt[o.ut] = byUt[o.ut] || []).push(o);
+    }
+    for (const ut in byUt) {
+      const y = y0 + ut * rowH;
+      if (byUt[ut].length > 1) {
+        el("rect", { x: x0, y, width: TMAX * .9 * k, height: rowH - 4, rx: 3, fill: "none", class: "s-red", "stroke-width": 2.5 }, svg);
+        el("text", { x: x0 + 6, y: y + 13, "font-size": 11, "font-weight": 700, class: "f-red" }, svg).textContent = "CONFLICT: " + byUt[ut].map(o => o.name).join(" + ");
+      } else el("text", { x: x0 + byUt[ut][0].start * k + 6, y: y + 13, "font-size": 11 }, svg).textContent = byUt[ut][0].name;
+    }
+    const dy = y0 + 8 * rowH + 10;
+    el("text", { x: x0 - 8, y: dy + 14, "text-anchor": "end", "font-size": 11.5, "font-weight": 700 }, svg).textContent = "datapath";
+    el("rect", { x: x0, y: dy, width: W, height: 20, rx: 3, class: "box" }, svg);
+    let busy = 0;
+    if (utMode !== "clash") sim.dp.forEach((o, t) => { if (o) { busy++; el("rect", { x: x0 + t * k + .5, y: dy + 1, width: k - 1, height: 18, class: o.c, opacity: .9 }, svg); } });
+    const ay = dy + 34;
+    for (let t = 0; t <= TMAX; t += 8) {
+      el("line", { x1: x0 + t * k, x2: x0 + t * k, y1: dy + 22, y2: dy + 26, class: "s-muted" }, svg);
+      el("text", { x: x0 + t * k, y: ay + 4, "text-anchor": "middle", "font-size": 10, class: "muted" }, svg).textContent = t;
+    }
+    el("text", { x: x0 - 8, y: ay + 4, "text-anchor": "end", "font-size": 10, class: "muted" }, svg).textContent = "step";
+    let msg;
+    if (utMode === "clash") {
+      msg = "Send and receive both default to microthread 2 (queue 2 each, no .ut_id).\nThe SDK rule: two operations cannot concurrently use the same microthread.\n" +
+        "Measured in this course's heat stencil with queues 2,3 / 2,3: FATAL \"trying to term ut_instr[3], but it's not ours\" at about cycle 2,123 (WSE-3) / 2,125 (WSE-2); the host hangs.\nFix: renumber a queue, or on WSE-3 give one op its own .ut_id.";
+    } else {
+      const alt = (() => { const keep = utMode; utMode = keep === "serial" ? "async" : "serial"; const r = simulate(arr); utMode = keep; return r; })();
+      const serialT = utMode === "serial" ? sim.T : alt.T, asyncT = utMode === "async" ? sim.T : alt.T;
+      msg = `${utMode === "serial" ? "One at a time" : "Async on 3 microthreads"}: finishes at step ${sim.T}. Datapath busy ${busy} of ${sim.T} steps (${Math.round(100 * busy / sim.T)}%).\n` +
+        `Same work either way: 26 datapath steps. Serial ${serialT} steps vs async ${asyncT}: ${(serialT / asyncT).toFixed(2)}× faster, not 3×, and never more than the datapath allows.`;
+    }
+    $("#ut-out").textContent = msg;
+  }
+  seg($("#utw .seg"), "u", m => { utMode = m; utdraw(); });
+  $("#ut-arr").oninput = utdraw; utdraw();
+
+  /* ---------- matvec traffic stepper ---------- */
+  let mvN = 6, mvJ = -1, mvTimer = null;
+  function mvdraw() {
+    const N = mvN; $("#mv-nv").textContent = N;
+    const svg = $("#mv-svg"); svg.innerHTML = "";
+    const c = Math.min(18, 216 / N), ax = 40, ay = 40;
+    const fin = mvJ >= N;           // final step: cached machine writes y once
+    el("text", { x: ax, y: 24, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "A";
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const on = j === mvJ;
+      el("rect", { x: ax + j * c, y: ay + i * c, width: c - 2, height: c - 2, rx: 2, class: on ? "acc" : (j < mvJ ? "grn" : "box"), opacity: j < mvJ && !on ? .35 : 1 }, svg);
+    }
+    const xx = ax + N * c + 24;
+    el("text", { x: xx, y: 24, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "x";
+    for (let j = 0; j < N; j++) el("rect", { x: xx, y: ay + j * c, width: c - 2, height: c - 2, rx: 2, class: j === mvJ ? "acc" : "box" }, svg);
+    const yx = xx + c + 24;
+    el("text", { x: yx, y: 24, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "y";
+    for (let i = 0; i < N; i++) {
+      const cl = fin ? "grn" : (mvJ >= 0 ? "acc" : "box");
+      el("rect", { x: yx, y: ay + i * c, width: c - 2, height: c - 2, rx: 2, class: cl }, svg);
+      if (mvJ >= 0 && !fin) el("rect", { x: yx + c, y: ay + i * c, width: 5, height: c - 2, class: "f-grn" }, svg);
+    }
+    const caption = mvJ < 0 ? "press Step" : fin ? "end: the cached machine writes y once" : `column j = ${mvJ}: read A[:, ${mvJ}] and x[${mvJ}]; WSE reads and writes all of y`;
+    el("text", { x: ax, y: ay + N * c + 22, "font-size": 12 }, svg).textContent = caption;
+    // counters
+    const steps = Math.min(Math.max(mvJ + 1, 0), N);
+    const rel = 4 * (N * steps + steps) + (fin ? 4 * N : 0);
+    const abs = 4 * (N * steps + steps + 2 * N * steps);
+    const RF = 4 * (N * N + 2 * N), AF = 4 * (3 * N * N + N);
+    const gx = 380, gw = 280, sc = gw / AF;
+    el("text", { x: gx, y: 24, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "Bytes moved so far";
+    [["cached machine (\"relative\")", rel, RF, "f-blu", 50], ["WSE (\"absolute\")", abs, AF, "f-acc", 110]].forEach(([nm, v, F, cl, y]) => {
+      el("text", { x: gx, y: y - 6, "font-size": 12 }, svg).textContent = nm;
+      el("rect", { x: gx, y, width: gw, height: 22, rx: 4, class: "box" }, svg);
+      el("rect", { x: gx, y, width: F * sc, height: 22, rx: 4, fill: "none", class: "s-muted", "stroke-dasharray": "3 3" }, svg);
+      if (v > 0) el("rect", { x: gx, y, width: v * sc, height: 22, rx: 4, class: cl, opacity: .85 }, svg);
+      el("text", { x: gx, y: y + 38, "font-size": 11.5, class: "mono" }, svg).textContent = `${v.toLocaleString()} of ${F.toLocaleString()} B`;
+    });
+    el("text", { x: gx, y: 190, "font-size": 11.5, class: "muted" }, svg).textContent = "dashed outline = final total";
+    el("text", { x: gx, y: 212, "font-size": 11.5, class: "muted" }, svg).textContent = `relative = 4(N² + 2N) = ${RF.toLocaleString()} B`;
+    el("text", { x: gx, y: 230, "font-size": 11.5, class: "muted" }, svg).textContent = `absolute = 4(3N² + N) = ${AF.toLocaleString()} B`;
+    el("text", { x: gx, y: 248, "font-size": 11.5, class: "muted" }, svg).textContent = `ratio ${(AF / RF).toFixed(2)}× (→ 3× as N grows)`;
+    $("#mv-out").textContent = `N = ${N}: ${mvJ < 0 ? "not started" : fin ? "done" : "step " + (mvJ + 1) + " of " + N}. ` +
+      `Per column the WSE moves 4N (A) + 4 (x) + 8N (read and write y) bytes.\n` +
+      `f32 cycles on one PE ≈ 54 + N + N² = ${54 + N + N * N} (fit to measured runs; N = 64 measured 4,214). Formulas from single-tile-matvec/run.py.`;
+    $("#mv-step").disabled = fin;
+  }
+  function mvstep() { if (mvJ < mvN) { mvJ++; mvdraw(); } if (mvJ >= mvN) mvstop(); }
+  function mvstop() { if (mvTimer) clearInterval(mvTimer); mvTimer = null; $("#mv-play").textContent = "Play"; }
+  $("#mv-step").onclick = () => { mvstop(); mvstep(); };
+  $("#mv-play").onclick = () => {
+    if (mvTimer) return mvstop();
+    if (mvJ >= mvN) mvJ = -1;
+    $("#mv-play").textContent = "Pause"; mvTimer = setInterval(mvstep, 600); mvstep();
+  };
+  $("#mv-reset").onclick = () => { mvstop(); mvJ = -1; mvdraw(); };
+  $("#mv-n").oninput = () => { mvstop(); mvN = +$("#mv-n").value; mvJ = -1; mvdraw(); };
+  mvdraw();
+
+  /* ---------- sparse wavelet encoder ---------- */
+  let seed = 7, vec = [], sel = 0;
+  function rnd() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+  function makeVec() {
+    const z = +$("#sp-z").value / 100, nz = Math.round(16 * (1 - z));
+    const idx = [...Array(16).keys()].sort(() => rnd() - .5).slice(0, nz).sort((a, b) => a - b);
+    vec = new Array(16).fill(0); idx.forEach(i => vec[i] = 1 + Math.floor(rnd() * 900) * (rnd() < .3 ? -1 : 1));
+    sel = 0;
+  }
+  function hex16(v) { return ((v & 0xffff) >>> 0).toString(16).padStart(4, "0"); }
+  function spdraw() {
+    $("#sp-zv").textContent = $("#sp-z").value + "%";
+    const svg = $("#sp-svg"); svg.innerHTML = "";
+    const nzs = vec.map((v, i) => [i, v]).filter(([, v]) => v !== 0);
+    el("text", { x: 20, y: 18, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "Sender's vector (16 × i16)";
+    vec.forEach((v, i) => {
+      const x = 20 + i * 40;
+      el("rect", { x, y: 26, width: 36, height: 26, rx: 3, class: v ? "grn" : "box" }, svg);
+      el("text", { x: x + 18, y: 43, "text-anchor": "middle", "font-size": 10.5, class: v ? "mono" : "mono muted" }, svg).textContent = v;
+      el("text", { x: x + 18, y: 64, "text-anchor": "middle", "font-size": 9, class: "muted" }, svg).textContent = i;
+    });
+    el("text", { x: 20, y: 92, "font-size": 12.5, "font-weight": 600 }, svg).textContent = `Sparse stream: ${nzs.length} wavelet${nzs.length === 1 ? "" : "s"} (click one)`;
+    if (sel >= nzs.length) sel = 0;
+    nzs.forEach(([i, v], n) => {
+      const x = 20 + (n % 8) * 80, y = 100 + Math.floor(n / 8) * 30;
+      const g = el("g", { class: "wav" + (n === sel ? " sel" : ""), tabindex: 0, role: "button", "aria-label": `wavelet for index ${i}, value ${v}` }, svg);
+      el("rect", { x, y, width: 36, height: 22, class: "pur" }, g);
+      el("rect", { x: x + 36, y, width: 36, height: 22, class: "grn" }, g);
+      el("text", { x: x + 18, y: y + 15, "text-anchor": "middle", "font-size": 10, class: "mono" }, g).textContent = hex16(i);
+      el("text", { x: x + 54, y: y + 15, "text-anchor": "middle", "font-size": 10, class: "mono" }, g).textContent = hex16(v);
+      const pick = () => { sel = n; spdraw(); };
+      g.addEventListener("click", pick);
+      g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    });
+    // bit ruler
+    const ry = 190;
+    el("text", { x: 20, y: ry - 8, "font-size": 12.5, "font-weight": 600 }, svg).textContent = "One wavelet payload, 32 bits";
+    const pair = nzs[sel];
+    const word = pair ? (((pair[0] & 0xffff) << 16) | (pair[1] & 0xffff)) >>> 0 : 0;
+    const bw = 640 / 32;
+    for (let bit = 31; bit >= 0; bit--) {
+      const x = 20 + (31 - bit) * bw, on = (word >>> bit) & 1;
+      el("rect", { x, y: ry, width: bw - 1, height: 24, class: bit >= 16 ? "pur" : "grn", opacity: pair ? 1 : .4 }, svg);
+      el("text", { x: x + bw / 2, y: ry + 16, "text-anchor": "middle", "font-size": 11, class: "mono" }, svg).textContent = pair ? on : "·";
+    }
+    [[31, "bit 31", "start"], [16, "16", "middle"], [15, "15", "middle"], [0, "bit 0", "end"]].forEach(([bit, t, a]) => {
+      const x = 20 + (31 - bit) * bw + (a === "start" ? 0 : a === "end" ? bw : bw / 2);
+      el("text", { x, y: ry + 40, "text-anchor": a, "font-size": 10.5, class: "muted" }, svg).textContent = t;
+    });
+    el("text", { x: 180, y: ry + 58, "text-anchor": "middle", "font-size": 11.5 }, svg).textContent = "upper 16 bits: index";
+    el("text", { x: 500, y: ry + 58, "text-anchor": "middle", "font-size": 11.5 }, svg).textContent = "lower 16 bits: 16-bit value (i16 in topic-04)";
+    el("line", { x1: 340, x2: 340, y1: ry - 4, y2: ry + 30, class: "stroke", "stroke-width": 2 }, svg);
+    $("#sp-out").textContent = `dense: 16 wavelets → 16 task activations at the receiver\n` +
+      `sparse: ${nzs.length} wavelets → ${nzs.length} activations, each doing result[index] = value  (saves ${16 - nzs.length})\n` +
+      (pair ? `selected: 0x${hex16(pair[0])}${hex16(pair[1])} → task main_task(wavelet_data: i16 = ${pair[1]}, index: i16 = ${pair[0]})` : "no non-zeros: nothing is sent, nothing runs");
+  }
+  $("#sp-z").oninput = () => { makeVec(); spdraw(); };
+  $("#sp-r").onclick = () => { makeVec(); spdraw(); };
+  makeVec(); spdraw();
 })();
 </script>
 </body>

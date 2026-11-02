@@ -1,0 +1,38 @@
+param memcpy_params;
+param N: i16;
+param HALF: i16;
+param PAD: i16;
+
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+const tsc = @import_module("<time>");          // the PE's 48-bit timestamp counter
+const T: type = if (HALF != 0) f16 else f32;
+
+// x and y are contiguous; PAD extra words at the end of x shift where y starts.
+var x: [N + PAD]T;
+var y: [N]T;
+var x_ptr: [*]T = &x;
+var y_ptr: [*]T = &y;
+const x_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -> x[i] });
+const y_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -> y[i] });
+
+var ts = @zeros([6]u16);                       // [t0 (3 x u16), t1 (3 x u16)]
+const ts_ptr: [*]u16 = &ts;
+var t0 = @zeros([3]u16);
+var t1 = @zeros([3]u16);
+
+fn saxpy(a: f32) void {
+  tsc.enable_tsc();
+  tsc.get_timestamp(&t0);
+  if (HALF != 0) { @fmach(y_dsd, y_dsd, x_dsd, @as(f16, a)); }
+  else           { @fmacs(y_dsd, y_dsd, x_dsd, a); }
+  tsc.get_timestamp(&t1);
+  for (@range(i16, 3)) |i| { ts[i] = t0[i]; ts[3 + i] = t1[i]; }
+  sys_mod.unblock_cmd_stream();
+}
+
+comptime {
+  @export_symbol(x_ptr, "x");
+  @export_symbol(y_ptr, "y");
+  @export_symbol(ts_ptr, "ts");
+  @export_symbol(saxpy);
+}

@@ -1,0 +1,3 @@
+N=64 f32 @fmacs PAD=0: kernel 143 cycles (TSC)
+SUCCESS!
+[11010 simulated cycles, WSE-3]

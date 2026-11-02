@@ -1,0 +1,18 @@
+// 01-saxpy/timed: the SAXPY kernel timed on the PE with the timestamp counter.
+// HALF:0 -> f32 @fmacs, HALF:1 -> f16 @fmach. PAD: extra words between x and y.
+param N: i16;
+param HALF: i16;
+param PAD: i16;
+
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = 1, .height = 1 });
+const T: type = if (HALF != 0) f16 else f32;
+
+layout {
+  @set_rectangle(1, 1);
+  @set_tile_code(0, 0, "pe_program.csl", .{
+    .memcpy_params = memcpy.get_params(0), .N = N, .HALF = HALF, .PAD = PAD });
+  @export_name("x", [*]T, true);
+  @export_name("y", [*]T, true);
+  @export_name("ts", [*]u16, false);           // 6 words: start and end timestamps
+  @export_name("saxpy", fn(f32)void);
+}
