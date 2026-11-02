@@ -17,6 +17,7 @@
   .btn.small { padding: 4px 10px; font-size: 13px; }
   .controls output { font: 13.5px var(--mono); min-width: 5ch; }
   .widget svg { display: block; margin: 0 auto; height: auto; }
+  main p, main li { overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -317,7 +318,8 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
         const y = 32 + i * 26;
         T(svg, 10, y + 14, lab, { "font-size": 12 });
         el("rect", { x: X0, y, width: Math.max(2, X(r) - X0), height: 18, rx: 3, class: cls }, svg);
-        T(svg, Math.min(X(r) + 6, X1 - 70), y + 14, fmtR(r), { "font-size": 11.5, class: "mono" });
+        const inside = X(r) > X1 - 80;
+        T(svg, inside ? X(r) - 6 : X(r) + 6, y + 14, fmtR(r), { "font-size": 11.5, class: "mono", "text-anchor": inside ? "end" : "start" });
       });
       [6, 9, 12, 15].forEach((e, i) => {
         const x = X0 + (e - L0) * (X1 - X0) / (L1 - L0);
@@ -429,17 +431,17 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
       T(svg, 10, 92, "k →", { "font-size": 11, class: "muted" });
       // grid: demux column + rows
       const cur = k < N ? dest(k, p) : null;
-      const rowY = y => 128 + y * 66, PW = 128, PX = x => 150 + x * (PW + 8);
+      const rowY = y => 128 + y * 66, PW = 118, PX = x => 162 + x * (PW + 8);
       T(svg, 10, 120, "demux", { "font-size": 11, class: "muted" });
       // row wavelets received so far
       for (let y = 0; y < p.h; y++) {
         let mSoFar = 0; for (let q = 0; q < k; q++) if (q % p.h === y) mSoFar++;
         const dActive = cur && cur.y === y;
         const dCnt = ((p.h - y) % p.h + k) % p.h;
-        el("rect", { x: 10, y: rowY(y), width: 110, height: 54, rx: 5, class: "pur", "stroke-width": dActive ? 3 : 1 }, svg);
+        el("rect", { x: 10, y: rowY(y), width: 124, height: 54, rx: 5, class: "pur", "stroke-width": dActive ? 3 : 1 }, svg);
         T(svg, 18, rowY(y) + 18, `demux row ${y}`, { "font-size": 11.5 });
         T(svg, 18, rowY(y) + 38, k < N ? `counter ${dCnt}${dCnt === 0 ? " → keep" : ""}` : "done", { "font-size": 11.5, class: "mono" + (dActive ? " f-pur" : "") });
-        el("line", { x1: 120, x2: 148, y1: rowY(y) + 27, y2: rowY(y) + 27, class: "s-muted", "stroke-width": 1.5 }, svg);
+        el("line", { x1: 134, x2: 160, y1: rowY(y) + 27, y2: rowY(y) + 27, class: "s-muted", "stroke-width": 1.5 }, svg);
         for (let x = 0; x < p.w; x++) {
           const active = dActive && cur.x === x, rowCnt = ((p.w - x) % p.w + mSoFar) % p.w;
           el("rect", { x: PX(x), y: rowY(y), width: PW, height: 54, rx: 5, class: PAL[(y * p.w + x) % 6], "stroke-width": active ? 3 : 1 }, svg);

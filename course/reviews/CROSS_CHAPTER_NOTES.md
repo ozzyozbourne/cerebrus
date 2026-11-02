@@ -21,3 +21,4 @@ Fixers: apply any item that touches your chapter.
 18. **Program 01 cost split.** @fmacs ≈130 cycles (2/elem f32); each H2D ≈1,360; D2H ≈4,400 of 7,740. Totals: WSE-3 ≈ 3,640 + 64·N. Source: reviews/ch10-depth.md.
 19. **Timing across PEs (ch11, ch12, ch15).** TSC values on different PEs are not comparable in the simulator: each counter starts when the launch reaches that PE. Time on one PE, or use a round trip.
 20. **Hop cost (ch11, ch15).** A pure router hop measured as a round trip on one PE costs 2.0 cycles/hop on WSE-3 and 1.0 on WSE-2, plus 1 cycle per extra wavelet on WSE-3. A WSE-3 route accepts at most 1 input direction (compile error with 2). Source: ch04 page and ch04-fixlog.md.
+21. **launch() (ch07, ch10, ch15).** Returns to Python even if the device never unblocks. The next memcpy fails with "kernel stall", and no sim_stats.json is written (measured by the ch09 fixer).

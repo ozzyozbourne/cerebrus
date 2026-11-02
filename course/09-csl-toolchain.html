@@ -82,6 +82,7 @@
   @media (max-width: 680px) {
     .files3, .nm-cols, .ft-wrap { grid-template-columns: 1fr; }
     .code-tour .inote { margin-left: 8px; margin-right: 8px; }
+    .code-tour .src { word-break: break-all; }
   }
 </style>
 </head>
@@ -241,7 +242,9 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 <span class="c">// 2. a data task is named by its color on WSE-2, by its input queue on WSE-3 (topic-12)</span>
 <span class="k">const</span> recv_task_id: <span class="n">data_task_id</span> =
   <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse2"</span>)) <span class="b">@get_data_task_id</span>(comm) <span class="k">else if</span> (<span class="b">@is_arch</span>(<span class="s">"wse3"</span>)) <span class="b">@get_data_task_id</span>(comm_iq);
-<span class="c">// 3. fabric DSDs take .input_queue / .output_queue fields; both chips accept them in 2.10.1 (programs 03-05)</span></code></pre>
+<span class="c">// 3. a fabric DSD needs .fabric_color on WSE-2 only (program 03, pe_program.csl)</span>
+<span class="k">const</span> out_dsd = <span class="b">@get_dsd</span>(<span class="n">fabout_dsd</span>, <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse3"</span>)) .{ .extent = M, .output_queue = oq }
+                                     <span class="k">else</span> .{ .extent = M, .output_queue = oq, .fabric_color = send_color });</code></pre>
 
 <div class="callout">
 <strong>Most bugs are resource bugs</strong>
@@ -277,7 +280,10 @@ The scalar language is the easy part.
 <p>So even an empty program uses about 4.2 KB on WSE-3 for code and the memcpy runtime, and overflow is a <strong>link</strong> error, not a run-time one. To find your own limit, bisect: <code>for N in 5000 5600 5620; do cslc … --params=N:$N -o b$N; cs_readelf -m b$N/bin/out_0_0.elf; done</code>.</p>
 
 <h2>The standard library map</h2>
-<p>Modules are imported with <code>@import_module("&lt;name&gt;", .{params})</code>. They are plain CSL you can read inside the SIF (<code>csl-libs/</code>). For example, the whole of <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> is <code>return tile_config.get_fabric_coord(tile_config.fabric_coord.X) - @get_rectangle().offsets.width;</code> <span class="tag sdk">SDK 2.10.1</span>.</p>
+<p>Modules are imported with <code>@import_module("&lt;name&gt;", .{params})</code>. They are plain CSL you can read inside the SIF (<code>csl-libs/</code>). For example, this is the whole of <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> <span class="tag sdk">SDK 2.10.1, csl-libs/layout.csl</span>:</p>
+<pre><code><span class="k">fn</span> get_x_coord() <span class="n">u16</span> {
+  <span class="k">return</span> tile_config.get_fabric_coord(tile_config.fabric_coord.X) - <span class="b">@get_rectangle</span>().offsets.width;
+}</code></pre>
 <div class="table-wrap"><table>
 <tr><th>Module</th><th>What for</th><th>Key calls</th><th>Tutorial</th></tr>
 <tr><td><code>&lt;memcpy/get_params&gt;</code> (layout), <code>&lt;memcpy/memcpy&gt;</code> (PE)</td><td>host I/O</td><td><code>get_params(x)</code>, <code>unblock_cmd_stream()</code></td><td>gemv-01, Ch 7</td></tr>
@@ -417,7 +423,7 @@ cs_python run.py --name out</code></pre>
 <p>The simulator writes <code>sim.log</code>, <code>sim_stats.json</code>, <code>simconfig.json</code> and <code>simfab_traces/</code> into the directory you ran <code>cs_python</code> from; the host's <code>print</code> output goes to your terminal. A real <code>sim_stats.json</code> from program 01 (WSE-3, a quiet rerun) <span class="tag measured">Measured</span>:</p>
 <pre class="output"><code>"cycle_count": 7740,          <span class="c"># whole run: load, every memcpy, your kernel, idle tail</span>
 "fabric_x": 8, "fabric_y": 3,  <span class="c"># --fabric-dims</span>
-"hwtile_count": 10,           <span class="c"># PEs actually simulated: yours, 5 frame, 4 halo-row/edge tiles</span>
+"hwtile_count": 10,           <span class="c"># tiles simulated as full PEs</span>
 "iotile_count": 4, "nultile_count": 32, "tile_count": 46,
 "idle_ce_cycles": 50,         <span class="c"># the idle tail before the simulator stopped</span>
 "sim_stop_cause": "Stopped due to idleness",
@@ -425,7 +431,7 @@ cs_python run.py --name out</code></pre>
 <ul>
 <li><b>Idle stop.</b> The simulator stops after an idle window once the host has stopped; <code>simconfig.json</code> has <code>"sunsetCount": 50</code>, and most runs stopped after exactly 50 idle cycles <span class="tag measured">Measured</span>.</li>
 <li><b>A deadlock and a success can both end "Stopped due to idleness".</b> Only your host-side check (the <code>assert_allclose</code>) tells you which.</li>
-<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2) every time. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. The simulated clock keeps running while the host process is slow to send its next command <span class="tag derived">Derived</span>.</li>
+<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2) every time. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. The Chapter 10 review saw +1.4 % to +2.3 % for program 01 in parallel runs and up to about 4× on one variant, while in-kernel timestamps did not move <span class="tag measured">Measured</span>. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
 <li><b>To time a kernel</b>, read the PE's own timestamp counter with <code>&lt;time&gt;</code> (topic-02), which stays stable under load, or difference two runs as Lab 3 does. Do not read a single <code>cycle_count</code>.</li>
 <li>A fatal stop writes no <code>sim_stats.json</code> at all <span class="tag measured">Measured</span>. <code>sim.log</code> names the chip internally: FYN = WSE-2, SDR = WSE-3.</li>
 </ul>
@@ -445,7 +451,7 @@ cs_python run.py --name out</code></pre>
 <tr><td>delete <code>@export_symbol(saxpy)</code></td><td><b>run time</b> (compiles cleanly; <code>saxpy</code> is simply missing from <code>out_rpc.json</code>)</td><td><code>FATAL: Error: the function saxpy does not exist</code></td><td>export it</td></tr>
 <tr><td>delete <code>sys_mod.unblock_cmd_stream()</code></td><td><b>run time</b>, at the next memcpy after <code>launch</code></td><td><code>the received length (0 bytes) is not expected (256 bytes), could be a kernel stall</code>; <code>cs_python</code> aborts after about 4 s; <code>sim.log</code> is cut off; no <code>sim_stats.json</code></td><td>unblock at the end of every RPC</td></tr>
 </table></div>
-<p class="legend">"256 bytes" is the D2H copy of 64 f32 that never arrived. Under heavy host load, a correct program can also abort with "could be a kernel stall" (Chapter 10 review), so rerun once before you hunt.</p>
+<p class="legend">"256 bytes" is the D2H copy of 64 f32 that never arrived. Under heavy host load a correct program can also abort with "could be a kernel stall": 5 of 32 parallel runs did in the Chapter 10 review <span class="tag measured">Measured</span>. Rerun it alone before you hunt.</p>
 
 <h3>When it hangs: a four-step procedure</h3>
 <ol>
@@ -478,7 +484,7 @@ d.read_trace(4 + x, 1 + y, <span class="s">'trace'</span>)  <span class="c"># fa
 <p class="legend">Read after <code>rt.stop()</code>, so the program must finish. <code>read_trace</code> takes <b>fabric</b> coordinates, hence <code>4 + x, 1 + y</code> <span class="tag sdk">SDK 2.10.1, topic-12</span>.</p>
 </div>
 </div>
-<p><b>Instruction trace.</b> Setting <code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace</code> before <code>cs_python</code> makes the simulator log every instruction. For SAXPY this grew <code>sim.log</code> to about 6 MB (86,000 lines) and showed lines such as <code>@3124 P4.1: … [EX OP] … FMACS Dest:3f24aefe Src0:3ea86eb5 Src1:3e00bf6c Src2:40200000</code>, where <code>P4.1</code> is fabric (4,1) and <code>40200000</code> is 2.5 in hex <span class="tag measured">Measured</span>. Use it on small runs only.</p>
+<p><b>Instruction trace.</b> Setting <code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace</code> before <code>cs_python</code> makes the simulator log every instruction. For SAXPY this grew <code>sim.log</code> to about 6 MB (86,000 lines) and showed lines such as <code>@3124 P4.1: … [EX OP] … FMACS Dest:3f24aefe Src0:3ea86eb5 Src1:3e00bf6c Src2:40200000</code>, where <code>P4.1</code> is fabric (4,1), <code>T01</code> the task ID and <code>40200000</code> is 2.5 in hex <span class="tag measured">Measured</span>. It shows which task each PE runs, cycle by cycle, and is the quickest way to see where a PE stopped. Use it on small runs only. (<code>sdk_debug_shell instr-trace</code> does not read the simulator's default CTF traces; it says to use csdb <span class="tag sdk">SDK 2.10.1</span>.)</p>
 <p>A cheap trick we used for the streaming race in program 02: export an extra array, have the data task record each running sum into it, read it back, and compare with <code>numpy.cumsum</code>. On a deterministic simulator, recording state is often faster than stepping a debugger.</p>
 
 <h2>The other way to lay out: SdkLayout</h2>
@@ -676,7 +682,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
   addLine($("#nm-cmd"), "cmd", 0, "cslc --arch=wse3 ./layout.csl --fabric-dims=8,3 --fabric-offsets=4,1 --params=N:64 -o out --memcpy --channels 1");
   for (const f in cols) {
     const want = new Set(); TH.forEach(t => (t.L[f] || []).forEach(n => want.add(n)));
-    [...want].sort((a, b) => a - b).forEach(n => addLine(cols[f], f, n, LINES[f][n - 1].replace(/\s+(\/\/|#).*$/, "")));
+    [...want].sort((a, b) => a - b).forEach(n => addLine(cols[f], f, n, LINES[f][n - 1].replace(/\s+(\/\/|#).*$/, "").trim()));
   }
   let cur = null;
   const btns = TH.map((t, i) => {
@@ -810,7 +816,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
   // arrows: [from, to, label, colourVar]
   const OK = [
     { line: 17, s: "open", a: [["host", "pe", "load ELFs: yours + 5 frame + generated/", "--muted"]], t: "rt.load(); rt.run(): every ELF is placed on the simulated fabric and started. The PE waits for commands on color 22." },
-    { line: 19, s: "open", a: [["host", "mem", "H2D command (color 22) + 64 f32 (color 23)", "--blue"], ["mem", "pe", "write x[0..63]", "--blue"]], t: "memcpy_h2d(x): a copy command fans into the row, then the data. For a copy, memcpy unblocks the stream itself." },
+    { line: 19, s: "open", a: [["host", "mem", "H2D cmd (c22) + 64 f32 (c23)", "--blue"], ["mem", "pe", "write x[0..63]", "--blue"]], t: "memcpy_h2d(x): a copy command fans into the row, then the data. For a copy, memcpy unblocks the stream itself." },
     { line: 20, s: "open", a: [["host", "mem", "H2D command + 64 f32", "--blue"], ["mem", "pe", "write y[0..63]", "--blue"]], t: "memcpy_h2d(y): the same for y." },
     { line: 21, s: "blocked", a: [["host", "mem", "RPC command: id 3, a = 2.5", "--purple"], ["mem", "pe", "call saxpy(2.5)", "--purple"]], t: "launch('saxpy', 2.5): memcpy's RPC control task calls your function. The PE's command stream is now blocked. In our runs launch() returned to Python at this point (Measured)." },
     { line: 21, s: "blocked", a: [["pe", "pe", "@fmacs: 64 elements, cycles 3,124–3,250", "--amber"]], t: "Inside saxpy: one @fmacs walks all 64 elements, about 127 cycles of the 7,740-cycle run (Measured, instruction trace)." },
@@ -902,7 +908,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
       ]],
       ["west/", null, [["bin/out_0_0 … out_2_0.elf", "c", "Three memcpy frame programs west of your rectangle (demux adaptor, demux, command fan; Chapter 7), plus west/out.json with their params."]]],
       ["east/", null, [["bin/out_0_0, out_1_0.elf", "c", "Two memcpy frame programs east of your rectangle (mux, mux adaptor), plus east/out.json."]]],
-      ["generated/", null, [["default.elf, coord.elf, MEMCPY_XY_ROUTES.elf", "r", "Not there after cslc: these appeared in out/ when cs_python ran the program (fill programs for unused tiles, coordinates and memcpy routes)."]]],
+      ["generated/", null, [["default.elf, coord.elf, MEMCPY_XY_ROUTES.elf", "r", "Not there after cslc: these three ELFs appeared in out/ only when cs_python ran the program. Their roles are not documented locally; the names suggest default tile code, coordinates and memcpy routes."]]],
       ["out.json", "c", "The params cslc was given: {\"params\":{\"N\":\"64\"},\"colors\":{}}. run.py reads N from here."],
     ]],
     ["sim.log", "s", "Written to the directory you ran cs_python from. Architecture (\"Architecture is: SDR\"), every <simprint> line with its cycle, the stop reason (\"@7740 No data movement in the last 50 cycles; stopping.\") and CTF statistics. With SIMFABRIC_DEBUG=inst_trace, every instruction (about 6 MB for SAXPY)."],
