@@ -5,148 +5,771 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DSDs: Loops as Hardware</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+  /* chapter-local helpers */
+  main p code, main li code, main td code { overflow-wrap: anywhere; }
+  table.small td, table.small th { font-size: 14px; padding: 5px 8px; }
+  table.ops td { font: 13px var(--mono); }
+  table.ops td:first-child { font: 600 14px var(--sans); }
+  .note { color: var(--muted); font-size: 14px; }
+  .controls label.chk { gap: 4px; }
+  .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .duo > * { min-width: 0; }
+  @media (max-width: 680px) { .duo { grid-template-columns: 1fr; } }
+  .codebox { font: 13px/1.55 var(--mono); background: var(--code-bg); border-radius: 8px; padding: 8px 10px; white-space: pre; overflow-x: auto; }
+  .codebox .hl { background: var(--accent-soft); outline: 1px solid var(--accent); border-radius: 3px; }
+  .codebox .dim { color: var(--muted); }
+  .count { font: 600 14px var(--mono); }
+  svg .hatch { fill: url(#ghost-hatch); }
+</style>
 </head>
 <body>
 <main>
 <div class="kicker">Chapter 6 · Part II · The machine</div>
 <h1>DSDs: loops as hardware</h1>
-<p class="lede">With no caches and no DRAM, the WSE needs a different way to make memory access cheap. The answer is the <em>data structure descriptor</em> (DSD): a hardware address generator that describes a whole walk over memory — or over a stream of wavelets — so that a single instruction can process an entire vector.</p>
+<p class="lede">With no caches and no DRAM, the WSE needs a different way to make memory access cheap. The answer is the <em>data structure descriptor</em> (DSD): a description of a whole walk over memory, or over a stream of wavelets, which the PE's address generator executes so that one instruction processes an entire vector.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
 <ul>
-<li>Build memory DSDs with base/extent/stride or <code>tensor_access</code>, and predict exactly which words they touch.</li>
-<li>Use fabric DSDs so that receiving, computing and sending are one instruction.</li>
-<li>Run DSD operations asynchronously and chain them through tasks.</li>
+<li>Write memory DSDs in both spellings (<code>tensor_access</code> and base/extent/stride), predict exactly which words they touch, and move a DSD at run time with <code>@increment_dsd_offset</code> and friends.</li>
+<li>Estimate how long a DSD instruction takes from measured per-element rates, and lay out arrays so that operands do not collide in SRAM.</li>
+<li>Declare fabric DSDs on queues, and explain why the direction of a transfer lives in the routes, not in the DSD.</li>
+<li>Run DSD operations asynchronously, chain them through completion tasks, and avoid the two classic stalls: a blocking fabric op, and a data task competing with a fabric DSD.</li>
+<li>Use a FIFO to absorb bursts or to work around WSE-3's one-fabric-input rule, and say what it costs.</li>
 </ul>
 </div>
 
 <h2>One instruction, a whole loop</h2>
-<p>In C you would write <code>for (i = 0; i &lt; N; i++) y[i] += x[i] * a;</code>. In CSL you describe <code>x</code> and <code>y</code> once and issue one instruction (Lab 1, program 01):</p>
+<p>In C you would write <code>for (i = 0; i &lt; N; i++) y[i] += x[i] * a;</code>. In CSL you describe <code>x</code> and <code>y</code> once and issue one instruction (Lab 1, program 01, run in Chapter 10):</p>
 <div class="filename">course/programs/01-saxpy/pe_program.csl</div>
 <pre><code><span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> x[i] });
 <span class="k">const</span> y_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> y[i] });
 
 <span class="k">fn</span> saxpy(a: <span class="n">f32</span>) <span class="n">void</span> {
   <span class="b">@fmacs</span>(y_dsd, y_dsd, x_dsd, a);   <span class="c">// y[i] = y[i] + x[i] * a   for all N</span>
-  sys_mod.unblock_cmd_stream();
+  sys_mod.unblock_cmd_stream();     <span class="c">// tell the host this call is done (Chapter 7)</span>
 }</code></pre>
-<p>The descriptor lives in one of the PE's 48 data-structure registers (DSRs). The datapath walks it, generating addresses and streaming operands through the SIMD lanes, with no per-element instruction fetch or loop counter. The <code>tensor_access</code> form names an induction variable, a bound and an affine index: <code>|i|{M} -> A[i*N]</code> means "M elements starting at A[0], stride N" — a matrix column.</p>
+<p class="note"><b>Reading CSL:</b> <code>@name</code> is a builtin, <code>.{ .a = 1 }</code> is an anonymous struct literal, and <code>|i|{N} -> x[i]</code> reads "for i in 0..N, element x[i]". Chapter 9 covers the language.</p>
+<p>The descriptor is loaded into a <em>data-structure register</em> (DSR); a WSE-3 core has 48 of them <span class="tag vendor">Vendor, WSE-3 (HC2024)</span> (no WSE-2 count has been published). The datapath walks the descriptor, generating addresses and streaming operands through the arithmetic unit, with no per-element instruction fetch, loop counter or branch <span class="tag derived">Derived from SDK and vendor descriptions</span>. The <code>tensor_access</code> form names an induction variable, a bound and an affine index: <code>|i|{M} -> A[i*N]</code> means "M elements starting at A[0], stride N", which is a column of a row-major matrix.</p>
+
+<div class="widget" id="sv">
+<h4>Scalar loop vs one DSD instruction</h4>
+<p class="hint">Step through <code>y[i] += a·x[i]</code>. Left: what a conventional core fetches and decodes for every element. Right: the CE decodes <code>@fmacs</code> once; the address generator then produces one address per operand per element from the DSRs.</p>
+<div class="controls">
+<label>N <input type="range" id="sv-n" min="4" max="16" value="8"><output id="sv-no">8</output></label>
+<button class="btn" id="sv-step">Step</button>
+<button class="btn secondary" id="sv-play">Play</button>
+<button class="btn secondary" id="sv-reset">Reset</button>
+</div>
+<svg id="sv-svg" viewBox="0 0 680 300" width="680" role="img" aria-label="Scalar loop instruction stream compared with a DSD address generator"></svg>
+<div class="readout" id="sv-out" aria-live="polite"></div>
+<p class="note">The scalar instruction mix is illustrative, not the CE's real ISA, which is not public <span class="tag derived">Derived</span>. The DSD cycle estimate uses the measured <code>@fmacs</code> rate below (about 17 + N cycles) <span class="tag measured">Measured, simulator</span>.</p>
+</div>
+
+<h2>Two spellings, and moving a DSD</h2>
+<p>Every 1-D memory DSD is base address + extent + stride. <code>tensor_access</code> is a readable way to write the same thing; the SDK's gemv-02 tutorial shows both side by side <span class="tag sdk">SDK 2.10.1, gemv-02-memory-dsds</span>. A DSD is also an ordinary run-time value: you can change it between instructions. That is how a 2-D algorithm is built from 1-D instructions. The scalar loop runs over columns, and the loop over the M elements of each column stays in hardware:</p>
+<div class="filename">SDK tutorials/gemv-02-memory-dsds/pe_program.csl (condensed)</div>
+<pre><code><span class="k">var</span> A: [M*N]<span class="n">f32</span>;                       <span class="c">// row-major M x N</span>
+<span class="k">var</span> A_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{M} -> A[i*N] });
+<span class="c">//  same as  @get_dsd(mem1d_dsd, .{ .base_address = &amp;A, .extent = M, .stride = N });</span>
+
+<span class="k">for</span> (<span class="b">@range</span>(<span class="n">u16</span>, N)) |i| {
+  <span class="b">@fmacs</span>(y_dsd, y_dsd, A_dsd, x[i]);             <span class="c">// y += A[:, i] * x[i]</span>
+  A_dsd = <span class="b">@increment_dsd_offset</span>(A_dsd, 1, <span class="n">f32</span>);  <span class="c">// slide to column i+1</span>
+}
+<span class="b">@fadds</span>(y_dsd, y_dsd, b_dsd);                     <span class="c">// y = A x + b</span></code></pre>
+
+<div class="widget" id="gv">
+<h4>GEMV column sweep</h4>
+<p class="hint">The gemv-02 program exactly: M = 4, N = 6, A[idx] = idx, x = 1, b = 2. Each step runs one <code>@fmacs</code> over the column that <code>A_dsd</code> currently describes, then moves the DSD.</p>
+<div class="controls">
+<button class="btn" id="gv-step">Step</button>
+<button class="btn secondary" id="gv-play">Play</button>
+<button class="btn secondary" id="gv-reset">Reset</button>
+<label class="chk"><input type="checkbox" id="gv-bug"> bug: increment by N (6) instead of 1</label>
+</div>
+<svg id="gv-svg" viewBox="0 0 680 270" width="680" role="img" aria-label="GEMV: a DSD sliding across the columns of A"></svg>
+<div class="readout" id="gv-out" aria-live="polite"></div>
+</div>
+
+<p>Four builtins edit a DSD value. Each returns a new DSD; none touches memory <span class="tag sdk">SDK 2.10.1, examples below</span>.</p>
+<div class="table-wrap"><table class="small">
+<tr><th>Builtin</th><th>Changes</th><th>Real use in the SDK</th></tr>
+<tr><td><code>@increment_dsd_offset(d, k, T)</code></td><td>start address moves by k elements of type T</td><td>gemv-02 (next column), 25-pt-stencil</td></tr>
+<tr><td><code>@set_dsd_base_addr(d, &amp;arr)</code></td><td>points the DSD at a different array</td><td>fft-1d-2d</td></tr>
+<tr><td><code>@set_dsd_length(d, n)</code></td><td>extent</td><td>fft-1d-2d, conjugate-gradient blas.csl</td></tr>
+<tr><td><code>@set_dsd_stride(d, s)</code></td><td>stride</td><td>fft-1d-2d</td></tr>
+</table></div>
+<p>The FFT composes three of them in one line to reach the imaginary parts of interleaved complex numbers (every second word, starting at word 1) and negate them in place: <code>var fDSD = @set_dsd_length(@increment_dsd_offset(@set_dsd_base_addr(Xaux_dsd, f_twiddle), 1, T), N); fDSD = @set_dsd_stride(fDSD, 2); @fnegh(fDSD, fDSD);</code> <span class="tag sdk">SDK 2.10.1, benchmarks/fft-1d-2d/fft.csl</span>. Try "every second word" in the visualizer.</p>
 
 <div class="widget" id="dsd">
 <h4>DSD visualizer</h4>
-<p class="hint">Memory shown as 48 words of one array. Choose a descriptor and see the exact words it visits, in order.</p>
+<p class="hint">48 words of one f32 array. Choose a descriptor, or type your own, and see the exact words it visits and in what order. "Row width" only changes how the words are drawn; set it to 8 to see a 6 × 8 row-major matrix.</p>
 <div class="controls">
 <label>Preset <select id="d-pre">
-  <option value="0,16,1">contiguous: |i|{16} -> v[i]</option>
-  <option value="0,6,8">matrix column (6×8 row-major): |i|{6} -> A[i*8]</option>
-  <option value="3,6,8">next column via @increment_dsd_offset: |i|{6} -> A[3 + i*8]</option>
-  <option value="0,16,0">broadcast one value: |i|{16} -> v[0]</option>
+  <option value="0,16,1,16">contiguous: |i|{16} -> v[i]</option>
+  <option value="0,6,8,8">matrix column 0 (6×8 row-major): |i|{6} -> A[i*8]</option>
+  <option value="1,6,8,8">next column, after @increment_dsd_offset(A_dsd, 1, f32): A[1 + i*8]</option>
+  <option value="0,6,9,8">diagonal of the 6×8 matrix: |i|{6} -> A[i*9]</option>
+  <option value="1,16,2,16">every second word from word 1 (FFT imaginary parts)</option>
+  <option value="15,16,-1,16">reverse walk: base &amp;v[15], stride -1</option>
+  <option value="0,16,0,16">broadcast one value: |i|{16} -> v[0]</option>
   <option value="stencil">Lab 3 stencil: left / mid / right over u[0..n+1]</option>
+  <option value="custom">custom (your values)</option>
 </select></label>
-<label>base <input type="number" id="d-b" min="0" max="47" value="0" style="width:56px"></label>
-<label>extent <input type="number" id="d-e" min="1" max="48" value="16" style="width:56px"></label>
-<label>stride <input type="number" id="d-s" min="0" max="16" value="1" style="width:56px"></label>
+<label>base <input type="number" id="d-b" min="0" max="47" value="0" style="width:58px"></label>
+<label>extent <input type="number" id="d-e" min="1" max="48" value="16" style="width:58px"></label>
+<label>stride <input type="number" id="d-s" min="-16" max="16" value="1" style="width:58px"></label>
+<label>row width <select id="d-w"><option>8</option><option>12</option><option selected>16</option><option>24</option></select></label>
+<label class="chk"><input type="checkbox" id="d-bank"> bank view (word mod 8)</label>
 </div>
-<svg id="d-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Memory words touched by a DSD"></svg>
-<div class="readout" id="d-out"></div>
+<svg id="d-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Memory words touched by a DSD">
+  <defs><pattern id="ghost-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" style="fill:var(--amber-soft)"/><line x1="0" y1="0" x2="0" y2="6" style="stroke:var(--amber)" stroke-width="2"/></pattern></defs>
+</svg>
+<div class="readout" id="d-out" aria-live="polite"></div>
+<p class="note">Negative strides compile (<code>.stride = -1</code> was accepted by cslc 2.10.1) <span class="tag measured">Measured, cslc 2.10.1</span>; in the stencil preset the inputs show the mid DSD and are locked.</p>
 </div>
+
+<h3>More than one dimension: <code>mem4d_dsd</code></h3>
+<p>A DSD can nest several induction variables. Leaving an index out of one operand's access expression makes that operand repeat, which turns a nested loop with a reduction into one instruction. The 25-point stencil sums the data received from four directions this way <span class="tag sdk">SDK 2.10.1, benchmarks/25-pt-stencil/task.csl</span>:</p>
+<pre><code><span class="k">var</span> buffer = <span class="b">@zeros</span>([directionCount, pattern, chunkSize]<span class="n">f32</span>);
+<span class="k">const</span> bufferDsd = <span class="b">@get_dsd</span>(<span class="n">mem4d_dsd</span>, .{
+  .tensor_access = |i,j,k|{directionCount, pattern, chunkSize} -> buffer[i, j, k] });
+<span class="k">const</span> accumulatorDsd = <span class="b">@get_dsd</span>(<span class="n">mem4d_dsd</span>, .{
+  .tensor_access = |i,j,k|{directionCount, pattern, chunkSize} -> accumulator[k] });  <span class="c">// ignores i, j</span>
+<span class="k">const</span> dstDsd = <span class="b">@increment_dsd_offset</span>(accumulatorDsd, offset, <span class="n">f32</span>);
+<span class="b">@fadds</span>(dstDsd, dstDsd, bufferDsd);   <span class="c">// accumulator[k] += buffer[i, j, k] for every i, j, k</span></code></pre>
+<p>The destination walks <code>accumulator[0..chunkSize)</code> once for every (i, j), so every direction and pattern slice is folded onto the same few words. The same shape (a 3-D buffer reduced onto <code>acc[k]</code>) compiled for WSE-3 in our test <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
 
 <h2>Builtins: the vector instruction set</h2>
-<div class="table-wrap"><table>
+<p>The four builtins the course's programs use:</p>
+<div class="table-wrap"><table class="small">
 <tr><th>Builtin</th><th>Meaning (f32)</th><th>Used in</th></tr>
-<tr><td><code>@fmovs(dst, src)</code></td><td>dst[i] = src[i] — copy, send or receive</td><td>programs 03, 04, 05</td></tr>
+<tr><td><code>@fmovs(dst, src)</code></td><td>dst[i] = src[i]: copy, send or receive</td><td>programs 03, 04, 05</td></tr>
 <tr><td><code>@fadds(dst, a, b)</code></td><td>dst[i] = a[i] + b[i]</td><td>03 (reduction), 04 (stencil)</td></tr>
-<tr><td><code>@fmuls(dst, a, s)</code></td><td>dst[i] = a[i] × s</td><td>05 (broadcast + scale)</td></tr>
-<tr><td><code>@fmacs(dst, a, b, s)</code></td><td>dst[i] = a[i] + b[i] × s</td><td>01 (SAXPY), 04 (stencil)</td></tr>
-<tr><td><code>@fnegs</code>, <code>@mov16/32</code>, <code>@add16</code>, ...</td><td>negate, integer moves and adds</td><td>SDK tutorials</td></tr>
-<tr><td><code>@map(fn, in..., out)</code></td><td>apply a user function element-wise over DSDs</td><td>SDK topic-10</td></tr>
+<tr><td><code>@fmuls(dst, a, b)</code></td><td>dst[i] = a[i] × b[i]; b may be a DSD or a scalar</td><td>05 (broadcast + scale, scalar b)</td></tr>
+<tr><td><code>@fmacs(dst, a, b, s)</code></td><td>dst[i] = a[i] + b[i] × s, s a scalar</td><td>01 (SAXPY), 04 (stencil)</td></tr>
+<tr><td><code>@map(fn, in..., out)</code></td><td>apply a user function element-wise over DSDs</td><td>SDK tutorial topic-10-map-builtin; matvec below</td></tr>
 </table></div>
-<p>Naming pattern: <code>f</code> = float, trailing <code>s</code> = single (f32), <code>h</code> = half (f16); <code>16/32</code> = integer width <span class="tag derived">Derived from SDK sources; verify against the builtin reference</span>. Any operand can be a memory DSD, a fabric DSD, a FIFO, or a scalar.</p>
+<p class="note">Operand orders from the SDK's own comments and from <code>csl-libs/dsd_ops.csl</code> <span class="tag sdk">SDK 2.10.1</span>. An element-wise <code>@fmuls(dA, dB, dC)</code> with two DSD sources compiles and runs at the same rate as the scalar form <span class="tag measured">Measured, simulator</span>.</p>
+
+<p>The SDK's library file <code>csl-libs/dsd_ops.csl</code> wraps the whole type-dispatched family, which doubles as the list of what one instruction can do <span class="tag sdk">SDK 2.10.1, csl-libs/dsd_ops.csl</span>:</p>
+<div class="table-wrap"><table class="small ops">
+<tr><th>Operation</th><th>f16</th><th>f16 in → f32 out</th><th>f32</th><th>i16 / u16</th><th>i32 / u32</th></tr>
+<tr><td>mov</td><td>@fmovh</td><td>—</td><td>@fmovs</td><td>@mov16</td><td>@mov32</td></tr>
+<tr><td>add</td><td>@faddh</td><td>@faddhs</td><td>@fadds</td><td>@add16</td><td>—</td></tr>
+<tr><td>sub</td><td>@fsubh</td><td>—</td><td>@fsubs</td><td>@sub16</td><td>—</td></tr>
+<tr><td>mul</td><td>@fmulh</td><td>—</td><td>@fmuls</td><td>—</td><td>—</td></tr>
+<tr><td>scale</td><td>@fscaleh</td><td>—</td><td>@fscales</td><td>—</td><td>—</td></tr>
+<tr><td>fmac</td><td>@fmach</td><td>@fmachs</td><td>@fmacs</td><td>—</td><td>—</td></tr>
+<tr><td>max</td><td>@fmaxh</td><td>—</td><td>@fmaxs</td><td>—</td><td>—</td></tr>
+<tr><td>abs / neg / norm</td><td>@fabsh @fnegh @fnormh</td><td>—</td><td>@fabss @fnegs @fnorms</td><td>—</td><td>—</td></tr>
+<tr><td>convert</td><td colspan="5">@fh2s (f16→f32), @fs2h (f32→f16), @fh2xp16 / @fs2xp16 (f16 / f32 → i16), @xp162fh / @xp162fs (i16 → f16 / f32)</td></tr>
+</table></div>
+<p>Naming pattern: <code>f</code> = float, trailing <code>s</code> = single (f32), <code>h</code> = half (f16), <code>hs</code> = f16 inputs with an f32 result; <code>16/32</code> = integer width <span class="tag sdk">SDK 2.10.1, csl-libs/dsd_ops.csl</span>. The library does not say how <code>scale</code> differs from <code>mul</code>, or what <code>norm</code> computes; check the SDK's builtin reference before using them <span class="tag unv">Unverified</span>. You can also import the library and write type-generic code: <code>const ops = @import_module("&lt;dsd_ops&gt;"); ops.fmac(f32, f32, dst, a, b, s, .{});</code> compiled for WSE-3 <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
+<p>Depending on the builtin, a source operand can be a memory DSD, a fabric DSD, a FIFO or a scalar (for example the multiplier of <code>@fmacs</code>), and the destination a memory DSD, a fabric DSD or a FIFO. On WSE-3 at most one source may be a fabric DSD (see below). Each op's allowed operand types are listed in the SDK's builtin reference <span class="tag sdk">SDK 2.10.1, gemv-02 README</span>.</p>
+
+<h2>How fast is one instruction?</h2>
+<p>We timed single DSD instructions in the simulator: one op over 1,024 elements, memory to memory, on a 1 × 1 rectangle, bracketed by the PE's timestamp counter (the SDK's <code>single-tile-matvec</code> harness and its <code>&lt;time&gt;</code> module), with the three operands 1,025 words apart. Each figure includes the two timestamp reads.</p>
+<div class="table-wrap"><table class="small">
+<tr><th>Op, 1,024 elements</th><th>WSE-2 cycles</th><th>WSE-3 cycles</th><th>Elements / cycle (W2 / W3)</th></tr>
+<tr><td><code>@fmovs(dA, dB)</code></td><td>526</td><td>271</td><td>2 / 4</td></tr>
+<tr><td><code>@fadds(dA, dB, dC)</code></td><td>1,039</td><td>528</td><td>1 / 2</td></tr>
+<tr><td><code>@fmacs(dA, dB, dC, 2.0)</code></td><td>1,039</td><td>1,041</td><td>1 / 1</td></tr>
+<tr><td><code>@fmuls(dA, dB, 2.0)</code> or <code>(dA, dB, dC)</code></td><td>1,038</td><td>1,040</td><td>1 / 1</td></tr>
+<tr><td><code>@fmovh</code> (f16)</td><td>270</td><td>162</td><td>4 / ≈7</td></tr>
+<tr><td><code>@faddh</code> (f16)</td><td>527</td><td>310</td><td>2 / ≈3.5</td></tr>
+<tr><td><code>@fmach</code> (f16)</td><td>527</td><td>310 (271 in place)</td><td>2 / ≈3.5–4</td></tr>
+</table></div>
+<p class="note">All rows <span class="tag measured">Measured, simulator, SDK 2.10.1, TSC around one op</span>. The f16 runs used zeroed data. f32 timings were identical with real and zeroed data, so timing appears to be data-independent.</p>
+<div class="duo">
+<figure style="margin:8px 0">
+<svg id="rate-svg" viewBox="0 0 400 230" width="400" role="img" aria-label="Elements per cycle by op and chip"></svg>
+<figcaption><b>Elements per cycle, f32 and f16.</b> f32 multiply ops do not get faster on WSE-3; moves and adds do. <span class="tag measured">Measured</span></figcaption>
+</figure>
+<figure style="margin:8px 0">
+<svg id="start-svg" viewBox="0 0 400 230" width="400" role="img" aria-label="Cycles versus extent"></svg>
+<figcaption><b>Cycles vs extent on WSE-3.</b> A straight line: about 17 cycles to start, then the per-element rate. <span class="tag measured">Measured</span></figcaption>
+</figure>
+</div>
+<p>Three things follow.</p>
+<ul>
+<li><b>A fixed start-up of about 15–17 cycles per op</b>, then a fixed rate per element. <code>@fmacs</code> over 1 / 16 / 64 / 256 / 1,024 elements took 18 / 33 / 81 / 273 / 1,041 cycles on WSE-3 <span class="tag measured">Measured</span>. Vectors shorter than about 16 elements are dominated by start-up.</li>
+<li><b>f32 multiply-accumulate runs at one element per cycle on both chips</b>; WSE-3 doubled the rate of simple moves and adds but not of f32 FMAC <span class="tag measured">Measured</span>. That is why Lab 3 (f32) is a wash between the chips (Chapter 12). We know the rate, not the hardware reason; do not read an f32 lane count into it.</li>
+<li><b>Precision is where SIMD width pays off.</b> f16 FMAC runs at about 2 per cycle on WSE-2 and about 3.2–4 per cycle on WSE-3, depending on layout <span class="tag measured">Measured</span>, against vendor SIMD widths of 4 and 8 for FP16 <span class="tag vendor">Vendor</span>. In a full f16 matvec (the SDK benchmark, N = 64) we measured 2,165 cycles on WSE-2 and 1,335 on WSE-3, against 4,216 and 4,214 in f32 <span class="tag measured">Measured, simulator</span>. The SIMD width is a ceiling, not a rate: each FMAC element reads y, reads A and writes y, so memory traffic, not arithmetic, appears to set the f16 speed <span class="tag derived">Derived</span>.</li>
+</ul>
+<div class="callout key">
+<strong>Lab 3's 2.5 cycles per cell, explained</strong>
+Each stencil step runs one <code>@fadds</code> and two <code>@fmacs</code> over n cells. On WSE-3 that is 0.5 + 1 + 1 = 2.5 cycles per cell, which is the slope Chapter 12 measures (per-step cost ≈ 90 + 2.5·n cycles) <span class="tag derived">Derived from the measured rates</span>. The fixed ~90 cycles is the halo exchange, the completion tasks and the start-up of each instruction.
+</div>
+
+<div class="callout">
+<strong>Worked example: one PE's matvec in bytes and FLOPs</strong>
+The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE in 4,214 cycles on WSE-3 <span class="tag measured">Measured</span>. It counts 2N² − N = 8,128 FLOPs, and actual SRAM traffic of 4·(3N² + N) = 49,408 bytes, because each column's FMAC re-reads and re-writes all of y <span class="tag sdk">SDK 2.10.1, single-tile-matvec/run.py</span>. That is 12 bytes per FMAC (read y, read A, write y), or about 11.7 bytes, three 32-bit accesses, per cycle. At the 850 MHz the SDK benchmarks assume, 4,214 cycles is 4.96 µs: about 10 GB/s of SRAM traffic and 1.6 GFLOP/s per PE, or about 9 PB/s and 1.5 PFLOP/s f32 if all 900,000 WSE-3 PEs did the same <span class="tag derived">Derived</span>. (850 MHz is the SDK's assumption; no WSE-3 clock is published.)
+</div>
+
+<h2>Layout matters: operand collisions in SRAM</h2>
+<p>A PE's 48 KB is 8 single-ported banks of 6 KB, interleaved by 32-bit word <span class="tag vendor">Vendor</span>. An FMAC needs two source words and writes one word every cycle, so if its streams keep landing on the same hardware, it slows down. The SDK's matvec benchmark shifts A by one word (<code>A_array[i+1]</code>) and pads each column to a multiple of 4 words, "to avoid bank conflicts" <span class="tag sdk">SDK 2.10.1, single-tile-matvec</span>. We measured what that buys:</p>
+<ul>
+<li>Matvec without the +1 shift: 2,134 instead of 1,110 cycles (N = 32), 8,310 instead of 4,214 (N = 64), almost exactly 2× <span class="tag measured">Measured, WSE-3</span>.</li>
+<li>Unpadded columns: N = 31 with stride 31 took 1,294 cycles instead of 1,078 padded to 32 (+20%), because only some columns then collide <span class="tag measured">Measured by the ch06 depth review, WSE-3</span>.</li>
+<li>Single <code>@fmacs</code> over 1,024 elements: the time doubles exactly when its two source streams start at word addresses that are equal modulo 4. <code>@fadds</code> showed no penalty <span class="tag measured">Measured, WSE-2 and WSE-3</span>. This rule is empirical, not documented.</li>
+</ul>
+
+<div class="widget" id="bk">
+<h4>Do these two streams collide?</h4>
+<p class="hint">An FMAC reads src0[i] and src1[i] in the same step. Choose how far apart (in words, mod 8) the two arrays start. Colour = word address mod 4, the grouping that mattered in our runs.</p>
+<div class="controls">
+<label>src1 starts at src0 + 2048 + <select id="bk-off"><option>0</option><option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select> words</label>
+<label>op <select id="bk-op"><option value="fmacs">@fmacs(dA, dA, dC, 2.0)</option><option value="fadds">@fadds(dA, dA, dC)</option></select></label>
+</div>
+<svg id="bk-svg" viewBox="0 0 680 182" width="680" role="img" aria-label="Two operand streams coloured by address mod 4"></svg>
+<div class="readout" id="bk-out" aria-live="polite"></div>
+</div>
+
+<h3>Where the descriptor lives: DSRs, <code>@load_to_dsr</code> and <code>@map</code></h3>
+<p>Normally the compiler loads each DSD into a DSR before the instruction that uses it, and a DSD that is not known at compile time costs DSRs (<code>cslc --dump-dsr-alloc-graph</code> shows the allocation) <span class="tag sdk">SDK 2.10.1, topic-15; Chapter 9</span>. DSRs come in three roles, destination, source 0 and source 1, and you can load them yourself. With <code>.save_address = true</code> the register keeps its end address after an op, so the next op continues where the last one stopped. The SDK matvec uses this so that the whole outer loop becomes one <code>@map</code> over x:</p>
+<div class="filename">SDK benchmarks/single-tile-matvec/src/pe_matvec.csl (condensed)</div>
+<pre><code><span class="k">const</span> y_dest_dsr = <span class="b">@get_dsr</span>(dsr_dest, 0);
+<span class="k">const</span> y_src0_dsr = <span class="b">@get_dsr</span>(dsr_src0, 0);
+<span class="k">const</span> A_src1_dsr = <span class="b">@get_dsr</span>(dsr_src1, 0);
+<span class="k">fn</span> step(curX: <span class="n">f32</span>) <span class="n">void</span> { <span class="b">@fmacs</span>(y_dest_dsr, y_src0_dsr, A_src1_dsr, curX); }
+
+<span class="b">@load_to_dsr</span>(y_dest_dsr, y_dsd, .{ .save_address = <span class="k">false</span> });
+<span class="b">@load_to_dsr</span>(y_src0_dsr, y_dsd, .{ .save_address = <span class="k">false</span> });
+<span class="b">@load_to_dsr</span>(A_src1_dsr, A_dsd, .{ .save_address = <span class="k">true</span> });  <span class="c">// A keeps advancing</span>
+<span class="b">@map</span>(step, x_dsd);                                         <span class="c">// one FMAC column per x[j]</span></code></pre>
+<p>A is stored column by column with padded columns, so "where the last op stopped" is the start of the next column. Compare the ordinary gemv-02-style loop (<code>@fmacs</code> then <code>@increment_dsd_offset</code> per column) on the same matrix:</p>
+<div class="table-wrap"><table class="small">
+<tr><th>N × N f32 matvec</th><th>N = 8</th><th>N = 32</th><th>N = 64</th></tr>
+<tr><td><code>@map</code> + DSRs, WSE-3 / WSE-2</td><td>126 / 119</td><td>1,110 / 1,108</td><td>4,214 / 4,216</td></tr>
+<tr><td>scalar loop + <code>@increment_dsd_offset</code>, WSE-3 / WSE-2</td><td>252 / 229</td><td>2,160 / 2,034</td><td>6,352 / 6,354</td></tr>
+</table></div>
+<p class="note">Cycles <span class="tag measured">Measured, simulator, SDK 2.10.1, TSC around compute()</span>. The <code>@map</code> version costs about N + 2 cycles per column; the scalar loop costs about N + 35 for N = 32–64 <span class="tag derived">Derived from the table</span>. At N = 8 half of the loop version's time is loop overhead: for short vectors the scalar code around the instruction costs more than the instruction.</p>
 
 <h2>Fabric DSDs: communication is an operand</h2>
-<p>A <code>fabin_dsd</code> describes "the next <em>extent</em> wavelets arriving on this input queue"; a <code>fabout_dsd</code> describes "send <em>extent</em> wavelets out of this output queue". Plug them into the same builtins and data moves and computes in one step. Lab 2's row reduction is the clearest example — each middle PE does this:</p>
+<p>A <code>fabin_dsd</code> describes "the next <em>extent</em> wavelets arriving on this input queue"; a <code>fabout_dsd</code> describes "send <em>extent</em> wavelets out of this output queue". Plug them into the same builtins and data is moved and computed on in one step. Here is how Lab 2's row reduction (program 03, Chapter 11) declares them:</p>
 <div class="filename">course/programs/03-row-reduce/pe_program.csl</div>
-<pre><code><span class="c">// receive the running sum from the WEST, add my own v, send the result EAST</span>
+<pre><code><span class="k">const</span> oq: <span class="n">output_queue</span> = <span class="b">@get_output_queue</span>(2);
+<span class="k">const</span> iq: <span class="n">input_queue</span>  = <span class="b">@get_input_queue</span>(2);
+
+<span class="k">const</span> out_dsd = <span class="b">@get_dsd</span>(<span class="n">fabout_dsd</span>, <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse3"</span>)) .{ .extent = M, .output_queue = oq }
+                                     <span class="k">else</span> .{ .extent = M, .output_queue = oq, .fabric_color = send_color });
+<span class="k">const</span> in_dsd  = <span class="b">@get_dsd</span>(<span class="n">fabin_dsd</span>, .{ .extent = M, .input_queue = iq });
+
+<span class="k">comptime</span> {   <span class="c">// bind the queues to colours (Chapter 5)</span>
+  <span class="b">@initialize_queue</span>(oq, <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse3"</span>)) .{ .color = send_color } <span class="k">else</span> .{});
+  <span class="b">@initialize_queue</span>(iq, .{ .color = recv_color });
+}
+
+<span class="c">// middle PE: receive the running sum, add my own v, send the result on</span>
 <span class="b">@fadds</span>(out_dsd, in_dsd, v_dsd, .{ .async = <span class="k">true</span>, .activate = exit_id });</code></pre>
+<p>A fabric DSD has no base address and no stride. Its extent counts elements arriving or leaving, and it names a hardware <em>queue</em>; the queue is bound to a colour. On WSE-2 the outgoing colour is a field of the fabout DSD, on WSE-3 it is fixed when the queue is initialised <span class="tag sdk">SDK 2.10.1, program 03 and topic-05</span>. Two details from the SDK:</p>
+<ul>
+<li><b>16-bit data packs two per wavelet.</b> With 16-bit operands the extent counts operands, not wavelets: "Each operand is 16-bits while 'size' specifies the number of 32-bit wavelets. Each wavelet packs 2 16-bit operands", hence <code>.extent = size * 2</code> <span class="tag sdk">SDK 2.10.1, sdklayout-04-h2d-d2h</span>.</li>
+<li><b>"Infinite" streams.</b> Streaming kernels that never know their length use <code>const INFINITE_DSD_LEN: u16 = 0x7fff;</code> as the extent <span class="tag sdk">SDK 2.10.1, pipeline-02 and pipeline-03</span>.</li>
+</ul>
 
 <figure>
-<svg viewBox="0 0 760 200" width="760" role="img" aria-label="Fabric in plus memory to fabric out">
+<svg viewBox="0 0 760 250" width="760" role="img" aria-label="Fabric in plus memory to fabric out">
   <defs><marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
-  <rect x="20" y="70" width="140" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="90" y="96" text-anchor="middle" font-weight="600">in_dsd</text><text x="90" y="114" text-anchor="middle" font-size="11" class="muted">fabin: from WEST</text>
-  <rect x="310" y="40" width="140" height="120" rx="10" class="acc" stroke-width="2"/><text x="380" y="92" text-anchor="middle" font-weight="700">@fadds</text><text x="380" y="112" text-anchor="middle" font-size="12" class="muted">one instruction,</text><text x="380" y="128" text-anchor="middle" font-size="12" class="muted">M elements</text>
-  <rect x="310" y="170" width="140" height="26" rx="6" class="grn" stroke-width="1.3"/><text x="380" y="188" text-anchor="middle" font-size="12">v_dsd (my 48 KB)</text>
-  <rect x="600" y="70" width="140" height="60" rx="8" class="blu" stroke-width="1.5"/><text x="670" y="96" text-anchor="middle" font-weight="600">out_dsd</text><text x="670" y="114" text-anchor="middle" font-size="11" class="muted">fabout: to EAST</text>
-  <path d="M160 100 H306" class="s-blu" stroke-width="2.5" marker-end="url(#a7)"/>
-  <path d="M450 100 H596" class="s-blu" stroke-width="2.5" marker-end="url(#a7)"/>
-  <path d="M380 170 V162" class="s-blu" stroke-width="2" marker-end="url(#a7)"/>
+  <rect x="20" y="60" width="170" height="70" rx="8" class="blu" stroke-width="1.5"/><text x="105" y="88" text-anchor="middle" font-weight="600" font-size="15">in_dsd</text><text x="105" y="108" text-anchor="middle" font-size="13" class="muted">fabin: input queue 2</text><text x="105" y="124" text-anchor="middle" font-size="13" class="muted">(bound to recv_color)</text>
+  <rect x="305" y="40" width="150" height="110" rx="10" class="acc" stroke-width="2"/><text x="380" y="84" text-anchor="middle" font-weight="700" font-size="16">@fadds</text><text x="380" y="106" text-anchor="middle" font-size="13" class="muted">one instruction,</text><text x="380" y="124" text-anchor="middle" font-size="13" class="muted">M elements</text>
+  <rect x="290" y="196" width="180" height="40" rx="6" class="grn" stroke-width="1.3"/><text x="380" y="214" text-anchor="middle" font-size="13">v_dsd → v[0..M-1]</text><text x="380" y="230" text-anchor="middle" font-size="12" class="muted">in local SRAM</text>
+  <rect x="570" y="60" width="170" height="70" rx="8" class="blu" stroke-width="1.5"/><text x="655" y="88" text-anchor="middle" font-weight="600" font-size="15">out_dsd</text><text x="655" y="108" text-anchor="middle" font-size="13" class="muted">fabout: output queue 2</text><text x="655" y="124" text-anchor="middle" font-size="13" class="muted">(bound to send_color)</text>
+  <path d="M190 95 H301" class="s-blu" stroke-width="2.5" marker-end="url(#a7)"/>
+  <path d="M455 95 H566" class="s-blu" stroke-width="2.5" marker-end="url(#a7)"/>
+  <path d="M380 196 V154" class="s-blu" stroke-width="2" marker-end="url(#a7)"/>
+  <text x="105" y="160" text-anchor="middle" font-size="12" class="muted">routes in layout.csl decide</text><text x="105" y="176" text-anchor="middle" font-size="12" class="muted">that this arrives from the west</text>
+  <text x="655" y="160" text-anchor="middle" font-size="12" class="muted">routes decide it</text><text x="655" y="176" text-anchor="middle" font-size="12" class="muted">leaves to the east</text>
 </svg>
-<figcaption><b>Receive + compute + send, no buffer in between.</b> Each arriving wavelet is added to the matching element of <code>v</code> and leaves eastward. A chain of these is a systolic reduction.</figcaption>
+<figcaption><b>Receive + compute + send, no buffer in between.</b> Each arriving element is added to the matching element of <code>v</code> and leaves again. A chain of these PEs is a systolic reduction. The DSDs name only queues: that recv_color arrives from the west and send_color leaves to the east is set by the routes in <code>layout.csl</code> (Chapter 4), not by this code.</figcaption>
 </figure>
 
 <div class="callout warn">
-<strong>WSE-3 limit: one fabric input per operation</strong>
-"WSE3 does not allow multiple fabric inputs per DSD operation" <span class="tag sdk">SDK 2.10.1</span>. To add two incoming streams you first drain one into a FIFO, then operate on FIFO + fabric. Lab 2's reduction only ever has one fabric input, so it runs unchanged on both chips.
+<strong>One consumer per queue</strong>
+If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD reads, each arriving wavelet activates the task, and the task consumes the wavelet before the DSD can. Either bind no data task to that queue, as programs 03 and 04 do, or <code>@block</code> it while the DSD op runs <span class="tag sdk">SDK 2.10.1, pipeline-01</span>. Chapter 5 shows the task side of this.
 </div>
 
+<div class="callout warn">
+<strong>WSE-3 limit: one fabric input per operation</strong>
+"WSE3 does not allow multiple fabric inputs per DSD operation" <span class="tag sdk">SDK 2.10.1, sdklayout-03</span>. To add two incoming streams, first drain one into a FIFO (explained below), then operate on FIFO + fabric. Lab 2's reduction only ever has one fabric input, so the same source runs on both chips (only the fabout DSD fields differ, via <code>@is_arch</code>) <span class="tag measured">Measured, simulator, WSE-2 and WSE-3</span>.
+</div>
+
+<h3>Data picks the address: <code>wavelet_index_offset</code></h3>
+<p>A wavelet can carry an index as well as a value (Chapter 5's 16-bit value + 16-bit index payload <span class="tag sdk">SDK 2.10.1, topic-04</span>). A memory DSD declared with <code>.wavelet_index_offset = true</code> accepts a per-call <code>.index</code> that shifts where it starts, so the arriving data chooses which column to work on:</p>
+<div class="filename">SDK benchmarks/gemv-checkerboard-pattern/pe.csl (condensed)</div>
+<pre><code><span class="k">var</span> A = <span class="b">@zeros</span>([A_local_dim_x, A_local_dim_y]<span class="n">f16</span>);   <span class="c">// row-major</span>
+<span class="k">const</span> dsd_A = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{A_local_dim_x} -> A[i, 0],
+                                     .wavelet_index_offset = <span class="k">true</span> });
+<span class="k">task</span> fmac_task(wlet_data: <span class="n">f16</span>, idx: <span class="n">u16</span>) <span class="n">void</span> {   <span class="c">// one wavelet = (x_j, j)</span>
+  <span class="b">@fmach</span>(dsd_mul_temp, dsd_mul_temp, dsd_A, wlet_data, .{ .index = idx });   <span class="c">// y += A[:, j] * x_j</span>
+  ...</code></pre>
+<p>The f32 version in the sdklayout-05-gemv tutorial passes <code>.index = 2 * idx</code> to reach column <code>idx</code>, so the offset appears to count 16-bit units <span class="tag derived">Derived from the two SDK uses</span>. This is how dataflow sparsity works at the instruction level: a sender that skips zero x<sub>j</sub> never sends them, and the receiver's DSD jumps straight to the right column for the ones that do arrive.</p>
+
 <h2>Async operations and completion tasks</h2>
-<p>Add <code>.async = true</code> and the operation runs on a <strong>microthread</strong> while the CE moves on. Two optional fields say what to do when it finishes: <code>.activate = task_id</code> (run that local task) or <code>.unblock = task_id</code> (lift a block). This is how "callbacks" are spelled on the WSE. Fabric operations should almost always be async: the SDK warns that a blocking fabric op can stall because the CE must stay free to service the memcpy runtime <span class="tag sdk">SDK 2.10.1, pipeline-01</span>.</p>
+<p>Add <code>.async = true</code> and the operation runs on a <strong>microthread</strong> while the CE moves on. Two optional fields say what to do when it finishes: <code>.activate = id</code> (mark that local task ready) or <code>.unblock = id</code> (clear its blocked bit). Chapter 5 explains those two bits; here is what they look like in real code. Program 04 (Lab 3) uses both kinds of op:</p>
+<div class="filename">course/programs/04-heat-stencil/pe_program.csl</div>
+<pre><code><span class="c">// synchronous: the CE executes this to completion before the next line</span>
+<span class="b">@fadds</span>(lap_dsd, left, right);
+<span class="c">// asynchronous: started on a microthread; the CE continues; t_se runs when it finishes</span>
+<span class="b">@fmovs</span>(to_e, last_cell, .{ .async = <span class="k">true</span>, .activate = done_se });</code></pre>
+<ul>
+<li><b>What "finished" means.</b> Completion is local to this PE's side of the transfer: for a send, the last element has left this PE's output queue. It says nothing about whether the neighbour has received it; only the receiver's own op completion tells the receiver <span class="tag derived">Derived</span>.</li>
+<li><b>Why fabric ops should be async.</b> A synchronous op on a fabin DSD keeps the CE inside that instruction while it waits for wavelets. If those wavelets depend on something the CE itself must do first, nothing can progress. SDK pipeline-01 shows the real case: a blocking <code>@add16(outDsd, inDsd, 1)</code> on a memcpy input stream stalls, "the instruction trace shows @add16 repeatedly querying data from input queue 1, which is still empty … The CE has no resource to run the H2D command received by the router" <span class="tag sdk">SDK 2.10.1, pipeline-01</span>. Blocking sends of a couple of wavelets can work (topic-04 does it), but the SDK notes async "would be better".</li>
+<li><b><code>.unblock</code> as a throttle.</b> A data task blocks itself, starts an async send from its buffer, and lets the send's completion unblock it, so only one send is ever in flight and later wavelets wait in the queue:</li>
+</ul>
+<div class="filename">SDK tutorials/topic-09-fifos/buffer.csl</div>
+<pre><code><span class="k">task</span> process_task(element: <span class="n">f32</span>) <span class="n">void</span> {
+  <span class="b">@block</span>(process_task_id);                     <span class="c">// do not run again until the send is done</span>
+  elem[0] = element * element * element;
+  <span class="b">@fmovs</span>(out_dsd, elem_dsd, .{ .async = <span class="k">true</span>, .unblock = process_task });
+}</code></pre>
+
+<div class="widget" id="tl">
+<h4>Async timeline: CE, microthread and the blocking stall</h4>
+<p class="hint">One PE runs SDK pipeline-01: receive a memcpy (H2D) stream, add 1, send it out. Drag the time or press Play. Switch the op to blocking to see the deadlock the SDK describes, and the completion to <code>.unblock</code> to see a join.</p>
+<div class="controls">
+<label>op <select id="tl-mode"><option value="async">.async = true</option><option value="block">blocking (no .async)</option></select></label>
+<label>completion <select id="tl-done"><option value="activate">.activate = done</option><option value="unblock">.unblock = done</option></select></label>
+<label>time <input type="range" id="tl-t" min="0" max="24" value="24"><output id="tl-to">24</output></label>
+<button class="btn" id="tl-play">Play</button>
+</div>
+<svg id="tl-svg" viewBox="0 0 680 230" width="680" role="img" aria-label="Timeline of CE, microthread, router and queue"></svg>
+<div class="readout" id="tl-out" aria-live="polite"></div>
+<p class="note">The order of events follows the pipeline-01 README <span class="tag sdk">SDK 2.10.1</span>; the time axis is illustrative, not measured <span class="tag derived">Derived</span>.</p>
+</div>
+
+<p><b>Which microthread does an async op use?</b> Each in-flight async op occupies one of the PE's 8 microthreads, and two concurrent ops must never share one (Chapter 5, "A real hang") <span class="tag sdk">SDK 2.10.1, topic-15</span>.</p>
+<div class="table-wrap"><table class="small">
+<tr><th></th><th>WSE-2</th><th>WSE-3</th></tr>
+<tr><td>Async fabric op runs on microthread</td><td>= the ID of its fabric DSD's queue, always</td><td><code>.ut_id = @get_ut_id(k)</code> if given; otherwise the queue ID</td></tr>
+<tr><td>Consequence</td><td>pick distinct queue IDs for concurrent ops</td><td>distinct queue IDs, or distinct explicit <code>.ut_id</code>s (topic-15 sends on queue 2 with microthread 4)</td></tr>
+</table></div>
+<p class="note">Both rows <span class="tag sdk">SDK 2.10.1, topic-15-wse3-microthreads</span>. Lab 3's first version broke this rule: input and output queues 2/3 collided, and the simulator reported a fatal microthread error on both chips (Chapter 12) <span class="tag measured">Measured</span>.</p>
 
 <h3>FIFOs extend the tiny hardware queues</h3>
-<p>Hardware queues hold only a handful of wavelets — one SDK example "stalls when size exceeds 14". <code>@allocate_fifo(buffer)</code> turns an SRAM array into a FIFO that one async op fills and another drains, using two microthreads <span class="tag sdk">SDK 2.10.1</span>.</p>
+<p>Hardware queues hold only a handful of wavelets. In SDK pipeline-01, where a single PE loops memcpy input straight back out, the program "stalls when size exceeds 14", and the capacity is architecture-dependent <span class="tag sdk">SDK 2.10.1, pipeline-01/02</span>. That 14 is the capacity of that I/O path, not a published depth for one queue.</p>
+<p><code>@allocate_fifo(buffer)</code> turns an SRAM array into a FIFO. One async op pushes into it and another pops from it; each runs on its own microthread, so the producer never waits for the consumer as long as the buffer has room. "The FIFO requires two microthreads and a scratch buffer" <span class="tag sdk">SDK 2.10.1, pipeline-02</span>. The ops can compute on the way through:</p>
+<div class="filename">SDK tutorials/topic-09-fifos/buffer.csl</div>
+<pre><code><span class="k">var</span> fifo_buffer = <span class="b">@zeros</span>([1024]<span class="n">f32</span>);
+<span class="k">const</span> fifo = <span class="b">@allocate_fifo</span>(fifo_buffer);
+<span class="b">@fadds</span>(fifo, in_dsd, ten_dsd, .{ .async = <span class="k">true</span> });   <span class="c">// fabric -> FIFO, adding 10</span>
+<span class="b">@fnegs</span>(loopback_dsd, fifo, .{ .async = <span class="k">true</span> });     <span class="c">// FIFO -> fabric, negated</span></code></pre>
+
+<figure>
+<svg id="fifo-svg" viewBox="0 0 760 250" width="760" role="img" aria-label="FIFO ring buffer between two microthreads"></svg>
+<figcaption><b>A FIFO is a ring in SRAM with two microthreads.</b> The push op writes at the tail, the pop op reads at the head; capacity grows from a few wavelets to the buffer size (1,024 here). It costs two of the 8 microthreads and the buffer's SRAM <span class="tag sdk">SDK 2.10.1, pipeline-02, topic-09</span>. The ring drawing is schematic; the FIFO's internal layout is not documented.</figcaption>
+</figure>
+
+<div class="table-wrap"><table class="small">
+<tr><th>Ways to absorb a burst</th><th>Cost</th><th>SDK example</th></tr>
+<tr><td>Nothing: rely on the hardware queues</td><td>free, but stalls past a few wavelets (14 in that I/O setup)</td><td>pipeline-01</td></tr>
+<tr><td>FIFO on the same PE</td><td>+2 microthreads, + buffer SRAM</td><td>pipeline-02, topic-09</td></tr>
+<tr><td>FIFO on a neighbouring "halo" PE</td><td>the kernel PE keeps its microthreads and memory</td><td>pipeline-03</td></tr>
+<tr><td>FIFO as the WSE-3 two-input workaround</td><td>as above</td><td>sdklayout-03 <code>@mov16(fifo, input2, …); @add16(output, input1, fifo, …)</code></td></tr>
+</table></div>
 
 <h2>Lab 3's whole update, in three instructions</h2>
-<p>The stencil keeps ghost cells at both ends of its array so that three overlapping DSDs see the left neighbour, the cell itself, and the right neighbour of every cell:</p>
+<p>The stencil keeps ghost cells at both ends of its array so that three overlapping DSDs see the left neighbour, the cell itself, and the right neighbour of every cell (program 04, Chapter 12):</p>
 <div class="filename">course/programs/04-heat-stencil/pe_program.csl</div>
 <pre><code><span class="k">const</span> left  = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i] });
 <span class="k">const</span> mid   = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i + 1] });
 <span class="k">const</span> right = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i + 2] });
 
-<span class="b">@fadds</span>(lap_dsd, left, right);         <span class="c">// lap = u[i-1] + u[i+1]</span>
-<span class="b">@fmacs</span>(lap_dsd, lap_dsd, mid, -2.0);  <span class="c">// lap += -2 u[i]</span>
-<span class="b">@fmacs</span>(mid, mid, lap_dsd, alpha);    <span class="c">// u[i] += alpha * lap</span></code></pre>
-<p>Pick the "Lab 3 stencil" preset above to see the three overlapping windows.</p>
+<span class="b">@fadds</span>(lap_dsd, left, right);         <span class="c">// lap[i] = u[i] + u[i+2]   (left + right neighbour of cell i+1)</span>
+<span class="b">@fmacs</span>(lap_dsd, lap_dsd, mid, -2.0);  <span class="c">// lap[i] += -2 * u[i+1]</span>
+<span class="b">@fmacs</span>(mid, mid, lap_dsd, alpha);    <span class="c">// u[i+1] += alpha * lap[i]</span></code></pre>
+<p>Here <code>i</code> is the DSDs' induction variable, so cell <code>i</code> of the rod lives at <code>u[i+1]</code>. The update can be in place because the first two instructions finish <code>lap</code> for every cell before the third overwrites any <code>u</code>; a single fused pass would read left neighbours that were already updated. Pick the "Lab 3 stencil" preset in the visualizer to see the three overlapping windows; at 2.5 cycles per cell (above), the three instructions cost 40 cycles for n = 16 on WSE-3 <span class="tag derived">Derived</span>.</p>
 
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>Write a DSD for the main diagonal of an 8 × 8 row-major matrix.</summary><p><code>|i|{8} -> A[i * 9]</code> (stride 9), or in 2-D form <code>|i|{8} -> A[i, i]</code>.</p></details>
-<details><summary>Why is <code>@fadds(out_dsd, in_dsd, v_dsd)</code> faster than receiving into memory and then adding?</summary><p>It avoids writing the incoming vector to SRAM and reading it back, and overlaps receive, add and send in one pipelined operation.</p></details>
+<details><summary>Write a DSD for the main diagonal of an 8 × 8 row-major matrix.</summary><p><code>|i|{8} -> A[i * 9]</code> (stride 9), or, if A is declared <code>[8, 8]f32</code>, <code>|i|{8} -> A[i, i]</code>.</p></details>
+<details><summary>After <code>A_dsd = @increment_dsd_offset(A_dsd, 1, f32)</code> on <code>|i|{6} -> A[i*8]</code>, which words does it visit?</summary><p>1, 9, 17, 25, 33, 41: the next column.</p></details>
 <details><summary>What does a stride of 0 do?</summary><p>It visits the same word every time: a broadcast of one memory value as a vector operand.</p></details>
+<details><summary>Estimate the WSE-3 cycles for <code>@fadds</code> over 512 f32 elements, and for <code>@fmacs</code> over the same.</summary><p>About 17 + 512/2 ≈ 270 cycles for the add, and about 17 + 512 ≈ 530 for the FMAC (measured rates: 2 and 1 elements per cycle).</p></details>
+<details><summary>Your matvec runs at half the expected speed. What do you check first?</summary><p>Operand placement: whether the two FMAC source streams (y and the A column) start at addresses that are equal mod 4 words. The SDK shifts A by one word and pads columns to multiples of 4 to avoid this.</p></details>
+<details><summary>Why is <code>@fadds(out_dsd, in_dsd, v_dsd)</code> faster than receiving into memory and then adding?</summary><p>It avoids writing the incoming vector to SRAM and reading it back, saves one instruction start-up, and overlaps receive, add and send in one pipelined operation.</p></details>
+<details><summary>Where in <code>in_dsd</code> is the direction "from the west" encoded?</summary><p>Nowhere. The DSD names an input queue bound to a colour, and the layout's route for that colour makes it arrive from the west.</p></details>
+<details><summary>On WSE-3 you want <code>out = in_west + in_east</code>, both from the fabric. Why does <code>@fadds(out, in_w, in_e)</code> not work, and what do you write instead?</summary><p>WSE-3 allows one fabric input per op. Drain one stream into a FIFO with an async <code>@fmovs(fifo, in_w, .{.async = true})</code>, then <code>@fadds(out, in_e, fifo, .{.async = true})</code>. That costs two microthreads and the buffer.</p></details>
+<details><summary>Your async send activates <code>done</code>, and <code>done</code> calls <code>unblock_cmd_stream()</code>. Does that guarantee the neighbour has received the data?</summary><p>No. Completion is local to the sender's operation. The receiver's own op completion is what tells the receiver.</p></details>
+<details><summary>A data task is bound to input queue 2, and you also start <code>@fmovs(buf, in_dsd)</code> on a fabin DSD for queue 2. What goes wrong?</summary><p>The data task fires for each arriving wavelet and consumes it first, so the DSD op starves (or the data are silently eaten by an empty task). Block the task, or do not bind one to that queue.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
 <script>
+/* ---------- shared tiny helpers ---------- */
+function txt(parent, x, y, s, attrs = {}) { const t = el("text", Object.assign({ x, y }, attrs), parent); t.textContent = s; return t; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function player(btn, stepFn, isDone, ms) {
+  let h = null;
+  function stop() { clearInterval(h); h = null; btn.textContent = "Play"; }
+  btn.onclick = () => { if (h) return stop(); if (isDone()) return; btn.textContent = "Pause";
+    h = setInterval(() => { stepFn(); if (isDone()) stop(); }, ms); };
+  return stop;
+}
+
+/* ---------- Scalar loop vs DSD ---------- */
 (function () {
-  const svg = $("#d-svg"), out = $("#d-out");
-  const C = 24, PER = 24, OX = 20, OY = 40;
-  function cell(i) { return [OX + (i % PER) * 27, OY + Math.floor(i / PER) * 60]; }
-  function draw(dsds) {
+  const svg = $("#sv-svg"), out = $("#sv-out");
+  const INS = ["load  r1, x[i]", "load  r2, y[i]", "fma   r2, r1, a", "store y[i], r2", "add   i, i, 1", "blt   i, N, loop"];
+  let N = 8, i = 0;
+  function draw() {
     svg.innerHTML = "";
-    for (let i = 0; i < 48; i++) { const [x, y] = cell(i);
-      el("rect", { x, y, width: C, height: C, rx: 3, class: "box" }, svg);
-      el("text", { x: x + C / 2, y: y + C + 13, "text-anchor": "middle", "font-size": 9, class: "muted" }, svg).textContent = i; }
-    const lines = [];
-    dsds.forEach(({ b, e, s, color, name }, k) => {
-      const seq = []; for (let i = 0; i < e; i++) seq.push(b + i * s);
-      const bad = seq.some(a => a > 47);
-      seq.forEach((a, i) => { if (a > 47) return; const [x, y] = cell(a);
-        el("rect", { x: x + 2 + k * 2, y: y + 2 + k * 2, width: C - 4 - k * 4, height: C - 4 - k * 4, rx: 3, fill: cssVar(color), opacity: s === 0 ? .9 : .75 }, svg);
-        if (dsds.length === 1 && i < 30) el("text", { x: x + C / 2, y: y + 16, "text-anchor": "middle", "font-size": 10, fill: "#fff", "font-weight": 700 }, svg).textContent = i; });
-      lines.push(`${name || "dsd"}: base=${b} extent=${e} stride=${s} → words [${seq.slice(0, 16).join(", ")}${seq.length > 16 ? ", …" : ""}]` + (bad ? "  ⚠ runs past the array!" : ""));
+    txt(svg, 20, 22, "Scalar loop: fetched and decoded per element", { "font-weight": 600, "font-size": 14 });
+    txt(svg, 360, 22, "DSD: one instruction, then the address generator", { "font-weight": 600, "font-size": 14 });
+    INS.forEach((s, k) => {
+      const on = i < N;
+      el("rect", { x: 20, y: 36 + k * 26, width: 300, height: 22, rx: 4, class: on ? (k === 2 ? "acc" : "blu") : "box" }, svg);
+      txt(svg, 30, 52 + k * 26, s, { class: "mono", "font-size": 13 });
     });
+    txt(svg, 20, 210, `elements done: ${i} / ${N}`, { "font-size": 13 });
+    txt(svg, 20, 230, `instructions fetched: ${6 * i}`, { "font-size": 14, "font-weight": 700, class: "" });
+    txt(svg, 20, 250, "(6 per element, illustrative)", { "font-size": 12, class: "muted" });
+    // DSD side
+    el("rect", { x: 360, y: 36, width: 300, height: 26, rx: 5, class: "acc", "stroke-width": 1.5 }, svg);
+    txt(svg, 370, 54, "@fmacs(y_dsd, y_dsd, x_dsd, a)", { class: "mono", "font-size": 13, "font-weight": 700 });
+    const regs = [["DSR dest", "y_dsd", "&y"], ["DSR src0", "y_dsd", "&y"], ["DSR src1", "x_dsd", "&x"]];
+    regs.forEach(([r, d, b], k) => {
+      const x = 360 + k * 102;
+      el("rect", { x, y: 72, width: 96, height: 50, rx: 5, class: "pur" }, svg);
+      txt(svg, x + 48, 88, r, { "text-anchor": "middle", "font-size": 12, "font-weight": 600 });
+      txt(svg, x + 48, 104, `${d}`, { "text-anchor": "middle", "font-size": 12, class: "mono" });
+      txt(svg, x + 48, 117, `${b}+${Math.min(i, N - 1)}`, { "text-anchor": "middle", "font-size": 12, class: "mono muted" });
+    });
+    // memory strips
+    const cw = Math.min(18, Math.floor(296 / N));
+    [["x", 150], ["y", 186]].forEach(([nm, y]) => {
+      txt(svg, 360, y + 13, nm, { class: "mono", "font-size": 13 });
+      for (let k = 0; k < N; k++) {
+        const cls = k < i ? "grn" : (k === i && i < N ? "acc" : "box");
+        el("rect", { x: 376 + k * cw, y, width: cw - 2, height: 18, rx: 2, class: cls }, svg);
+      }
+    });
+    txt(svg, 360, 230, `instructions fetched: 1`, { "font-size": 14, "font-weight": 700 });
+    txt(svg, 360, 250, `≈ ${17 + i} cycles so far (17 start-up + 1 per element)`, { "font-size": 12, class: "muted" });
+    txt(svg, 360, 140, i < N ? `address generator: element ${i} → x[${i}], y[${i}]` : "done: the DSD ran out of extent", { "font-size": 12, class: "muted" });
+    out.textContent = i < N
+      ? `Step ${i + 1}: scalar core fetches 6 more instructions; the DSD datapath just generates 3 addresses (x[${i}], y[${i}] read, y[${i}] write).`
+      : `Finished N = ${N}: scalar loop fetched ${6 * N} instructions; the DSD version fetched 1 and took about ${17 + N} cycles.`;
+  }
+  const step = () => { if (i < N) { i++; draw(); } };
+  const stop = player($("#sv-play"), step, () => i >= N, 500);
+  $("#sv-step").onclick = step;
+  $("#sv-reset").onclick = () => { stop(); i = 0; draw(); };
+  $("#sv-n").oninput = e => { stop(); N = +e.target.value; $("#sv-no").textContent = N; i = 0; draw(); };
+  draw();
+})();
+
+/* ---------- GEMV column sweep ---------- */
+(function () {
+  const svg = $("#gv-svg"), out = $("#gv-out");
+  const M = 4, N = 6;
+  let j = 0, y = [0, 0, 0, 0], addedB = false;
+  const bug = () => $("#gv-bug").checked;
+  const base = jj => bug() ? jj * N : jj;
+  function draw() {
+    svg.innerHTML = "";
+    const CW = 48, CH = 34, OX = 60, OY = 34;
+    txt(svg, OX, 22, "A (4 × 6, row-major; label = value = word address)", { "font-size": 13, "font-weight": 600 });
+    const cur = j < N && !addedB ? Array.from({ length: M }, (_, i) => base(j) + i * N) : [];
+    for (let r = 0; r < M; r++) for (let c = 0; c < N; c++) {
+      const idx = r * N + c, on = cur.includes(idx);
+      el("rect", { x: OX + c * CW, y: OY + r * CH, width: CW - 4, height: CH - 4, rx: 4, class: on ? "acc" : "box", "stroke-width": on ? 2 : 1 }, svg);
+      txt(svg, OX + c * CW + (CW - 4) / 2, OY + r * CH + 21, idx, { "text-anchor": "middle", "font-size": 13 });
+    }
+    const over = cur.filter(a => a > M * N - 1);
+    if (over.length) txt(svg, OX, OY + M * CH + 18, `⚠ A_dsd now reads words ${over.join(", ")}: past the end of A (whatever lives there)`, { "font-size": 13, class: "f-red", "font-weight": 600 });
+    // x row
+    const XY = OY + M * CH + 36;
+    txt(svg, OX - 40, XY + 21, "x", { class: "mono", "font-size": 14 });
+    for (let c = 0; c < N; c++) {
+      const on = c === j && !addedB && j < N;
+      el("rect", { x: OX + c * CW, y: XY, width: CW - 4, height: CH - 4, rx: 4, class: on ? "blu" : "box", "stroke-width": on ? 2 : 1 }, svg);
+      txt(svg, OX + c * CW + (CW - 4) / 2, XY + 21, "1", { "text-anchor": "middle", "font-size": 13 });
+    }
+    // y column
+    const YX = OX + N * CW + 30;
+    txt(svg, YX, 22, "y", { class: "mono", "font-size": 14, "font-weight": 600 });
+    for (let r = 0; r < M; r++) {
+      el("rect", { x: YX, y: OY + r * CH, width: 70, height: CH - 4, rx: 4, class: (j > 0 || addedB) ? "grn" : "box" }, svg);
+      txt(svg, YX + 35, OY + r * CH + 21, isNaN(y[r]) ? "?" : y[r], { "text-anchor": "middle", "font-size": 13 });
+    }
+    // code
+    const CX = YX + 88, lines = ["for i in 0..N:", "  @fmacs(y, y, A_dsd, x[i])", bug() ? "  A_dsd += 6  (bug)" : "  A_dsd += 1", "@fadds(y, y, b)"];
+    lines.forEach((s, k) => {
+      const hot = (k === 1 && j < N && !addedB) || (k === 3 && j >= N && !addedB);
+      el("rect", { x: CX - 4, y: OY - 4 + k * 26, width: 676 - CX, height: 22, rx: 3, class: hot ? "acc" : "box" }, svg);
+      txt(svg, CX, OY + 12 + k * 26, s, { class: "mono", "font-size": 12 });
+    });
+    txt(svg, CX, OY + 130, addedB ? "done" : j < N ? `column i = ${j}` : "columns done; add b", { "font-size": 13, class: "muted" });
+    const desc = j < N ? `A_dsd = .{ .base_address = &A[${base(j)}], .extent = 4, .stride = 6 } → words [${cur.join(", ")}]` : "";
+    out.textContent = (addedB ? `y = A·x + b = [${y.join(", ")}] (gemv-02's expected 17, 53, 89, 125${bug() ? "; the bug corrupts it" : ""})`
+      : j < N ? `Next: ${desc}` : `y = A·x = [${y.join(", ")}]. Next: @fadds adds b = 2.`);
+  }
+  function step() {
+    if (addedB) return;
+    if (j < N) {
+      for (let i = 0; i < M; i++) { const a = base(j) + i * N; y[i] += a < M * N ? a : NaN; }
+      j++;
+    } else { y = y.map(v => v + 2); addedB = true; }
+    draw();
+  }
+  const reset = () => { stop(); j = 0; y = [0, 0, 0, 0]; addedB = false; draw(); };
+  const stop = player($("#gv-play"), step, () => addedB, 700);
+  $("#gv-step").onclick = step; $("#gv-reset").onclick = reset; $("#gv-bug").onchange = reset;
+  draw();
+})();
+
+/* ---------- DSD visualizer ---------- */
+(function () {
+  const svg = $("#d-svg"), out = $("#d-out"), defs = svg.querySelector("defs");
+  const W = 48;
+  const ins = ["#d-b", "#d-e", "#d-s"].map(s => $(s));
+  function reset() { svg.innerHTML = ""; svg.appendChild(defs); }
+  function layout(per) { const cw = Math.min(40, Math.floor(640 / per)); return { cw, rowH: cw + 18, OX: 20, OY: 8 }; }
+  function drawGrid(per, bank) {
+    const { cw, rowH, OX, OY } = layout(per);
+    const rows = Math.ceil(W / per);
+    svg.setAttribute("viewBox", `0 0 680 ${OY + rows * rowH + 6}`);
+    for (let a = 0; a < W; a++) {
+      const x = OX + (a % per) * cw, y = OY + Math.floor(a / per) * rowH;
+      el("rect", { x, y, width: cw - 3, height: cw - 3, rx: 3, class: "box" }, svg);
+      txt(svg, x + (cw - 3) / 2, y + cw + 9, bank ? `${a}·b${a % 8}` : a, { "text-anchor": "middle", "font-size": 11, class: "muted" });
+    }
+    return a => [OX + (a % per) * cw, OY + Math.floor(a / per) * rowH, cw - 3];
+  }
+  function drawOne(b, e, s) {
+    reset();
+    const per = +$("#d-w").value, bank = $("#d-bank").checked;
+    const pos = drawGrid(per, bank);
+    const seq = []; for (let i = 0; i < e; i++) seq.push(b + i * s);
+    const visits = new Map();
+    seq.forEach((a, i) => { if (a >= 0 && a < W) { if (!visits.has(a)) visits.set(a, []); visits.get(a).push(i); } });
+    visits.forEach((list, a) => {
+      const [x, y, c] = pos(a);
+      el("rect", { x, y, width: c, height: c, rx: 3, class: "acc", "stroke-width": 2 }, svg);
+      const lab = list.length === 1 ? list[0] : `×${list.length}`;
+      txt(svg, x + c / 2, y + c / 2 + 5, lab, { "text-anchor": "middle", "font-size": c < 30 ? 11 : 13, "font-weight": 700 });
+    });
+    const bad = seq.filter(a => a < 0 || a >= W);
+    const ta = s === 1 ? `|i|{${e}} -> v[${b ? b + " + " : ""}i]` : `|i|{${e}} -> v[${b ? b + " + " : ""}i*${s}]`;
+    let lines = [`tensor_access: ${s < 0 ? `(negative stride: use the base/extent/stride form)` : ta}`,
+      `≡ .{ .base_address = &v[${b}], .extent = ${e}, .stride = ${s} }`,
+      `words in order: [${seq.join(", ")}]`];
+    if (s === 0) lines.push(`word ${b} is visited ${e} times: a broadcast of v[${b}]`);
+    if (bank) { const bk = [...new Set(seq.filter(a => a >= 0 && a < W).map(a => a % 8))]; lines.push(`banks touched (word mod 8): ${bk.join(", ")}${bk.length === 1 && e > 1 ? "  ← every access hits one bank" : ""}`); }
+    if (bad.length) lines.push(`⚠ ${bad.length} access(es) fall outside v[0..47]: ${bad.slice(0, 8).join(", ")}${bad.length > 8 ? ", …" : ""}`);
     out.textContent = lines.join("\n");
   }
-  function fromInputs() { draw([{ b: +$("#d-b").value, e: +$("#d-e").value, s: +$("#d-s").value, color: "--accent" }]); }
-  $("#d-pre").onchange = e => {
-    if (e.target.value === "stencil") {
-      draw([{ b: 0, e: 8, s: 1, color: "--blue", name: "left  u[i]  " }, { b: 1, e: 8, s: 1, color: "--accent", name: "mid   u[i+1]" }, { b: 2, e: 8, s: 1, color: "--green", name: "right u[i+2]" }]);
-      out.textContent += "\n(n = 8 cells; u[0] and u[9] are the ghost cells filled by the halo exchange)";
-      return;
+  function drawStencil() {
+    reset();
+    const n = 8, cw = 44, OX = 110, OY = 14;
+    svg.setAttribute("viewBox", "0 0 680 240");
+    txt(svg, 20, OY + 24, "u[0..9]", { class: "mono", "font-size": 13, "font-weight": 600 });
+    for (let a = 0; a < n + 2; a++) {
+      const ghost = a === 0 || a === n + 1;
+      el("rect", { x: OX + a * cw, y: OY, width: cw - 4, height: 34, rx: 4, class: ghost ? "hatch" : "box" }, svg);
+      if (ghost) el("rect", { x: OX + a * cw, y: OY, width: cw - 4, height: 34, rx: 4, fill: "none", stroke: cssVar("--amber") }, svg);
+      txt(svg, OX + a * cw + (cw - 4) / 2, OY + 22, `u${a}`, { "text-anchor": "middle", "font-size": 13 });
     }
-    const [b, ex, s] = e.target.value.split(",").map(Number); $("#d-b").value = b; $("#d-e").value = ex; $("#d-s").value = s; fromInputs();
+    txt(svg, OX + 20, OY + 52, "ghost (from west PE)", { "text-anchor": "middle", "font-size": 11, class: "muted" });
+    txt(svg, OX + (n + 1) * cw + 20, OY + 52, "ghost (from east PE)", { "text-anchor": "middle", "font-size": 11, class: "muted" });
+    [["left  u[i]", 0, "blu"], ["mid   u[i+1]", 1, "acc"], ["right u[i+2]", 2, "grn"]].forEach(([nm, off, cls], r) => {
+      const y = OY + 66 + r * 40;
+      txt(svg, 20, y + 20, nm, { class: "mono", "font-size": 12 });
+      for (let i = 0; i < n; i++) {
+        el("rect", { x: OX + (i + off) * cw, y, width: cw - 4, height: 30, rx: 4, class: cls }, svg);
+        txt(svg, OX + (i + off) * cw + (cw - 4) / 2, y + 20, `i=${i}`, { "text-anchor": "middle", "font-size": 11 });
+      }
+    });
+    txt(svg, 20, OY + 206, "Column k of the drawing = word u[k]. Cell i of the rod is u[i+1] (mid); its neighbours are left and right.", { "font-size": 12, class: "muted" });
+    out.textContent = "left : |i|{8} -> u[i]     words [0..7]\nmid  : |i|{8} -> u[i + 1] words [1..8]\nright: |i|{8} -> u[i + 2] words [2..9]\n(n = 8 cells; u[0] and u[9] are ghost cells filled by the halo exchange)";
+  }
+  function fromInputs() {
+    const b = clamp(Math.round(+ins[0].value || 0), 0, 47), e = clamp(Math.round(+ins[1].value || 1), 1, 48), s = clamp(Math.round(+ins[2].value || 0), -16, 16);
+    drawOne(b, e, s);
+  }
+  function setInputsEnabled(on) { ins.forEach(i => i.disabled = !on); }
+  function onPreset() {
+    const v = $("#d-pre").value;
+    if (v === "stencil") { ins[0].value = 1; ins[1].value = 8; ins[2].value = 1; setInputsEnabled(false); return drawStencil(); }
+    setInputsEnabled(true);
+    if (v !== "custom") { const [b, e, s, w] = v.split(",").map(Number); ins[0].value = b; ins[1].value = e; ins[2].value = s; $("#d-w").value = w; }
+    fromInputs();
+  }
+  $("#d-pre").onchange = onPreset;
+  ins.forEach(i => i.oninput = () => { $("#d-pre").value = "custom"; fromInputs(); });
+  ins.forEach(i => i.onchange = () => { const lo = +i.min, hi = +i.max; i.value = clamp(Math.round(+i.value || 0), lo, hi); fromInputs(); });
+  $("#d-w").onchange = () => { if ($("#d-pre").value !== "stencil") fromInputs(); };
+  $("#d-bank").onchange = () => { if ($("#d-pre").value !== "stencil") fromInputs(); };
+  onPreset();
+})();
+
+/* ---------- rate and start-up charts ---------- */
+(function () {
+  const s = $("#rate-svg");
+  // measured total cycles for 1,024 elements (WSE-2, WSE-3); bar = 1024 / cycles, start-up included
+  const ops = [["fmovs", 526, 271], ["fadds", 1039, 528], ["fmacs", 1039, 1041], ["fmovh", 270, 162], ["faddh", 527, 310], ["fmach", 527, 310]]
+    .map(([n, a, b]) => [n, +(1024 / a).toFixed(1), +(1024 / b).toFixed(1)]);
+  const OX = 40, OY = 20, H = 160, max = 8;
+  for (let v = 0; v <= max; v += 2) {
+    const y = OY + H - v / max * H;
+    el("line", { x1: OX, x2: 390, y1: y, y2: y, class: "line" }, s);
+    txt(s, OX - 6, y + 4, v, { "text-anchor": "end", "font-size": 11, class: "muted" });
+  }
+  ops.forEach(([n, a, b], k) => {
+    const x = OX + 10 + k * 58;
+    [[a, "f-blu"], [b, "f-acc"]].forEach(([v, cls], m) => {
+      el("rect", { x: x + m * 22, y: OY + H - v / max * H, width: 20, height: v / max * H, class: cls }, s);
+      txt(s, x + m * 22 + 10, OY + H - v / max * H - 4, v, { "text-anchor": "middle", "font-size": 10 });
+    });
+    txt(s, x + 21, OY + H + 16, n, { "text-anchor": "middle", "font-size": 11, class: "mono" });
+  });
+  el("rect", { x: 250, y: 4, width: 10, height: 10, class: "f-blu" }, s); txt(s, 264, 13, "WSE-2", { "font-size": 11 });
+  el("rect", { x: 310, y: 4, width: 10, height: 10, class: "f-acc" }, s); txt(s, 324, 13, "WSE-3", { "font-size": 11 });
+  txt(s, 8, 12, "elements / cycle", { "font-size": 11, class: "muted" });
+  txt(s, OX, OY + H + 34, "1,024 elements ÷ total cycles (incl. start-up)", { "font-size": 11, class: "muted" });
+
+  const t = $("#start-svg");
+  const pts = { fmacs: [[1, 18], [16, 33], [64, 81], [256, 273], [1024, 1041]], fadds: [[1, 17], [16, 24], [64, 48], [256, 144], [1024, 528]] };
+  const X = e => 50 + e / 1024 * 330, Y = c => 190 - c / 1100 * 170;
+  for (let c = 0; c <= 1000; c += 250) { el("line", { x1: 50, x2: 380, y1: Y(c), y2: Y(c), class: "line" }, t); txt(t, 44, Y(c) + 4, c, { "text-anchor": "end", "font-size": 11, class: "muted" }); }
+  [0, 256, 512, 768, 1024].forEach(e => txt(t, X(e), 206, e, { "text-anchor": "middle", "font-size": 11, class: "muted" }));
+  txt(t, 215, 224, "extent (elements)", { "text-anchor": "middle", "font-size": 11, class: "muted" });
+  txt(t, 6, 12, "cycles", { "font-size": 11, class: "muted" });
+  [["fmacs", "s-acc", "f-acc"], ["fadds", "s-blu", "f-blu"]].forEach(([k, sc, fc]) => {
+    el("polyline", { points: pts[k].map(([e, c]) => `${X(e)},${Y(c)}`).join(" "), fill: "none", class: sc, "stroke-width": 2 }, t);
+    pts[k].forEach(([e, c]) => el("circle", { cx: X(e), cy: Y(c), r: 3.5, class: fc }, t));
+    const [e, c] = pts[k][4]; txt(t, X(e) - 4, Y(c) - 8, `@${k}`, { "text-anchor": "end", "font-size": 12, class: "mono" });
+  });
+  txt(t, 60, 30, "fmacs ≈ 17 + e,  fadds ≈ 16 + e/2", { "font-size": 11, class: "muted" });
+})();
+
+/* ---------- bank collisions ---------- */
+(function () {
+  const svg = $("#bk-svg"), out = $("#bk-out");
+  const LANE = ["--blue", "--green", "--purple", "--amber"];
+  function draw() {
+    svg.innerHTML = "";
+    const off = +$("#bk-off").value, op = $("#bk-op").value, n = 12, cw = 44, OX = 110;
+    const rows = [["src0 = dA", 0, 20], ["src1 = dC", 2048 + off, 110]];
+    rows.forEach(([nm, b, y]) => {
+      txt(svg, 10, y + 22, nm, { class: "mono", "font-size": 12 });
+      for (let i = 0; i < n; i++) {
+        const a = b + i;
+        el("rect", { x: OX + i * cw, y, width: cw - 4, height: 34, rx: 4, fill: cssVar(LANE[a % 4]), opacity: 0.85 }, svg);
+        txt(svg, OX + i * cw + (cw - 4) / 2, y + 14, a, { "text-anchor": "middle", "font-size": 10, fill: cssVar("--on-accent"), "font-weight": 600 });
+        txt(svg, OX + i * cw + (cw - 4) / 2, y + 28, `mod4=${a % 4}`, { "text-anchor": "middle", "font-size": 9, fill: cssVar("--on-accent") });
+      }
+    });
+    const clash = off % 4 === 0;
+    for (let i = 0; i < n; i++) {
+      el("line", { x1: OX + i * cw + 20, x2: OX + i * cw + 20, y1: 56, y2: 108, class: clash && op === "fmacs" ? "s-red" : "s-muted", "stroke-width": clash && op === "fmacs" ? 2.5 : 1, "stroke-dasharray": clash ? "" : "3 3" }, svg);
+    }
+    txt(svg, OX, 172, clash ? "same address mod 4 in every step" : "different address mod 4 in every step", { "font-size": 12, "font-weight": 600, class: clash ? "f-red" : "muted" });
+    let msg;
+    if (op === "fmacs") msg = clash
+      ? `@fmacs(dA, dA, dC, 2.0), offset 2048+${off}: 2,064 cycles on WSE-3 (2,062 on WSE-2): half speed.`
+      : `@fmacs(dA, dA, dC, 2.0), offset 2048+${off}: 1,040 cycles on WSE-3: full speed (1 element/cycle).`;
+    else msg = off === 0 ? "@fadds(dA, dA, dC), offset 2048: 527 cycles on WSE-3, 1,038 on WSE-2: no penalty."
+      : `@fadds with offset 2048+${off}: not measured; at offset 2048, the worst case for fmacs, adds showed no penalty.`;
+    out.textContent = msg + "\nMeasured, simulator, SDK 2.10.1, 1,024 f32 elements. Empirical rule, not documented by Cerebras.";
+  }
+  $("#bk-off").onchange = draw; $("#bk-op").onchange = draw; draw();
+})();
+
+/* ---------- async timeline ---------- */
+(function () {
+  const svg = $("#tl-svg"), out = $("#tl-out"), T = 24;
+  const LANES = ["host / memcpy", "router + input queue", "CE (main thread)", "microthread"];
+  function events(mode, done) {
+    const ev = [];
+    if (done === "unblock") ev.push({ l: 2, a: 0, b: 1, s: "@block(done)", c: "pur", n: "comptime: task done starts blocked." });
+    ev.push({ l: 2, a: 1, b: 3, s: mode === "async" ? "issue @add16 .async" : "@add16 (blocking)", c: "acc", n: mode === "async" ? "The CE issues @add16(out, in, 1, .async). It returns at once." : "The CE starts @add16(out, in, 1) without .async and stays inside it." });
+    if (mode === "async") {
+      ev.push({ l: 3, a: 3, b: 7, s: "waiting for data", c: "box", n: "The microthread owns the op and waits on input queue 1." });
+      ev.push({ l: 2, a: 3, b: 5, s: "picker: idle", c: "box", n: "The CE is free: it goes back to the task picker." });
+      ev.push({ l: 0, a: 4, b: 5, s: "H2D command", c: "blu", n: "The host's memcpy H2D command reaches the router." });
+      ev.push({ l: 2, a: 5, b: 7, s: "run memcpy H2D", c: "blu", n: "The CE runs the memcpy kernel's handler for the command." });
+      ev.push({ l: 1, a: 7, b: 16, s: "wavelets arrive", c: "grn", n: "H2D wavelets arrive in input queue 1." });
+      ev.push({ l: 3, a: 7, b: 17, s: "@add16 streams: in → +1 → out", c: "acc", n: "The microthread streams each wavelet through the adder and out." });
+      if (done === "unblock") ev.push({ l: 2, a: 10, b: 11, s: "@activate(done)", c: "pur", n: "Some other event activates done. It stays pending: it is still blocked." });
+      ev.push({ l: 2, a: 17, b: 19, s: done === "activate" ? "done (activated)" : "done (unblocked → runs)", c: "grn", n: done === "activate" ? "The last element leaves: the op's completion activates done, which the picker runs." : "Completion clears done's blocked bit; it was already activated, so it runs now (a join)." });
+      ev.push({ l: 0, a: 19, b: 23, s: "D2H drains output", c: "blu", n: "The host's D2H can now collect the results. Everything progressed." });
+    } else {
+      ev.push({ l: 2, a: 3, b: T, s: "@add16 polls empty input queue 1 …", c: "red", n: "The CE is stuck in @add16, polling an input queue that is still empty." });
+      ev.push({ l: 0, a: 4, b: 5, s: "H2D command", c: "blu", n: "The H2D command reaches the router …" });
+      ev.push({ l: 1, a: 5, b: T, s: "command waits for the CE: never served", c: "red", n: "… but the CE has no resources to run it, so no data ever arrives. STALL (SDK pipeline-01)." });
+    }
+    return ev;
+  }
+  function draw() {
+    svg.innerHTML = "";
+    const t = +$("#tl-t").value, mode = $("#tl-mode").value, done = $("#tl-done").value;
+    const OX = 150, W = 510, X = v => OX + v / T * W;
+    LANES.forEach((nm, k) => {
+      const y = 20 + k * 46;
+      txt(svg, 10, y + 22, nm, { "font-size": 12, "font-weight": 600 });
+      el("line", { x1: OX, x2: OX + W, y1: y + 34, y2: y + 34, class: "line" }, svg);
+    });
+    const ev = events(mode, done);
+    let notes = [];
+    ev.forEach(e => {
+      if (e.a > t) return;
+      const y = 20 + e.l * 46, b = Math.min(e.b, t);
+      el("rect", { x: X(e.a), y: y + 4, width: Math.max(4, X(b) - X(e.a)), height: 28, rx: 4, class: e.c, "stroke-width": 1.3 }, svg);
+      const lab = txt(svg, X(e.a) + 5, y + 23, e.s, { "font-size": 11 });
+      const room = X(b) - X(e.a) - 8;
+      if (room < e.s.length * 5.6) lab.textContent = room > 30 ? e.s.slice(0, Math.floor(room / 5.6)) + "…" : "";
+      notes.push(`t=${String(e.a).padStart(2)}  ${e.n}`);
+    });
+    el("line", { x1: X(t), x2: X(t), y1: 14, y2: 206, class: "s-acc", "stroke-width": 1.5, "stroke-dasharray": "4 3" }, svg);
+    for (let v = 0; v <= T; v += 4) txt(svg, X(v), 222, v, { "text-anchor": "middle", "font-size": 10, class: "muted" });
+    if (mode === "block" && t >= 6) txt(svg, X(14), 120, "DEADLOCK", { "text-anchor": "middle", "font-size": 16, "font-weight": 800, class: "f-red" });
+    out.textContent = notes.join("\n") || "t=0: nothing yet.";
+    $("#tl-to").textContent = t;
+  }
+  let h = null;
+  $("#tl-play").onclick = () => {
+    if (h) { clearInterval(h); h = null; $("#tl-play").textContent = "Play"; return; }
+    if (+$("#tl-t").value >= T) $("#tl-t").value = 0;
+    $("#tl-play").textContent = "Pause";
+    h = setInterval(() => { const r = $("#tl-t"); r.value = +r.value + 1; draw(); if (+r.value >= T) { clearInterval(h); h = null; $("#tl-play").textContent = "Play"; } }, 350);
   };
-  ["#d-b", "#d-e", "#d-s"].forEach(s => $(s).oninput = fromInputs);
-  fromInputs();
+  ["#tl-t", "#tl-mode", "#tl-done"].forEach(s => $(s).oninput = draw);
+  ["#tl-mode", "#tl-done"].forEach(s => $(s).onchange = draw);
+  draw();
+})();
+
+/* ---------- FIFO ring (static) ---------- */
+(function () {
+  const s = $("#fifo-svg");
+  const m = el("defs", {}, s);
+  m.innerHTML = '<marker id="af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--blue)"/></marker>';
+  function box(x, y, w, h, cls, a, b) { el("rect", { x, y, width: w, height: h, rx: 8, class: cls, "stroke-width": 1.5 }, s); txt(s, x + w / 2, y + h / 2 - (b ? 2 : -5), a, { "text-anchor": "middle", "font-size": 14, "font-weight": 600 }); if (b) txt(s, x + w / 2, y + h / 2 + 16, b, { "text-anchor": "middle", "font-size": 12, class: "muted" }); }
+  function arrow(x1, y1, x2, y2) { el("path", { d: `M${x1} ${y1} L${x2} ${y2}`, class: "s-blu", "stroke-width": 2.2, "marker-end": "url(#af)" }, s); }
+  box(10, 95, 120, 56, "blu", "in_dsd", "fabric burst");
+  box(160, 95, 130, 56, "pur", "push op", "microthread A");
+  box(470, 95, 130, 56, "pur", "pop op", "microthread B");
+  box(630, 95, 120, 56, "blu", "out_dsd", "fabric / task");
+  arrow(130, 123, 156, 123); arrow(600, 123, 626, 123);
+  const cx = 380, cy = 123, R = 80, n = 16, filled = [3, 4, 5, 6, 7, 8, 9];
+  for (let k = 0; k < n; k++) {
+    const a0 = (k / n) * 2 * Math.PI - Math.PI / 2, a1 = ((k + 1) / n) * 2 * Math.PI - Math.PI / 2, r2 = R - 26;
+    const p = (a, r) => `${cx + r * Math.cos(a)} ${cy + r * Math.sin(a)}`;
+    el("path", { d: `M${p(a0, R)} A${R} ${R} 0 0 1 ${p(a1, R)} L${p(a1, r2)} A${r2} ${r2} 0 0 0 ${p(a0, r2)} Z`, class: filled.includes(k) ? "acc" : "box", "stroke-width": 1 }, s);
+  }
+  txt(s, cx, cy - 4, "SRAM buffer", { "text-anchor": "middle", "font-size": 12, "font-weight": 600 });
+  txt(s, cx, cy + 12, "[1024]f32", { "text-anchor": "middle", "font-size": 11, class: "mono muted" });
+  const ang = k => (k / n) * 2 * Math.PI - Math.PI / 2;
+  const hp = ang(3), tp = ang(10);
+  arrow(290, 123, cx + (R + 4) * Math.cos(tp) - 6, cy + (R + 4) * Math.sin(tp));
+  arrow(cx + (R + 2) * Math.cos(hp), cy + (R + 2) * Math.sin(hp), 466, 110);
+  txt(s, cx - 150, cy + 64, "tail: next write", { "font-size": 12, class: "muted" });
+  txt(s, cx + 60, 30, "head: next read", { "font-size": 12, class: "muted" });
+  txt(s, 380, 238, "As long as the buffer is not full, the push op never waits for the pop op.", { "text-anchor": "middle", "font-size": 12, class: "muted" });
 })();
 </script>
 </body>

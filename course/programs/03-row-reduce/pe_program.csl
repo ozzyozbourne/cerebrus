@@ -6,11 +6,22 @@ param recv_color: color;
 
 const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
 
+// Kernel timer: the <time> library reads the PE's 48-bit timestamp counter
+// (TSC) as three u16 words. We stamp when reduce() starts and when exit_task
+// runs, so the host can see kernel cycles separately from host I/O.
+const tsc = @import_module("<time>");
+var t_start = @zeros([tsc.tsc_size_words]u16);
+var t_end   = @zeros([tsc.tsc_size_words]u16);
+var t_start_ptr: [*]u16 = &t_start;
+var t_end_ptr:   [*]u16 = &t_end;
+
 var v: [M]f32;
 var v_ptr: [*]f32 = &v;
 const v_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{M} -> v[i] });
 
 // WSE-3: every fabric transfer goes through a hardware queue bound to a color.
+// Queues 0 and 1 belong to memcpy, so user queues start at 2. A middle PE runs
+// ONE op that uses both oq 2 and iq 2, so sharing microthread 2 is safe here.
 const oq: output_queue = @get_output_queue(2);
 const iq: input_queue  = @get_input_queue(2);
 
@@ -19,9 +30,18 @@ const out_dsd = @get_dsd(fabout_dsd, if (@is_arch("wse3")) .{ .extent = M, .outp
 const in_dsd  = @get_dsd(fabin_dsd, .{ .extent = M, .input_queue = iq });
 
 const exit_id: local_task_id = @get_local_task_id(9);
-task exit_task() void { sys_mod.unblock_cmd_stream(); }
+task exit_task() void {
+  tsc.get_timestamp(&t_end);       // this PE's op has finished
+  sys_mod.unblock_cmd_stream();
+}
+
+fn start_timer() void {            // launched once, on every PE, before reduce()
+  tsc.enable_tsc();                // resets and starts the counter
+  sys_mod.unblock_cmd_stream();
+}
 
 fn reduce() void {
+  tsc.get_timestamp(&t_start);
   // All ops are async: they run on a microthread and activate exit_task when
   // the last of the M wavelets has gone through.
   if (role == 0) {
@@ -39,4 +59,7 @@ comptime {
   if (role != 0) @initialize_queue(iq, .{ .color = recv_color });
   @export_symbol(v_ptr, "v");
   @export_symbol(reduce);
+  @export_symbol(start_timer);
+  @export_symbol(t_start_ptr, "t_start");
+  @export_symbol(t_end_ptr, "t_end");
 }

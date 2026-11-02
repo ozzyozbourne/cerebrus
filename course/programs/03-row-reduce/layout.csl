@@ -31,4 +31,7 @@ layout {
   }
   @export_name("v", [*]f32, true);
   @export_name("reduce", fn()void);
+  @export_name("start_timer", fn()void);
+  @export_name("t_start", [*]u16, true);   // 3 x u16 = one 48-bit timestamp
+  @export_name("t_end", [*]u16, true);
 }

@@ -26,4 +26,7 @@ layout {
   @export_name("y", [*]f32, true);
   @export_name("s", [*]f32, true);
   @export_name("go", fn()void);
+  @export_name("start_timer", fn()void);
+  @export_name("t_start", [*]u16, true);
+  @export_name("t_end", [*]u16, true);
 }

@@ -70,6 +70,9 @@
   }
   <span class="b">@export_name</span>(<span class="s">&quot;v&quot;</span>, [*]<span class="n">f32</span>, true);
   <span class="b">@export_name</span>(<span class="s">&quot;reduce&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;start_timer&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;t_start&quot;</span>, [*]<span class="n">u16</span>, true);   <span class="c">// 3 x u16 = one 48-bit timestamp</span>
+  <span class="b">@export_name</span>(<span class="s">&quot;t_end&quot;</span>, [*]<span class="n">u16</span>, true);
 }</code></pre>
 <div class="filename">course/programs/03-row-reduce/pe_program.csl</div>
 <pre><code><span class="k">param</span> memcpy_params;
@@ -80,11 +83,22 @@
 
 <span class="k">const</span> sys_mod = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/memcpy&gt;&quot;</span>, memcpy_params);
 
+<span class="c">// Kernel timer: the &lt;time&gt; library reads the PE&#x27;s 48-bit timestamp counter</span>
+<span class="c">// (TSC) as three u16 words. We stamp when reduce() starts and when exit_task</span>
+<span class="c">// runs, so the host can see kernel cycles separately from host I/O.</span>
+<span class="k">const</span> tsc = <span class="b">@import_module</span>(<span class="s">&quot;&lt;time&gt;&quot;</span>);
+<span class="k">var</span> t_start = <span class="b">@zeros</span>([tsc.tsc_size_words]<span class="n">u16</span>);
+<span class="k">var</span> t_end   = <span class="b">@zeros</span>([tsc.tsc_size_words]<span class="n">u16</span>);
+<span class="k">var</span> t_start_ptr: [*]<span class="n">u16</span> = &amp;t_start;
+<span class="k">var</span> t_end_ptr:   [*]<span class="n">u16</span> = &amp;t_end;
+
 <span class="k">var</span> v: [M]<span class="n">f32</span>;
 <span class="k">var</span> v_ptr: [*]<span class="n">f32</span> = &amp;v;
 <span class="k">const</span> v_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{M} -&gt; v[i] });
 
 <span class="c">// WSE-3: every fabric transfer goes through a hardware queue bound to a color.</span>
+<span class="c">// Queues 0 and 1 belong to memcpy, so user queues start at 2. A middle PE runs</span>
+<span class="c">// ONE op that uses both oq 2 and iq 2, so sharing microthread 2 is safe here.</span>
 <span class="k">const</span> oq: <span class="n">output_queue</span> = <span class="b">@get_output_queue</span>(2);
 <span class="k">const</span> iq: <span class="n">input_queue</span>  = <span class="b">@get_input_queue</span>(2);
 
@@ -93,9 +107,18 @@
 <span class="k">const</span> in_dsd  = <span class="b">@get_dsd</span>(<span class="n">fabin_dsd</span>, .{ .extent = M, .<span class="n">input_queue</span> = iq });
 
 <span class="k">const</span> exit_id: <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(9);
-<span class="k">task</span> exit_task() <span class="n">void</span> { sys_mod.unblock_cmd_stream(); }
+<span class="k">task</span> exit_task() <span class="n">void</span> {
+  tsc.get_timestamp(&amp;t_end);       <span class="c">// this PE&#x27;s op has finished</span>
+  sys_mod.unblock_cmd_stream();
+}
+
+<span class="k">fn</span> start_timer() <span class="n">void</span> {            <span class="c">// launched once, on every PE, before reduce()</span>
+  tsc.enable_tsc();                <span class="c">// resets and starts the counter</span>
+  sys_mod.unblock_cmd_stream();
+}
 
 <span class="k">fn</span> reduce() <span class="n">void</span> {
+  tsc.get_timestamp(&amp;t_start);
   <span class="c">// All ops are async: they run on a microthread and activate exit_task when</span>
   <span class="c">// the last of the M wavelets has gone through.</span>
   <span class="k">if</span> (role == 0) {
@@ -113,6 +136,9 @@
   <span class="k">if</span> (role != 0) <span class="b">@initialize_queue</span>(iq, .{ .<span class="n">color</span> = recv_color });
   <span class="b">@export_symbol</span>(v_ptr, <span class="s">&quot;v&quot;</span>);
   <span class="b">@export_symbol</span>(reduce);
+  <span class="b">@export_symbol</span>(start_timer);
+  <span class="b">@export_symbol</span>(t_start_ptr, <span class="s">&quot;t_start&quot;</span>);
+  <span class="b">@export_symbol</span>(t_end_ptr, <span class="s">&quot;t_end&quot;</span>);
 }</code></pre>
 <div class="filename">course/programs/03-row-reduce/run.py</div>
 <pre><code>#!/usr/bin/env cs_python
@@ -131,18 +157,31 @@ vs = rt.get_id(&#x27;v&#x27;)
 rt.load(); rt.run()
 kw = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
 rt.memcpy_h2d(vs, V.ravel(), 0, 0, P, 1, M, **kw)   <span class="c"># PE x receives V[x, :]</span>
-rt.launch(&#x27;reduce&#x27;, nonblock=<span class="k">False</span>)
+rt.launch(&#x27;start_timer&#x27;, nonblock=<span class="k">False</span>)           <span class="c"># every PE: reset its TSC</span>
+rt.launch(&#x27;reduce&#x27;, nonblock=<span class="k">False</span>)                <span class="c"># every PE: start its one DSD op</span>
 out = np.zeros(M, dtype=np.float32)
 rt.memcpy_d2h(out, vs, P - 1, 0, 1, 1, M, **kw)    <span class="c"># result lives on the last PE</span>
+
+<span class="k">def</span> read_tsc(name):    <span class="c"># P timestamps; 16-bit words arrive in u32 slots</span>
+  w = np.zeros(3 * P, dtype=np.uint32)
+  rt.memcpy_d2h(w, rt.get_id(name), 0, 0, P, 1, 3, **dict(kw, data_type=MemcpyDataType.MEMCPY_16BIT))
+  w = (w &amp; 0xffff).astype(np.int64).reshape(P, 3)
+  <span class="k">return</span> w[:, 0] + (w[:, 1] &lt;&lt; 16) + (w[:, 2] &lt;&lt; 32)
+t0, t1 = read_tsc(&#x27;t_start&#x27;), read_tsc(&#x27;t_end&#x27;)
 rt.stop()
 
 np.testing.assert_allclose(out, V.sum(axis=0), rtol=1e-5, atol=1e-5)
 print(f<span class="s">&quot;summed {P} vectors of length {M} across the row; first 4:&quot;</span>, out[:4])
+<span class="c"># Both stamps of a pair come from the SAME PE&#x27;s clock; never subtract across PEs.</span>
+print(<span class="s">&quot;reduce() start -&gt; op done, per PE (own TSC):&quot;</span>, (t1 - t0).tolist())
+print(f<span class="s">&quot;kernel on the last PE: {t1[-1] - t0[-1]} cycles (host I/O excluded)&quot;</span>)
 print(<span class="s">&quot;SUCCESS!&quot;</span>)</code></pre>
 <div class="filename">course/programs/03-row-reduce/expected_output.txt</div>
 <pre class="output"><code>summed 8 vectors of length 32 across the row; first 4: [-0.7522732 -3.1184688 -2.7282174 -6.675278 ]
+reduce() start -&gt; op done, per PE (own TSC): [50, 58, 65, 73, 80, 87, 94, 101]
+kernel on the last PE: 101 cycles (host I/O excluded)
 SUCCESS!
-[4748 simulated cycles, WSE-3]</code></pre>
+[6861 simulated cycles, WSE-3]</code></pre>
 
 <h3>Why it is fast: streaming, not store-and-forward</h3>
 <p>A middle PE does not wait for the whole vector before forwarding. <code>@fadds(out_dsd, in_dsd, v_dsd)</code> processes element <em>i</em> as soon as wavelet <em>i</em> arrives and emits it immediately. The vector moves through the row as a wavefront, so the reduction takes about <strong>M + P</strong> steps, not <strong>M × P</strong>.</p>
@@ -207,6 +246,9 @@ SUCCESS!
   <span class="b">@export_name</span>(<span class="s">&quot;y&quot;</span>, [*]<span class="n">f32</span>, true);
   <span class="b">@export_name</span>(<span class="s">&quot;s&quot;</span>, [*]<span class="n">f32</span>, true);
   <span class="b">@export_name</span>(<span class="s">&quot;go&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;start_timer&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;t_start&quot;</span>, [*]<span class="n">u16</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;t_end&quot;</span>, [*]<span class="n">u16</span>, true);
 }</code></pre>
 <div class="filename">course/programs/05-column-broadcast/pe_program.csl</div>
 <pre><code><span class="k">param</span> memcpy_params;
@@ -215,6 +257,13 @@ SUCCESS!
 <span class="k">param</span> bcast: <span class="n">color</span>;
 
 <span class="k">const</span> sys_mod = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/memcpy&gt;&quot;</span>, memcpy_params);
+
+<span class="c">// Kernel timer, as in program 03: 48-bit TSC stamps at go() and at completion.</span>
+<span class="k">const</span> tsc = <span class="b">@import_module</span>(<span class="s">&quot;&lt;time&gt;&quot;</span>);
+<span class="k">var</span> t_start = <span class="b">@zeros</span>([tsc.tsc_size_words]<span class="n">u16</span>);
+<span class="k">var</span> t_end   = <span class="b">@zeros</span>([tsc.tsc_size_words]<span class="n">u16</span>);
+<span class="k">var</span> t_start_ptr: [*]<span class="n">u16</span> = &amp;t_start;
+<span class="k">var</span> t_end_ptr:   [*]<span class="n">u16</span> = &amp;t_end;
 
 <span class="k">var</span> x: [M]<span class="n">f32</span>;      <span class="c">// root: source vector; others: received copy</span>
 <span class="k">var</span> y: [M]<span class="n">f32</span>;      <span class="c">// result y = s * x</span>
@@ -236,15 +285,23 @@ SUCCESS!
 <span class="k">const</span> send_done: <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(11);
 
 <span class="k">task</span> t_recv() <span class="n">void</span> {               <span class="c">// x has fully arrived</span>
+  tsc.get_timestamp(&amp;t_end);
   <span class="b">@fmuls</span>(y_dsd, x_dsd, s[0]);      <span class="c">// y = x * s</span>
   sys_mod.unblock_cmd_stream();
 }
 <span class="k">task</span> t_send() <span class="n">void</span> {               <span class="c">// root: broadcast is out</span>
+  tsc.get_timestamp(&amp;t_end);
   <span class="b">@fmuls</span>(y_dsd, x_dsd, s[0]);
   sys_mod.unblock_cmd_stream();
 }
 
+<span class="k">fn</span> start_timer() <span class="n">void</span> {            <span class="c">// launched first, so every PE resets together</span>
+  tsc.enable_tsc();
+  sys_mod.unblock_cmd_stream();
+}
+
 <span class="k">fn</span> go() <span class="n">void</span> {
+  tsc.get_timestamp(&amp;t_start);
   <span class="k">if</span> (is_root) {
     <span class="b">@fmovs</span>(out_dsd, x_dsd, .{ .async = true, .activate = send_done });
   } <span class="k">else</span> {
@@ -264,6 +321,9 @@ SUCCESS!
   <span class="b">@export_symbol</span>(y_ptr, <span class="s">&quot;y&quot;</span>);
   <span class="b">@export_symbol</span>(s_ptr, <span class="s">&quot;s&quot;</span>);
   <span class="b">@export_symbol</span>(go);
+  <span class="b">@export_symbol</span>(start_timer);
+  <span class="b">@export_symbol</span>(t_start_ptr, <span class="s">&quot;t_start&quot;</span>);
+  <span class="b">@export_symbol</span>(t_end_ptr, <span class="s">&quot;t_end&quot;</span>);
 }</code></pre>
 <div class="filename">course/programs/05-column-broadcast/expected_output.txt</div>
 <pre class="output"><code>one send from the root reached all 6 PEs; y[row, :3] =
@@ -273,8 +333,10 @@ SUCCESS!
  [-4.         -3.7419355  -3.483871  ]
  [-5.         -4.677419   -4.354839  ]
  [-6.         -5.612903   -5.225806  ]]
+start_timer -&gt; go(), per PE: [2610, 2248, 2248, 2249, 2249, 2249]
+go() -&gt; x sent/received, per PE: [50, 431, 433, 434, 436, 439]
 SUCCESS!
-[5456 simulated cycles, WSE-3]</code></pre>
+[7620 simulated cycles, WSE-3]</code></pre>
 
 <div class="callout">
 <strong>CSL detail learned the hard way</strong>

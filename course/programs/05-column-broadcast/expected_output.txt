@@ -5,5 +5,7 @@ one send from the root reached all 6 PEs; y[row, :3] =
  [-4.         -3.7419355  -3.483871  ]
  [-5.         -4.677419   -4.354839  ]
  [-6.         -5.612903   -5.225806  ]]
+start_timer -> go(), per PE: [2610, 2248, 2248, 2249, 2249, 2249]
+go() -> x sent/received, per PE: [50, 431, 433, 434, 436, 439]
 SUCCESS!
-[5456 simulated cycles, WSE-3]
+[7620 simulated cycles, WSE-3]

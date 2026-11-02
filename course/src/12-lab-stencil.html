@@ -159,10 +159,10 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 
 <h3>What the numbers say</h3>
 <ul>
-<li><strong>About 90 cycles per step, plus 2.5 per cell.</strong> On WSE-3 the three points fit <code>cycles/step = 90.2 + 2.5·n</code> exactly (100.2, 130.2, 250.2). The 2.5 per cell is the three vector instructions streaming at their measured rates: <code>@fadds</code> moves 2 f32 elements per cycle on WSE-3 (0.5 cycles per cell), and each <code>@fmacs</code> moves 1 per cycle (1 + 1). Removing everything except the <code>@fadds</code> leaves a slope of exactly 0.5 cycles per cell <span class="tag measured">Measured</span>.</li>
+<li><strong>About 90 cycles per step, plus 2.5 per cell.</strong> On WSE-3 the three points fit <code>cycles/step = 90.2 + 2.5·n</code> exactly (100.2, 130.2, 250.2). The 2.5 per cell is the three vector instructions streaming at their measured rates: <code>@fadds</code> moves 2 f32 elements per cycle on WSE-3 (0.5 cycles per cell), and each <code>@fmacs</code> moves 1 per cycle (1 + 1). Keeping only the <code>@fadds</code> leaves a slope of exactly 0.5 cycles per cell, and keeping only one <code>@fmacs</code> leaves exactly 1.0 <span class="tag measured">Measured</span>, on both chips.</li>
 <li><strong>Weak scaling is flat.</strong> 8 PEs and 16 PEs cost the same per step (130.2 vs 130.8; across the interior PEs of the 16-PE row the slope ranges 130.2–130.8). Every PE talks only to its neighbours, so adding PEs adds no work to anyone. This is the property that lets a stencil scale to the whole wafer, hundreds of thousands of PEs.</li>
 <li><strong>P = 2 is cheaper</strong> (101.0) because both PEs are ends with one neighbour: two transfers per step instead of four, saving 29 cycles. With P ≥ 3 the end PEs are also cheaper, but it does not help: each PE waits for its neighbours' wavelets, so the whole row moves at the pace of its interior PEs.</li>
-<li><strong>WSE-2 and WSE-3 land within 3 %</strong> (134.1 vs 130.2), but with a different split. On WSE-2 the per-step part is larger (≈94 vs 90; ≈80 vs 71 with the vector instructions removed) and the compute is slightly cheaper (54 vs 59 cycles at n = 16). The per-cell slope is 2.5 on both. Chapter 6's per-op rates would predict 3.0 on WSE-2 (<code>@fadds</code> at 1 element per cycle there), so WSE-2 overlaps something this lab has not isolated <span class="tag unv">Unverified</span>.</li>
+<li><strong>WSE-2 and WSE-3 land within 3 %</strong> (134.1 vs 130.2), but with a different split. On WSE-2 the per-step part is larger (≈94 vs 90; ≈80 vs 71 with the vector instructions removed) and the compute is slightly cheaper (54 vs 59 cycles at n = 16), because each vector instruction starts in about 5 cycles instead of 6. The per-cell slope is 2.5 on both: in this kernel <code>@fadds</code> streams 2 elements per cycle on WSE-2 too <span class="tag measured">Measured</span>. (Chapter 6's isolated measurement found 1 per cycle on WSE-2; the operand pattern here differs, and we have not isolated why.) f32 work gains nothing from WSE-3's wider FP16 SIMD.</li>
 </ul>
 
 <h3>Where the 90 cycles go</h3>
@@ -170,7 +170,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <ul>
 <li>With the three vector instructions removed, a step costs <strong>71.2</strong>: four transfers, four completion tasks, and the step bookkeeping.</li>
 <li>Going from four transfers to two (P = 2) saves 29.2, so each <strong>async transfer costs ≈14.6 cycles</strong> including its completion task and <code>op_done()</code>. Four of them make 58.4, which leaves <strong>≈13 cycles of step bookkeeping</strong> (the <code>update()</code>/<code>start_step()</code> call chain and the branch).</li>
-<li>The compute at n = 16 is 130.2 − 71.2 = 59 = 40 (2.5·16 streaming) + <strong>≈19 of start-up</strong>, about 6 per vector instruction. About a fifth of the "fixed" cost is therefore compute start-up, not communication. (Chapter 6 measured about 15 cycles to start an isolated op; inside this task the three consecutive instructions start faster. We have not isolated why.)</li>
+<li>The compute at n = 16 is 130.2 − 71.2 = 59 = 40 (2.5·16 streaming) + <strong>≈19 of start-up</strong>, about 6 per vector instruction. Keeping one instruction at a time confirms it: <code>@fadds</code> alone adds 8 + 6 cycles at n = 16 and one <code>@fmacs</code> adds 16 + 6 <span class="tag measured">Measured</span>. About a fifth of the "fixed" cost is therefore compute start-up, not communication. (Chapter 6 measured about 15 cycles to start an isolated op; inside this task the three consecutive instructions start faster. We have not isolated why.)</li>
 </ul>
 <p>Almost none of this is wire time: a single wavelet crosses one hop in a cycle or two. The cost is the CE running a task for each transfer that finishes, one at a time, plus a few cycles to start each vector instruction. Halo width confirms it: sending 4 or 16 wavelets per direction instead of 1 costs only about 1 cycle per extra word, against ≈14.6 per extra message <span class="tag measured">Measured</span> (review measurements, TSC). <em>Fewer, larger messages and fewer, longer instructions</em> are the levers.</p>
 
@@ -184,7 +184,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <div class="readout" id="m-out"></div>
 </div>
 
-<p>The lesson is surface-to-volume. With 16 cells per PE, about 70 % of each step is messages, tasks and instruction start-up. With thousands of cells per PE, compute dominates. Memory caps n: <code>u</code> and <code>lap</code> take 8 bytes per cell, and <code>cslc</code> links this program up to about n = 5,500 on WSE-3 and fails above that ("ran out of PE memory"); WSE-2 fits about 5,650 <span class="tag measured">Measured</span>. That is ≈43 KB of arrays, after code, the task table and the memcpy runtime.</p>
+<p>The lesson is surface-to-volume. With 16 cells per PE, about 70 % of each step is messages, tasks and instruction start-up. With thousands of cells per PE, compute dominates. Memory caps n: <code>u</code> and <code>lap</code> take 8 bytes per cell, and <code>cslc</code> links this program up to about n = 5,450 on WSE-3 (5,500 without the timing code) and fails above that with "ran out of PE memory"; WSE-2 fits about 5,650 <span class="tag measured">Measured</span>. That is ≈43 KB of arrays, after code, the task table and the memcpy runtime.</p>
 
 <h3>Does overlapping communication help?</h3>
 <p>On a GPU or with MPI you would compute the interior while the halo is in flight. Measured here, it makes things slower. A correct version that computes the interior Laplacian (<code>n − 2</code> cells, two vector instructions) right after issuing the four transfers, then the two edge Laplacians with a 2-element strided DSD once the ghosts arrive, then one <code>@fmacs</code> over all n cells, costs <strong>178.0 cycles per step against 130.2</strong> <span class="tag measured">Measured</span>, and still matches numpy. There is almost no latency to hide: the four completion tasks already run back to back, and they cannot run at all while the CE is busy with the interior instructions. Meanwhile the change added two vector instructions (≈6 cycles each to start) and made every inlined completion task larger. Overlap pays off when transfers are long (many wavelets per message), or when the receive itself does the arithmetic.</p>
@@ -208,7 +208,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <p><strong>Whole wafer.</strong> A CS-2's SDK-visible fabric is 750 × 994, and the program rectangle must be at least 7 columns narrower and 2 rows shorter, so about 743 × 992 ≈ 737k PEs <span class="tag sdk">SDK</span>. With 90 + 2.5·n cycles per step at 850 MHz and 5 flops per cell (one add, two multiply-adds):</p>
 <ul>
 <li>n = 16: 130 cycles = 0.15 µs per step, 6.5 M steps/s on 11.8 M cells, ≈0.38 PFLOP/s f32.</li>
-<li>n = 5,500: ≈13,840 cycles = 16 µs per step on 4 G cells, ≈1.2 PFLOP/s, close to the 2 flops/cycle/PE × 737k × 0.85 GHz ≈ 1.25 PFLOP/s that the 2.5-cycle slope allows.</li>
+<li>n = 5,450: ≈13,700 cycles = 16 µs per step on 4 G cells, ≈1.2 PFLOP/s, close to the 2 flops/cycle/PE × 737k × 0.85 GHz ≈ 1.25 PFLOP/s that the 2.5-cycle slope allows.</li>
 </ul>
 <p>Caveats: these are simulator cycles and an assumed clock; WSE-3's user-visible fabric size is not published (its 900k-core figure is <span class="tag vendor">Vendor</span>); a 1-D chain across a 2-D wafer must snake back and forth, so the turn PEs need north/south routes (still one hop, so the model should hold, but the layout code changes); host I/O is excluded; and a 1-D rod is a toy, since real codes are 3-D pencils. For comparison, a CS-1 BiCGSTAB solve on a 7-point stencil reached about 0.86 PFLOP/s, roughly a third of peak <span class="tag indep">Measured by Cerebras/NETL authors, arXiv:2010.03660</span>.</p>
 <p><strong>Strong scaling.</strong> Fix the rod at L = 4,096 cells and add PEs:</p>
@@ -468,7 +468,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
   const ms = $("#m-svg");
   const meas = [[4, 100.2], [16, 130.2], [64, 250.2]];
   const PARTS = [["4 transfers + tasks", 58.4, "acc"], ["bookkeeping", 12.8, "box"], ["DSD start-up", 19, "pur"]];
-  const FIX = 90.2, MAXN = 5500, PES = 737e3, CLK = 850e6;
+  const FIX = 90.2, MAXN = 5450, PES = 737e3, CLK = 850e6;
   function model() {
     const nn = Math.max(1, Math.round(2 ** +$("#m-n").value)); $("#m-nv").textContent = nn;
     ms.innerHTML = "";
@@ -503,7 +503,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
     const tstr = ns >= 1000 ? `${(ns / 1000).toFixed(2)} µs` : `${ns.toFixed(0)} ns`;
     const sps = CLK / cyc, cells = PES * nn, pf = cells * 5 * sps / 1e15;
     $("#m-out").textContent = `n = ${nn}: ≈ ${cyc.toFixed(0)} cycles/step → ${tstr} at 850 MHz; streaming share ${(100 * comp).toFixed(0)}%` +
-      (nn > MAXN ? `\n⚠ n > ~${MAXN}: u and lap no longer fit (cslc fails above ~5,500 on WSE-3)` : `\nmemory: u + lap = ${((2 * nn + 2) * 4 / 1024).toFixed(1)} KB of ≈43 KB available for arrays`) +
+      (nn > MAXN ? `\n⚠ n > ~${MAXN}: u and lap no longer fit (cslc fails above ~5,450 on WSE-3)` : `\nmemory: u + lap = ${((2 * nn + 2) * 4 / 1024).toFixed(1)} KB of ≈43 KB available for arrays`) +
       `\nwhole wafer (derived, 737k PEs, 1-D snake): ${(cells / 1e6).toFixed(cells < 1e8 ? 1 : 0)} M cells, ${(sps / 1e6).toFixed(2)} M steps/s, ≈ ${pf.toFixed(2)} PFLOP/s f32`;
   }
   $("#m-n").oninput = model; model();

@@ -1,3 +1,5 @@
 summed 8 vectors of length 32 across the row; first 4: [-0.7522732 -3.1184688 -2.7282174 -6.675278 ]
+reduce() start -> op done, per PE (own TSC): [50, 58, 65, 73, 80, 87, 94, 101]
+kernel on the last PE: 101 cycles (host I/O excluded)
 SUCCESS!
-[4748 simulated cycles, WSE-3]
+[6861 simulated cycles, WSE-3]

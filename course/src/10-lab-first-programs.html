@@ -5,110 +5,567 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lab 1: First Programs</title>
 <link rel="stylesheet" href="assets/course.css">
+<style>
+  mark { background: var(--amber-soft); color: var(--text); outline: 1px solid var(--amber); border-radius: 3px; padding: 0 2px; }
+  .num td, .num th { font-variant-numeric: tabular-nums; }
+  td.r, th.r { text-align: right; }
+  .code-mini { font: 12.5px/1.55 var(--mono); background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 0; overflow-x: auto; margin: 0; }
+  .code-mini .fn { font: 11.5px var(--mono); color: var(--muted); padding: 0 10px 4px; }
+  .code-mini div.l { padding: 0 10px; white-space: pre; border-left: 3px solid transparent; }
+  .code-mini div.l.sel { background: var(--accent-soft); border-left-color: var(--accent); }
+  .code-mini .ln { display: inline-block; width: 2.2em; color: var(--muted); user-select: none; }
+  .pill { display: inline-block; font: 600 12.5px var(--sans); padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
+  .pill.blocked { background: var(--red-soft); color: var(--red); border-color: var(--red); }
+  .pill.busy { background: var(--amber-soft); color: var(--amber); border-color: var(--amber); }
+  .pill.free { background: var(--green-soft); color: var(--green); border-color: var(--green); }
+  .sram { font: 12.5px var(--mono); }
+  .sram td { padding: 3px 8px; }
+  .sram td.hot { background: var(--green-soft); }
+  .stepgrid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 12px; margin-top: 10px; }
+  @media (max-width: 680px) { .stepgrid { grid-template-columns: 1fr; } }
+  .widget .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .widget .scroll > svg { min-width: 620px; display: block; height: auto; }
+  main code { overflow-wrap: anywhere; }
+  pre code { overflow-wrap: normal; }
+</style>
 </head>
 <body>
 <main>
 <div class="kicker">Chapter 10 · Part III · Programming</div>
 <h1>Lab 1: SAXPY and wavelet tasks</h1>
-<p class="lede">Two single-PE programs. The first uses the host-driven style: copy data in, call a function, copy results out. The second uses the dataflow style: the host streams values, and each arriving wavelet runs a task. Both were compiled and run on the SDK 2.10.1 simulator for WSE-3 and WSE-2; the code below is the exact validated source.</p>
+<p class="lede">Two single-PE programs. The first uses the host-driven style: copy data in, call a function, copy results out. The second uses the dataflow style: the host streams values, and each arriving wavelet runs a task. Both were compiled and run on the SDK 2.10.1 simulator for WSE-3 and WSE-2 <span class="tag measured">Measured</span>; the code below is the exact validated source. Then we look inside both runs, cycle by cycle.</p>
 
 <div class="objectives">
 <h4>After this lab you can</h4>
 <ul>
-<li>Write, compile and validate a complete single-PE program.</li>
+<li>Write, compile and validate a complete single-PE program, and read its output.</li>
+<li>Say where the simulated cycles of a run go, and time a kernel on the PE itself.</li>
 <li>Bind a data task to a streaming input on both WSE-2 and WSE-3.</li>
-<li>Spot and fix the race between streaming input and result readback.</li>
+<li>Produce, spot and fix the race between streaming input and result readback.</li>
 </ul>
 </div>
 
+<h2>Set up a working copy</h2>
 <div class="callout ok">
 <strong>Run it yourself</strong>
-<code>source /home/user/cerebras-sdk/env.sh</code>, then in <code>course/programs/01-saxpy</code> run <code>bash commands.sh</code> (or <code>ARCH=wse2 bash commands.sh</code>). <code>course/programs/run_all.sh</code> runs every program and prints PASS/FAIL with cycle counts.
+<p>Load the SDK into this shell, then copy the programs so the course sources stay pristine (the page and <code>run_all.sh</code> are built from them). Work under your home directory, not <code>/tmp</code>: <code>cs_python</code> fails there.</p>
+<pre><code>source /home/user/cerebras-sdk/env.sh
+mkdir -p ~/lab1 &amp;&amp; cp -r course/programs/01-saxpy course/programs/02-wavelet-tasks ~/lab1/
+cd ~/lab1/01-saxpy &amp;&amp; bash commands.sh            # WSE-3 (default)
+ARCH=wse2 bash commands.sh                          # same program on WSE-2
+python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"</code></pre>
+<p>Do the same in <code>~/lab1/02-wavelet-tasks</code>, and do every exercise in these copies. <code>course/programs/run_all.sh</code> runs the pristine versions of all programs and prints PASS/FAIL with cycle counts. A run takes 10–30 s of wall time. If something fails, see <a href="#trouble">If it fails</a>.</p>
 </div>
 
 <h2>Program 01 · SAXPY: y ← a·x + y</h2>
-<p>The layout places one PE, exports two arrays and one function. Because the function takes an argument, its exported type is <code>fn(f32)void</code>.</p>
+<p>The layout places one PE, exports two arrays and one function. Because the function takes an argument, its exported type is <code>fn(f32)void</code>. Chapter 9 walks through these three files line by line; here we build them, run them and look inside.</p>
+<p>First the build-and-run script. The flags were explained in Chapter 9: an 8 × 3 fabric leaves room for memcpy's columns west and east of your code, and your 1 × 1 rectangle sits at offset (4,1), so your PE appears as <code>P4.1</code> in traces. <code>--params=N:64</code> sets the compile-time vector length; <code>--memcpy --channels 1</code> adds the host-transfer framework (Chapter 7).</p>
+{{code:programs/01-saxpy/commands.sh}}
 {{code:programs/01-saxpy/layout.csl}}
 {{code:programs/01-saxpy/pe_program.csl}}
 {{code:programs/01-saxpy/run.py}}
+<p>The memcpy calls in <code>run.py</code> take the same arguments every time <span class="tag sdk">SDK 2.10.1, gemv-03</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>argument</th><th>here</th><th>meaning</th></tr>
+<tr><td>symbol</td><td><code>xs = rt.get_id('x')</code></td><td>the exported name to write or read; for a streaming copy, a color number instead (program 02)</td></tr>
+<tr><td><code>x0, y0, width, height</code></td><td><code>0, 0, 1, 1</code></td><td>the rectangle of PEs, relative to your code's origin</td></tr>
+<tr><td>elements per PE</td><td><code>N</code></td><td>how many 32-bit (or 16-bit) elements each PE gets</td></tr>
+<tr><td><code>order</code></td><td><code>ROW_MAJOR</code></td><td>how the host array is split across PEs; irrelevant for 1 × 1, matters in Lab 2</td></tr>
+<tr><td><code>data_type</code></td><td><code>MEMCPY_32BIT</code></td><td>32-bit elements; <code>MEMCPY_16BIT</code> puts one 16-bit value in the low half of each u32 the host passes</td></tr>
+<tr><td><code>nonblock</code></td><td><code>False</code></td><td>Python waits for the copy to finish before the next line</td></tr>
+</table></div>
+<p>The compiler also writes <code>out/bin/out_rpc.json</code>, the table the host uses to find your symbols. Its entry for the RPC says <code>"name": "saxpy", "id": 3, "inputs": [{"name": "a", "type": "f32"}]</code>; <code>x</code> and <code>y</code> are ids 1 and 2 with <code>"immutable": 0</code> (the host may write them) <span class="tag measured">Measured</span>. That id 3 travels with every <code>launch('saxpy', …)</code>, as the step-through below shows.</p>
+
+<h3>The output, and why one digit differs</h3>
 {{out:programs/01-saxpy/expected_output.txt}}
-<p>The last digit of element 2 differs (…295 vs …293): the device computes <code>y + x·a</code> with a fused multiply-add while numpy rounds the product first. The test tolerates 1e-6 relative error.</p>
+<p class="muted">The last line is not printed by <code>run.py</code>. It is the <code>cycle_count</code> from <code>sim_stats.json</code>, which the one-liner in the setup box prints. Your count may differ by a few cycles, or by much more on a busy machine (see <a href="#noise">below</a>).</p>
+<div class="table-wrap"><table class="num">
+<tr><th>i</th><th class="r">device</th><th class="r">numpy <code>a*x + y</code></th><th class="r">one-rounding FMA</th></tr>
+<tr><td>0</td><td class="r">0.64329517</td><td class="r">0.64329517</td><td class="r">0.64329517</td></tr>
+<tr><td>1</td><td class="r">−0.5888347</td><td class="r">−0.5888347</td><td class="r">−0.5888347</td></tr>
+<tr><td>2</td><td class="r">3.184529<mark>5</mark></td><td class="r">3.184529<mark>3</mark></td><td class="r">3.184529<mark>5</mark></td></tr>
+<tr><td>3</td><td class="r">1.5826113</td><td class="r">1.5826113</td><td class="r">1.5826113</td></tr>
+</table></div>
+<p>The device computes <code>y + x·a</code> with a fused multiply-add: one rounding at the end. numpy rounds the product first, then the sum. Over all 64 elements, 17 differ from numpy in the last bit and all 64 match a one-rounding FMA (<code>float32(float64(x)*2.5 + float64(y))</code>) exactly <span class="tag measured">Measured</span>. The test tolerates this with <code>assert_allclose(…, rtol=1e-6, atol=1e-6)</code>: relative plus absolute tolerance, so elements near 0 are judged by the absolute term.</p>
 
 <h3>What happens inside, in order</h3>
-<figure>
-<svg viewBox="0 0 760 330" width="760" role="img" aria-label="SAXPY sequence" class="seq">
-  <defs><marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
-  <g id="seq1"></g>
-</svg>
-<figcaption><b>Every host call becomes a command on color 22.</b> memcpy's control tasks on the PE decode it: write SRAM, run your RPC, or read SRAM. The command stream stays blocked while your RPC runs until it calls <code>unblock_cmd_stream()</code>.</figcaption>
+<p>Every host call becomes a command on color 22, memcpy's command color <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span>. The memcpy module compiled into <em>your</em> PE (<code>sys_mod</code>) decodes it: write SRAM, run your RPC, or read SRAM. The cycle stamps below come from the simulator's instruction trace of this exact run (WSE-3, N = 64) <span class="tag measured">Measured</span>; how to get that trace is shown <a href="#trace">further down</a>.</p>
+
+<div class="widget" id="st">
+<h4>Step through the SAXPY run</h4>
+<p class="hint">Next / Prev or the arrow keys (after clicking the widget). The code line that causes each step is highlighted; the bar at the bottom is the measured timeline of the whole run.</p>
+<div class="controls">
+  <button class="btn secondary" id="st-prev" type="button">◀ Prev</button>
+  <button class="btn" id="st-next" type="button">Next ▶</button>
+  <button class="btn secondary" id="st-play" type="button">Play</button>
+  <span>command stream: <span class="pill free" id="st-pill">free</span></span>
+  <span id="st-count" class="muted"></span>
+</div>
+<div class="scroll"><svg id="st-svg" viewBox="0 0 760 440" width="760" role="img" aria-labelledby="st-title st-desc">
+  <title id="st-title">SAXPY run sequence with measured timeline</title>
+  <desc id="st-desc">The host loads and runs the program, copies x then y into SRAM through memcpy's command and data colors, launches saxpy(2.5); memcpy blocks the command stream and calls saxpy, which runs @fmacs over 64 elements and calls unblock_cmd_stream; the host then copies y back, one element at a time. Timeline: H2D x cycles 115 to 1470, H2D y 1489 to 2780, RPC 2796 to 3251 with @fmacs 3124 to 3250, D2H 3252 to 7689, idle until 7740.</desc>
+  <defs>
+    <marker id="st-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
+    <marker id="st-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
+  </defs>
+  <g id="st-g"></g>
+</svg></div>
+<div class="readout" id="st-out" aria-live="polite"></div>
+<div class="stepgrid">
+  <div class="code-mini" id="st-code"></div>
+  <div>
+    <table class="sram" aria-label="First four SRAM words">
+      <tr><th></th><th>[0]</th><th>[1]</th><th>[2]</th><th>[3]</th></tr>
+      <tr id="st-x"><th>x</th></tr>
+      <tr id="st-y"><th>y</th></tr>
+    </table>
+    <p class="muted" style="font-size:13px;margin:4px 0 0">First four words of each array in the PE's SRAM, from <code>rng(0)</code>.</p>
+  </div>
+</div>
+</div>
+
+<p>Three things the trace shows that the code alone does not:</p>
+<ul>
+<li><b>"Blocked" is literal.</b> When the RPC command arrives, memcpy's <code>f_rpc</code> executes a <code>BLK</code> instruction on its own command task (cycle 3,089); later command wavelets wait in input queue 1 until your <code>unblock_cmd_stream()</code> executes <code>UBLK</code> (cycle 3,251) <span class="tag sdk">SDK 2.10.1, memcpy/wse3/sys.csl</span> <span class="tag measured">Measured</span>. <code>launch()</code> itself returns to Python without waiting for that; it is the <em>next</em> command that cannot run until the unblock.</li>
+<li><b>The scalar travels as two 16-bit pushes.</b> The RPC command carries a wavelet count, <code>a</code> split into two u16 halves, and the function id 3 from <code>out_rpc.json</code>. memcpy pushes them onto a small u16 stack and dispatches on the id <span class="tag sdk">SDK 2.10.1, memcpy/wse3/memcpy.csl</span>.</li>
+<li><b>D2H is the slow part.</b> In copy mode each PE sends one element, then a control wavelet that advances a switch so the PEs of a row take turns <span class="tag sdk">SDK 2.10.1, memcpy/wse3/memcpyd2h.csl</span>. That is a 35-cycle data task (T21) and a 21-cycle control task (T30) per element: about 60 cycles per element out, against a few per element in.</li>
+</ul>
+
+<div class="table-wrap"><table class="num">
+<tr><th>phase (WSE-3, N = 64)</th><th class="r">cycles</th><th class="r">share</th><th>what the PE does</th></tr>
+<tr><td>start-up</td><td class="r">0–115</td><td class="r">1%</td><td>simulator and memcpy start</td></tr>
+<tr><td><code>memcpy_h2d(x)</code></td><td class="r">115–1,470</td><td class="r">18%</td><td>15 command pushes (~800 cycles), decode, then 64 values land in SRAM (~340)</td></tr>
+<tr><td><code>memcpy_h2d(y)</code></td><td class="r">1,489–2,780</td><td class="r">17%</td><td>the same again</td></tr>
+<tr><td><code>launch('saxpy')</code></td><td class="r">2,796–3,251</td><td class="r">6%</td><td>6 pushes, <code>BLK</code>, then <b><code>@fmacs</code>: 3,124–3,250 = 127 cycles</b>, then <code>UBLK</code></td></tr>
+<tr><td><code>memcpy_d2h(y)</code></td><td class="r">3,252–7,689</td><td class="r">57%</td><td>decode (~520), then 64 × (data + control wavelet)</td></tr>
+<tr><td>idle tail</td><td class="r">7,690–7,740</td><td class="r">1%</td><td>the simulator stops after 50 idle cycles</td></tr>
+</table></div>
+<p>So the <code>@fmacs</code> is about 130 cycles of 7,740, under 2% <span class="tag measured">Measured</span>, and copying y back costs more than everything else together. Lab 3 separates kernel time from host I/O a different way: run the same program with 0 and 100 kernel iterations and subtract, so the host transfers cancel.</p>
+
+<h3>Cycles versus N</h3>
+<p>Running the unmodified program at several sizes (one run at a time, on an idle machine) gives a straight line <span class="tag measured">Measured</span>:</p>
+<div class="grid2">
+<div class="table-wrap"><table class="num">
+<tr><th class="r">N</th><th class="r">WSE-3 cycles</th><th class="r">WSE-2 cycles</th></tr>
+<tr><td class="r">16</td><td class="r">4,669</td><td class="r">4,008</td></tr>
+<tr><td class="r">64</td><td class="r">7,740</td><td class="r">6,826</td></tr>
+<tr><td class="r">256</td><td class="r">20,018</td><td class="r">18,364</td></tr>
+<tr><td class="r">1,024</td><td class="r">69,307</td><td class="r">64,107</td></tr>
+<tr><td class="r">4,096</td><td class="r">266,295</td><td class="r">245,355</td></tr>
+</table></div>
+<figure style="margin:12px 0">
+<svg id="cn-svg" viewBox="0 0 380 250" width="380" role="img" aria-labelledby="cn-t cn-d"><title id="cn-t">Cycles versus N</title><desc id="cn-d">Log-log plot of total simulated cycles against N for WSE-3 and WSE-2; both are close to straight lines of slope 64 and 59 cycles per element, with fixed costs of about 3,640 and 3,060 cycles.</desc></svg>
+<figcaption><b>Total cycles vs N</b>, log–log. Lines: the fits below. <span class="tag measured">Measured</span></figcaption>
 </figure>
-<p>Where do the 7,740 simulated cycles go? Almost all of it is host I/O: two 64-element copies in, one out, plus command handling. The <code>@fmacs</code> itself processes 64 elements in on the order of tens of cycles. Lab 3 shows how to separate the two by measuring at two problem sizes and subtracting.</p>
+</div>
+<p>Fit: WSE-3 ≈ 3,640 + 64·N, WSE-2 ≈ 3,060 + 59·N <span class="tag derived">Derived</span>. The slope is the cost of moving one element in, in, and out (about 2 + 2 + 60 cycles); the compute is 2 of those 64 cycles. WSE-3 is not faster here: these runs are bound by memcpy and by f32, and WSE-3's gains are in f16 (next section). At the 850 MHz the SDK's benchmarks assume <span class="tag sdk">SDK 2.10.1, bandwidth-test</span>, 7,740 cycles is about 9.1 µs of device time <span class="tag derived">Derived</span>; the simulator needs 10–30 s of wall time for it.</p>
+
+<div class="callout warn" id="noise">
+<strong>Cycle totals are approximate</strong>
+<p><code>cycle_count</code> includes time the device spent waiting for the host, so it depends on how busy your machine is. Program 01 reran at 7,738–7,740 on an idle machine, but gave 16,940 once while other simulations were running; program 02 varies by a few hundred cycles even when idle (7,021–7,543) <span class="tag measured">Measured</span>. On a heavily loaded machine a correct program can even abort with "could be a kernel stall"; we saw this in 3 of 28 runs made two or three at a time. Run one simulation at a time when you compare totals, rerun alone before debugging a stall, and time device code with the timestamp counter instead: its numbers did not change between runs.</p>
+</div>
+
+<h3>Measure the kernel itself: f32 vs f16, WSE-2 vs WSE-3</h3>
+<p>The standard SDK idiom (topic-02, bandwidth-test) reads the PE's 48-bit timestamp counter just before and after the code you care about. The SDK explains why this beats host-side timing: "the runtime may not send the command right after the user issues it" <span class="tag sdk">SDK 2.10.1, bandwidth-test README</span>. The variant in <code>01-saxpy/timed/</code> does this around the single DSD op, and can switch to f16 (<code>@fmach</code>) and insert padding between x and y:</p>
+{{code:programs/01-saxpy/timed/pe_program.csl}}
+<p>The host reads <code>ts</code> as six 16-bit words and joins each three into a 48-bit count (the end of <code>timed/run.py</code>). Run it with <code>bash commands.sh N HALF PAD</code>, for example <code>bash commands.sh 1024 1 0</code>:</p>
+{{out:programs/01-saxpy/timed/expected_output.txt}}
+<p>TSC cycles for the one DSD op, including about 10 cycles for the two timestamp reads <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table class="num">
+<tr><th class="r">N</th><th class="r">f32 WSE-3</th><th class="r">f32 WSE-3, PAD 1</th><th class="r">f32 WSE-2</th><th class="r">f32 WSE-2, PAD 1</th><th class="r">f16 WSE-3</th><th class="r">f16 WSE-2</th></tr>
+<tr><td class="r">64</td><td class="r"><mark>143</mark></td><td class="r">79</td><td class="r">78</td><td class="r">78</td><td class="r">32</td><td class="r">46</td></tr>
+<tr><td class="r">1,024</td><td class="r"><mark>2,063</mark></td><td class="r">1,039</td><td class="r"><mark>2,062</mark></td><td class="r">1,038</td><td class="r">272</td><td class="r">526</td></tr>
+<tr><td class="r">4,096</td><td class="r"><mark>8,207</mark></td><td class="r">4,111</td><td class="r"><mark>8,206</mark></td><td class="r">4,110</td><td class="r">1,040</td><td class="r">2,062</td></tr>
+<tr><th>per element</th><th class="r">2</th><th class="r">1</th><th class="r">1 or 2</th><th class="r">1</th><th class="r">0.25</th><th class="r">0.5</th></tr>
+</table></div>
+<ul>
+<li><b>f32: one element per cycle on both chips, unless the operands collide.</b> As shipped, program 01's <code>@fmacs</code> runs at 2 cycles per element on WSE-3 (and on WSE-2 from N = 1,024). One padding word between x and y (<code>PAD 1</code>) brings it to 1 cycle per element everywhere. SRAM is split into single-ported banks interleaved by word <span class="tag vendor">Vendor</span>; an in-place FMAC needs a y word and an x word every cycle, and at some address offsets both fall in the same bank. Chapter 6 measures the same doubling. The exact rule is not documented: treat "pad and measure" as the method <span class="tag measured">Measured</span>.</li>
+<li><b>f16: 4 per cycle on WSE-3, 2 on WSE-2</b> for this op <span class="tag measured">Measured</span>. WSE-3 doubles f16 throughput and leaves f32 unchanged, which agrees with the vendor's "FP16 SIMD doubled" <span class="tag vendor">Vendor</span>. It is half the quoted 8-wide f16 SIMD, because each element of an in-place op needs two reads and a write; the width is a ceiling, not a rate.</li>
+<li>About 15 cycles of start-up per op; at N = 64 that dominates the f16 numbers.</li>
+</ul>
+
+<h3 id="trace">Look inside: the instruction trace</h3>
+<p>The simulator can write a readable per-cycle trace of every instruction on every PE. Set one environment variable for the run (SDK 2.10.1; the trace did not change cycle counts beyond normal noise in our runs) <span class="tag measured">Measured</span>:</p>
+<pre><code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace cs_python run.py --name out    # writes ~100k lines to sim.log
+grep "P4.1: .*EX OP.*FMACS" sim.log | head -2</code></pre>
+<p>Five lines from program 01's <code>sim.log</code>, shortened. <code>@3124</code> is the cycle, <code>P4.1</code> your PE, <code>T01</code> the task running (memcpy's command task, which is running your RPC), <code>Seq</code> the element of the DSD op, and the operands are hex floats (<code>40200000</code> = 2.5, <code>3f24aefe</code> = 0.64329517, the first result):</p>
+<pre class="output"><code>@3089 P4.1: Seq: 0,  [EX OP] | 0x0114: T01 BLK    Src1:0001
+@3124 P4.1: Seq: 0,  [EX OP] | 0x013a: T01 FMACS  Dest:3f24aefe Src0:3ea86eb5 Src1:3e00bf6c Src2:40200000
+@3126 P4.1: Seq: 1,  [EX OP] | 0x013a: T01 FMACS  Dest:bf16bddf Src0:be84639f Src1:be07467f Src2:40200000
+@3250 P4.1: Seq: 63, [EX OP] | 0x013a: T01 FMACS  Dest:bf7b380d Src0:3e8453ed Src1:befde803 Src2:40200000
+@3251 P4.1: Seq: 0,  [EX OP] | 0x013c: T01 UBLK   Src1:0001</code></pre>
+<p>A small helper groups the trace into runs of one task. It is how every cycle stamp on this page was produced:</p>
+{{code:programs/01-saxpy/trace_tasks.py}}
+<div class="table-wrap"><table>
+<tr><th>task id in the trace</th><th>what it is <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span> <span class="tag measured">Measured</span></th></tr>
+<tr><td><code>T01</code></td><td>memcpy's command task (input queue 1, color 22); your RPC runs inside it</td></tr>
+<tr><td><code>T02</code></td><td>your data task in program 02 (WSE-3: bound to input queue 2)</td></tr>
+<tr><td><code>T21</code> / <code>T30</code></td><td>D2H data send / control wavelet that advances the switch</td></tr>
+<tr><td><code>T27</code></td><td>H2D finished: unblock the command stream</td></tr>
+<tr><td><code>T28</code></td><td>memcpy's exit / final unblock</td></tr>
+<tr><td><code>T29</code></td><td>teardown handling (end of a transfer)</td></tr>
+</table></div>
 
 <h3>Exercises</h3>
+<p>Do these in <code>~/lab1/01-saxpy</code>, not in <code>course/programs</code>.</p>
+<div class="quiz">
 <ol>
-<li>Change <code>N:64</code> to <code>N:4096</code> in <code>commands.sh</code>. What happens? (Two 16 KB arrays plus code — does it still fit in 48 KB? Try <code>N:6000</code>.)</li>
-<li>Add a second RPC <code>scale(b: f32)</code> that computes <code>y ← b·y</code> with <code>@fmuls</code>, and call it from the host.</li>
-<li>Remove <code>sys_mod.unblock_cmd_stream()</code> and run again. Note what the host does. (Put it back.)</li>
+<li>Change <code>N:64</code> to <code>N:4096</code> in <code>commands.sh</code>. Does it still fit in the PE's 48 KB <span class="tag sdk">SDK 2.10.1</span>? Then try <code>N:6000</code>. Predict first: two arrays of 4·N bytes, plus memcpy's code and tables.
+<details><summary>Check</summary><p>N = 4096 (32 KB of arrays) compiles and passes in about 266,000 cycles: 64× the elements for 34× the cycles, because the fixed I/O cost is amortized. N = 6000 needs 48,000 bytes for the arrays alone; the linker stops with <code>ld.lld: error: ran out of PE memory for data (section .bss)</code> (and "for task table"). The largest N that links is <b>5,615 on WSE-3</b> (44,920 bytes of arrays) and <b>5,784 on WSE-2</b> <span class="tag measured">Measured</span>, matching the course's estimate of about 44 KB usable for user arrays on WSE-3 after memcpy's fixed overhead.</p></details></li>
+<li>Add a second RPC <code>scale(b: f32)</code> that computes <code>y ← b·y</code> with <code>@fmuls</code>, and call it from the host after <code>saxpy</code>.
+<details><summary>Hint and check</summary><p>Layout: <code>@export_name("scale", fn(f32)void);</code>. Device: <code>fn scale(b: f32) void { @fmuls(y_dsd, y_dsd, b); sys_mod.unblock_cmd_stream(); }</code> and <code>@export_symbol(scale);</code> in the <code>comptime</code> block. Host: <code>rt.launch('scale', np.float32(0.5), nonblock=False)</code> before the D2H, and assert against <code>0.5 * (a*x + y)</code>. This passes on both chips <span class="tag measured">Measured</span>. Look in <code>out/bin/out_rpc.json</code>: what id did <code>scale</code> get?</p></details></li>
+<li>Remove <code>sys_mod.unblock_cmd_stream()</code> and run again. Predict first: what does <code>launch()</code> do, and what does the next call (<code>memcpy_d2h</code>) do?
+<details><summary>What we saw</summary><p><code>launch()</code> returns normally. The <code>memcpy_d2h</code> command then waits behind the blocked stream; the simulator stops when the fabric goes idle, and about 4 s later <code>cs_python</code> aborts (exit code 134) with <code>terminate called after throwing an instance of 'std::runtime_error' what(): the received length (0 bytes) is not expected (256 bytes), could be a kernel stall</code>. No <code>sim_stats.json</code> is written <span class="tag measured">Measured</span>. Memorise that message: it almost always means some RPC never unblocked the command stream (Chapter 7), or a barrier never released. On hardware, expect a hang instead. Put the line back.</p></details></li>
+<li>Time the kernel yourself: in a copy of <code>01-saxpy/timed</code>, predict the f16 TSC count at N = 2048 on WSE-3 and on WSE-2, then run <code>bash commands.sh 2048 1 0</code> with each <code>ARCH</code>.
+<details><summary>Check</summary><p>From the table: about 15 + 0.25·2048 ≈ 530 cycles on WSE-3 and 15 + 0.5·2048 ≈ 1,040 on WSE-2 <span class="tag derived">Derived</span>. If yours is far off, check that you really built with <code>HALF:1</code> (the output line says <code>f16 @fmach</code>).</p></details></li>
+<li>With the instruction trace on, find the cycles at which your <code>@fmacs</code> starts and ends (<code>Seq: 0</code> and <code>Seq: 63</code>). How many cycles per element? Now set <code>PAD:1</code> in the timed variant and look again.
+<details><summary>Check</summary><p>Unpadded on WSE-3: 3,124 to 3,250, so 2 cycles per element (the <code>Seq</code> numbers advance every second cycle). With one pad word, consecutive <code>Seq</code> values are one cycle apart <span class="tag measured">Measured</span>.</p></details></li>
 </ol>
+</div>
 
 <h2>Program 02 · A task per wavelet</h2>
 <p>Now the host does not write into an array. It <em>streams</em>: each of the N values becomes one 32-bit wavelet sent on a memcpy color. On the PE, that color is bound to input queue 2 and the queue is bound to a data task, so <strong>each arriving value runs <code>on_value()</code> once</strong>, with the value as its argument.</p>
+<p>The script has one extra parameter: <code>--params=MEMCPYH2D_DATA_1_ID:0</code> picks color 0 for the stream. <code>run.py</code> reads the same value back from <code>out/out.json</code>, so host and device agree.</p>
+{{code:programs/02-wavelet-tasks/commands.sh}}
 {{code:programs/02-wavelet-tasks/layout.csl}}
 {{code:programs/02-wavelet-tasks/pe_program.csl}}
+
+<h3>Reading program 02</h3>
+<ul>
+<li><b>Color.</b> memcpy owns the stream's color; the host chose its number (0) with a compile parameter, and <code>@get_color(@bitcast(u16, sys_mod.MEMCPYH2D_1))</code> turns it into a <code>color</code> value.</li>
+<li><b>Queue.</b> On WSE-3 a color reaches the core only through an input queue; <code>@initialize_queue(h2d_iq, .{ .color = h2d_color })</code> connects them. Queue 2, because memcpy uses queues 0 and 1 on WSE-3 (Chapter 7). On WSE-2 the call is skipped (<code>if (@is_arch("wse3"))</code>, as in SDK topic-03) because there the task binds to the color directly.</li>
+<li><b>Task ID.</b> A <code>task</code> is a hardware entry point, not a function you call. <code>@bind_data_task</code> attaches it to an ID: the color on WSE-2, the input queue on WSE-3 (Chapter 5). <code>@is_arch</code> is evaluated at compile time, so each binary contains only one branch. If you add your own local tasks, use IDs 8–20; never bind task 29, which memcpy uses for teardown.</li>
+<li><b>Exports.</b> <code>stats</code> and <code>count</code> are exported with mutability <code>false</code>: the host may read but not write them (<code>"immutable": 1</code> in <code>out_rpc.json</code>). Program 01's arrays use <code>true</code> because the host writes them. Here the device-side pointers are also declared <code>const</code>. Chapter 9 tells how we got this wrong once.</li>
+<li><b>The barrier flag.</b> <code>host_waiting</code> records that <code>wait_done()</code> ran before the last task, so that task knows it must release the host.</li>
+<li><b>Initial values.</b> max starts at −1e30 and min at +1e30, so the first value replaces both.</li>
+</ul>
 {{code:programs/02-wavelet-tasks/run.py}}
 {{out:programs/02-wavelet-tasks/expected_output.txt}}
+<p class="muted">As before, the last line is <code>cycle_count</code> from <code>sim_stats.json</code>; for this program it varies by a few hundred cycles between runs (WSE-2: about 5,400–5,530) <span class="tag measured">Measured</span>.</p>
+<div class="table-wrap"><table class="num">
+<tr><th>stat</th><th class="r">device</th><th class="r">numpy</th><th class="r">sequential f32 sum (<code>np.cumsum</code>)</th></tr>
+<tr><td>sum</td><td class="r">26.13794<mark>1</mark></td><td class="r">26.13794</td><td class="r">26.13794<mark>1</mark></td></tr>
+<tr><td>sum of squares</td><td class="r">3302.53<mark>37</mark></td><td class="r">3302.53<mark>27</mark></td><td class="r">3302.53<mark>37</mark></td></tr>
+<tr><td>max</td><td class="r">9.614744</td><td class="r">9.614744</td><td class="r">9.614744</td></tr>
+<tr><td>min</td><td class="r">−9.883508</td><td class="r">−9.883508</td><td class="r">−9.883508</td></tr>
+</table></div>
+<p>The sum of squares differs in the 4th decimal. The device adds 100 values one after another in arrival order, while numpy sums pairwise, so the f32 rounding differs; a sequential f32 sum matches the device exactly <span class="tag measured">Measured</span>. That is why this test uses <code>rtol=1e-4</code>. count = 100.</p>
 
 <figure>
-<svg viewBox="0 0 760 180" width="760" role="img" aria-label="Streaming path for program 02">
-  <defs><marker id="s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker></defs>
-  <rect x="10" y="60" width="110" height="56" rx="8" class="blu" stroke-width="1.4"/><text x="65" y="84" text-anchor="middle" font-weight="600">host</text><text x="65" y="102" text-anchor="middle" font-size="11" class="muted">100 floats</text>
-  <rect x="150" y="60" width="140" height="56" rx="8" class="pur" stroke-width="1.4"/><text x="220" y="84" text-anchor="middle" font-weight="600">memcpy west</text><text x="220" y="102" text-anchor="middle" font-size="11" class="muted">color MEMCPYH2D_1</text>
-  <rect x="320" y="60" width="120" height="56" rx="8" class="grn" stroke-width="1.4"/><text x="380" y="84" text-anchor="middle" font-weight="600">input queue 2</text><text x="380" y="102" text-anchor="middle" font-size="11" class="muted">@initialize_queue</text>
-  <rect x="470" y="60" width="130" height="56" rx="8" class="amb" stroke-width="1.4"/><text x="535" y="84" text-anchor="middle" font-weight="600">on_value(v)</text><text x="535" y="102" text-anchor="middle" font-size="11" class="muted">runs 100 times</text>
-  <rect x="630" y="60" width="120" height="56" rx="8" class="acc" stroke-width="1.4"/><text x="690" y="84" text-anchor="middle" font-weight="600">stats[4]</text><text x="690" y="102" text-anchor="middle" font-size="11" class="muted">count[1]</text>
-  <path d="M120 88 H146" class="s-blu" stroke-width="2" marker-end="url(#s2)"/><path d="M290 88 H316" class="s-blu" stroke-width="2" marker-end="url(#s2)"/>
+<svg viewBox="0 0 760 330" width="760" role="img" aria-labelledby="sp-t sp-d">
+  <title id="sp-t">Streaming path and barrier for program 02</title>
+  <desc id="sp-d">Data lane: host streams 100 floats through memcpy on color 0, into input queue 2 on WSE-3 or straight to the task on WSE-2, and on_value updates stats and count. Control lane: the host launches wait_done on color 22; if count equals N it unblocks, otherwise it sets host_waiting and the 100th on_value unblocks; then the host reads stats and count with memcpy_d2h.</desc>
+  <defs>
+    <marker id="s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
+    <marker id="s2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-amb"/></marker>
+    <marker id="s2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-grn"/></marker>
+  </defs>
+  <text x="10" y="24" font-size="12" font-weight="700" class="muted">DATA LANE</text>
+  <rect x="10" y="60" width="110" height="56" rx="8" class="blu" stroke-width="1.4"/><text x="65" y="84" text-anchor="middle" font-weight="600">host</text><text x="65" y="102" text-anchor="middle" font-size="12" class="muted">100 floats</text>
+  <rect x="145" y="60" width="150" height="56" rx="8" class="pur" stroke-width="1.4"/><text x="220" y="84" text-anchor="middle" font-weight="600">memcpy</text><text x="220" y="102" text-anchor="middle" font-size="12" class="muted">color 0 (MEMCPYH2D_1)</text>
+  <rect x="320" y="60" width="120" height="56" rx="8" class="grn" stroke-width="1.4"/><text x="380" y="84" text-anchor="middle" font-weight="600">input queue 2</text><text x="380" y="102" text-anchor="middle" font-size="12" class="muted">WSE-3 only</text>
+  <rect x="470" y="60" width="130" height="56" rx="8" class="amb" stroke-width="1.4"/><text x="535" y="84" text-anchor="middle" font-weight="600">on_value(v)</text><text x="535" y="102" text-anchor="middle" font-size="12" class="muted">runs 100 times</text>
+  <rect x="630" y="60" width="120" height="56" rx="8" class="acc" stroke-width="1.4"/><text x="690" y="84" text-anchor="middle" font-weight="600">stats[4]</text><text x="690" y="102" text-anchor="middle" font-size="12" class="muted">count[1]</text>
+  <path d="M120 88 H141" class="s-blu" stroke-width="2" marker-end="url(#s2)"/><path d="M295 88 H316" class="s-blu" stroke-width="2" marker-end="url(#s2)"/>
   <path d="M440 88 H466" class="s-blu" stroke-width="2" marker-end="url(#s2)"/><path d="M600 88 H626" class="s-blu" stroke-width="2" marker-end="url(#s2)"/>
-  <text x="380" y="150" text-anchor="middle" font-size="13" class="muted">No launch() is needed to start the computation: arrival is the trigger.</text>
+  <text x="380" y="132" text-anchor="middle" font-size="11.5" class="muted">WSE-3: data_task_id = input queue 2</text>
+  <path d="M255 60 C 300 18, 470 18, 520 56" fill="none" class="s-muted" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#s2)"/>
+  <text x="390" y="30" text-anchor="middle" font-size="11.5" class="muted">WSE-2: data_task_id = color 0</text>
+  <line x1="10" y1="160" x2="750" y2="160" class="line"/>
+  <text x="10" y="182" font-size="12" font-weight="700" class="muted">CONTROL LANE (color 22)</text>
+  <path d="M65 116 V 222 H 236" fill="none" class="s-amb" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#s2a)"/>
+  <text x="76" y="214" font-size="12">launch('wait_done')</text>
+  <rect x="240" y="196" width="200" height="52" rx="8" class="red" stroke-width="1.4"/><text x="340" y="218" text-anchor="middle" font-weight="600">wait_done()</text><text x="340" y="236" text-anchor="middle" font-size="11.5" class="muted">count==N ? unblock : host_waiting=true</text>
+  <path d="M535 116 V 222 H 444" fill="none" class="s-amb" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#s2a)"/>
+  <text x="545" y="214" font-size="12">100th task: unblock_cmd_stream()</text>
+  <path d="M690 116 V 296 H 69" fill="none" class="s-grn" stroke-width="2" marker-end="url(#s2g)"/>
+  <path d="M65 296 V 120" fill="none" class="s-grn" stroke-width="2" marker-end="url(#s2g)"/>
+  <text x="380" y="288" text-anchor="middle" font-size="12">then memcpy_d2h(stats), memcpy_d2h(count)</text>
+  <text x="380" y="320" text-anchor="middle" font-size="12.5" class="muted">Arrival triggers the work; the barrier decides when the host may read it.</text>
 </svg>
-<figcaption><b>Dataflow on one PE.</b> On WSE-2 the same code binds the task directly to the color; <code>@is_arch</code> picks the right binding.</figcaption>
+<figcaption><b>Dataflow on one PE, plus the barrier.</b> On WSE-2 the task binds directly to the color; <code>@is_arch</code> picks the binding at compile time. On WSE-3 the data actually reaches the PE on memcpy's own color 23, in input queue 0; memcpy's microthread on this same PE re-emits each wavelet on <code>MEMCPYH2D_1</code> into your queue, which is why queues 0 and 1 are off-limits <span class="tag sdk">SDK 2.10.1, memcpy/wse3/memcpy.csl</span>. Each value makes two queue hops inside the PE.</figcaption>
 </figure>
+
+<h3>Produce the bug yourself</h3>
+<p><b>Try it first.</b> In <code>~/lab1/02-wavelet-tasks</code>, comment out <code>rt.launch('wait_done', nonblock=False)</code> in <code>run.py</code> and run. You should see an <code>AssertionError</code> whose device row starts with <code>30.818176, 3207.2998</code> instead of <code>26.13794, 3302.5327</code> <span class="tag measured">Measured</span>. max, min and count are right. Before reading on, write down two hypotheses for why. Then restore the line.</p>
 
 <div class="callout bug">
 <strong>The bug, and the debugging method</strong>
-<p>The first version had no <code>wait_done</code>. All 100 tasks fired and max/min were right, but the sum was 30.818 instead of 26.138. Steps taken:</p>
+<p>Chapter 7's widget animates this race; here is how it was found. The first version had no <code>wait_done</code>. All 100 tasks fired and max/min were right, but the sum was 30.818 instead of 26.138 <span class="tag measured">Measured</span>. Steps taken:</p>
 <ol>
 <li>Copied the program to a scratch directory, added an exported <code>seen[N]</code> array, and recorded each received value: all 100 matched the input exactly, so the transport was fine.</li>
 <li>Recorded the running sum after each task instead: every partial sum matched <code>numpy.cumsum</code>. So the device computed the right answer.</li>
 <li>Searched the host-side cumulative sums for 30.818176: it is exactly the sum after <strong>95</strong> values.</li>
 </ol>
-<p>Conclusion: the host read <code>stats</code> before the last five tasks ran. A streaming H2D completes when wavelets are injected, not consumed. <code>wait_done()</code> keeps the command stream blocked until <code>on_value()</code> sees the last value. Validated afterwards at N = 100 and N = 500, on WSE-3 and WSE-2.</p>
+<p>Conclusion: the host read <code>stats</code> before the last five tasks ran. A streaming H2D completes when all wavelets have been sent, not when they have been consumed. <code>wait_done()</code> keeps the command stream blocked until <code>on_value()</code> sees the last value. Validated afterwards at N = 100 and N = 500, on WSE-3 and WSE-2 <span class="tag measured">Measured</span>.</p>
+</div>
+
+<p>The instruction trace shows exactly where the host got ahead. Scrub through both runs below; the task start times are the measured ones from <code>sim.log</code> (WSE-3, N = 100).</p>
+
+<div class="widget" id="rc">
+<h4>Wavelets in, tasks run, host reads</h4>
+<p class="hint">Drag the cycle slider or press Play. Toggle the barrier to compare the two measured runs. Every tick on the middle track is one <code>on_value()</code> starting.</p>
+<div class="controls">
+  <label><input type="checkbox" id="rc-bar" checked> with <code>wait_done()</code></label>
+  <label>cycle <input type="range" id="rc-t" min="0" max="8100" step="10" value="4710"> <output id="rc-to"></output></label>
+  <button class="btn secondary" id="rc-play" type="button">Play</button>
+</div>
+<div class="scroll"><svg id="rc-svg" viewBox="0 0 760 250" width="760" role="img" aria-labelledby="rc-tt rc-dd"><title id="rc-tt">Measured task schedule of program 02</title><desc id="rc-dd">Three tracks over simulated cycles. The streaming H2D finishes at cycle 4,709 when only 84 of 100 tasks have run. With the barrier, wait_done blocks the stream at 4,987 with 89 done and the 100th task unblocks at 5,460; stats are read from 5,876. Without it, stats are read from 5,539 when 95 tasks have run.</desc></svg></div>
+<div class="readout" id="rc-out" aria-live="polite"></div>
+</div>
+
+<ul>
+<li><b>Tasks start at cycle 1,329 and take about 40 cycles each</b> (about 21 instructions; the rest is task entry and exit) <span class="tag measured">Measured</span>. memcpy delivers faster than that, so a backlog builds in the queues: the core runs one task at a time.</li>
+<li><b>The streaming H2D is "done" at cycle 4,709</b>, when memcpy's <code>T27</code> unblocks the command stream. Only <b>84 of 100</b> tasks have run; 16 values are still queued <span class="tag measured">Measured</span>.</li>
+<li><b>Without the barrier</b>, the D2H of <code>stats</code> needs about 830 cycles of command handling, so its first element (the sum) leaves at cycle 5,539, after 95 tasks. The D2H then sends one element at a time while tasks keep running: the sum of squares leaves after 96 tasks, which is why the failing row reads 3207.2998, the sum of 96 squares. One <code>memcpy_d2h</code> sampled four values at four different moments. <code>count</code> is read last, at cycle 7,777, so it shows 100: a correct-looking counter does not prove the result was read at the right time.</li>
+<li><b>With the barrier</b>, <code>wait_done</code> arrives at cycle 4,987 with 89 done and blocks; the 100th <code>on_value</code> starts at 5,421 and unblocks at 5,460; only then does the D2H start.</li>
+</ul>
+
+<h3>Why the barrier itself is race-free</h3>
+<p>The RPC <code>wait_done()</code> runs inside memcpy's command task; <code>on_value()</code> is another task. The core runs one task at a time, each to completion (Chapter 5), so the two can never interleave. Either all 100 values have been handled before <code>wait_done</code> runs (count is N: unblock at once), or <code>wait_done</code> finishes first and sets <code>host_waiting</code>, and the 100th <code>on_value</code> sees the flag and unblocks. There is no moment in between where a wavelet could slip past both checks. The two D2H commands queue behind the still-blocked command stream. The same argument is what you will use for the barriers in Labs 2 and 3.</p>
+
+<div class="callout key">
+<strong>Aside: receive the whole stream with one instruction (WSE-3, measured)</strong>
+<p>Instead of a task per wavelet, a fabric DSD can receive all N wavelets into SRAM with one asynchronous instruction: a local task runs <code>@fmovs(buf_dsd, in_dsd, .{ .async = true, .activate = done_id })</code> with <code>in_dsd</code> a <code>fabin_dsd</code> of extent N on input queue 2, and the completion task <code>done</code> computes the statistics in a loop and unblocks the host as before. In a WSE-3 variant (by the depth reviewer), all 100 values were in SRAM by cycle ~1,500 (about 1.7 cycles per wavelet, against 40 for a task each), and total cycles fell from 7,020 to 6,289 at N = 100, from 24,960 to 19,148 at N = 500 and from 85,290 to 67,317 at N = 2,000 <span class="tag measured">Measured</span>. The trace also shows the cost of run-to-completion: the scalar loop in <code>done()</code> ran for ~3,000 cycles, and memcpy's H2D-complete unblock could not run until it finished. A WSE-2 port of this variant stalled and is not shown. Fabric DSDs and async operations are covered in Chapter 6 and used in Labs 2 and 3.</p>
 </div>
 
 <h3>Exercises</h3>
+<p>Do these in <code>~/lab1/02-wavelet-tasks</code>.</p>
+<div class="quiz">
 <ol>
-<li>Add a histogram: an exported <code>hist: [10]u32</code> and a bucket increment inside <code>on_value</code>.</li>
-<li>Delete the <code>launch('wait_done')</code> line in <code>run.py</code> and try N = 100, 500 and 2000. Does the error grow or shrink?</li>
-<li>Stream f16 pairs instead: give the data task two 16-bit arguments and send <code>MEMCPY_16BIT</code> data.</li>
+<li>Add a histogram: an exported <code>hist: [10]u32</code> and a bucket increment inside <code>on_value</code>, for 10 buckets of width 2 over [−10, 10).
+<details><summary>Hint and check</summary><p>Device: <code>var hist = @zeros([10]u32);</code>, an exported <code>const hist_ptr: [*]u32 = &amp;hist;</code>, and in <code>on_value</code>: <code>var b: i16 = @as(i16, (v + 10.0) * 0.5);</code>, clamped to 0..9, then <code>hist[b] += 1;</code>. Layout: <code>@export_name("hist", [*]u32, false);</code>. Host: one more <code>memcpy_d2h</code> of 10 elements after the barrier, compared with <code>np.histogram(data, bins=10, range=(-10, 10))[0]</code>. It must match exactly: <code>[ 8 11 11 7 10 10 10 10 15 8]</code> at N = 100, on both chips <span class="tag measured">Measured</span>.</p></details></li>
+<li>With the barrier removed (as in "Produce the bug yourself"), try N = 100, 500 and 2000. Use <code>numpy.cumsum</code> to find how many values made it into <code>stats[0]</code>. Does the number of missing values change with N? Why might <code>stats[1]</code> include one more value than <code>stats[0]</code>?
+<details><summary>Check</summary><p>At every N the host's sum equals the partial sum after N − 5 values (95, 495, 1995), and <code>stats[1]</code> includes N − 4 <span class="tag measured">Measured</span>. The shortfall is set by how long the D2H command takes to start (fixed), not by N, so the fraction of missing values (5/N) shrinks as N grows: that is why this bug is easy to miss at large N. (The relative error of the sum itself jumps around, because the sum of uniform(−10, 10) values is close to zero.) <code>stats[1]</code> includes one more value because the D2H sends one element at a time while tasks keep running.</p></details></li>
+<li>Stream f16 pairs: change the task to <code>task on_value(lo: f16, hi: f16) void</code> and accumulate both halves (convert with <code>@as(f32, lo)</code>). On the host, pack two f16 into one u32 per wavelet, <code>packed = data16.view(np.uint32)</code> where <code>data16</code> is an <code>np.float16</code> array, and stream <code>packed</code> with <code>MEMCPY_32BIT</code> and <code>N // 2</code> elements. Remember to wait for N/2 tasks, not N.
+<details><summary>Why not MEMCPY_16BIT, and check</summary><p>In streaming mode <code>MEMCPY_16BIT</code> puts one 16-bit value in each wavelet, with the upper half zero or an index (SDK topic-03), so a two-argument task would receive (value, 0) <span class="tag sdk">SDK 2.10.1</span>. Packing on the host is what puts two halves in one wavelet, as SDK topic-04 does with <code>(idx &lt;&lt; 16) + val</code>. Element 2k lands in <code>lo</code>, element 2k+1 in <code>hi</code>. With N = 100 our version fired 50 tasks and its statistics matched <code>data16.astype(np.float32)</code> within <code>rtol=1e-4</code> (sum 26.157837) on both chips <span class="tag measured">Measured</span>.</p></details></li>
+<li>Stretch: add a delay loop (say 200 iterations) to <code>on_value</code> and rerun with the instruction trace on. Does the streaming H2D still complete at cycle ~4,709? How many tasks have run when it does?
+<details><summary>Hint</summary><p>The hardware queues hold only a few wavelets ("the program stalls when size exceeds 14", SDK pipeline-01) <span class="tag sdk">SDK 2.10.1</span>. When they are full, memcpy cannot inject more, so H2D completion should move later. Use <code>trace_tasks.py</code> to find the <code>T27</code> line. We have not measured this one: it is yours to find.</p></details></li>
 </ol>
+</div>
+
+<h2 id="trouble">If it fails</h2>
+<div class="callout warn">
+<strong>Common failures and what they mean</strong>
+<ul>
+<li><code>cslc: command not found</code>: run <code>source /home/user/cerebras-sdk/env.sh</code> in this shell.</li>
+<li><code>cs_python</code> errors in a directory under <code>/tmp</code>: work under your home directory instead.</li>
+<li><code>ld.lld: error: ran out of PE memory for data</code> (or "for task table"): your arrays plus memcpy's code and tables exceed the PE's memory; reduce N (exercise 1).</li>
+<li><code>the received length (0 bytes) is not expected … could be a kernel stall</code>: an RPC never called <code>unblock_cmd_stream()</code>, or a barrier never released. On a busy machine it can also be a host-side timeout; rerun alone before debugging.</li>
+<li><code>AssertionError: Not equal to tolerance</code>: compare with the expected output above; for streaming programs, suspect reading results too early.</li>
+<li>Cycle counts that disagree with this page: see <a href="#noise">Cycle totals are approximate</a>.</li>
+<li>Under <code>run_all.sh</code>, read <code>&lt;program&gt;/run.log</code>. For a hang or stall, look at the end of <code>sim.log</code> and at <code>sim_stop_cause</code> in <code>sim_stats.json</code> (Chapter 9's debugging table).</li>
+<li>Clutter: each run leaves <code>out/</code>, <code>sim.log</code>, <code>sim_stats.json</code>, <code>simfab_traces/</code> and <code>wio_flows_tmpdir.*</code> behind. Delete them freely; <code>commands.sh</code> rebuilds everything.</li>
+</ul>
+</div>
 </main>
 <script src="assets/course.js"></script>
 <script>
+// ---------- helpers ----------
+const fmt = n => n.toLocaleString("en-US");
+function codeLines(file) {
+  // Reuse the validated code blocks the build inserted above (no second copy of the source).
+  const f = [...document.querySelectorAll(".filename")].find(d => d.textContent.trim() === "course/" + file);
+  const pre = f && f.nextElementSibling && f.nextElementSibling.querySelector("code");
+  return pre ? pre.innerHTML.split("\n") : [];
+}
+
+// ---------- Widget 1: SAXPY step-through ----------
 (function () {
-  const g = $("#seq1");
-  const cols = [["host (run.py)", 90], ["memcpy runtime", 300], ["your PE program", 520], ["SRAM", 690]];
-  cols.forEach(([n, x]) => { el("text", { x, y: 22, "text-anchor": "middle", "font-weight": 700 }, g).textContent = n;
-    el("line", { x1: x, x2: x, y1: 32, y2: 320, class: "line", "stroke-dasharray": "4 3" }, g); });
-  const steps = [
-    [90, 300, "memcpy_h2d(x)", 50], [300, 690, "write x[0..63]", 70],
-    [90, 300, "memcpy_h2d(y)", 100], [300, 690, "write y[0..63]", 120],
-    [90, 300, "launch('saxpy', 2.5)", 150], [300, 520, "call saxpy(2.5) · stream blocked", 170],
-    [520, 690, "@fmacs over 64 elements", 195], [520, 300, "unblock_cmd_stream()", 220],
-    [90, 300, "memcpy_d2h(y)", 250], [690, 300, "read y", 270], [300, 90, "64 floats", 292],
-  ];
-  steps.forEach(([a, b, t, y]) => {
-    el("path", { d: `M${a} ${y} H${b + (b > a ? -4 : 4)}`, stroke: cssVar("--blue"), "stroke-width": 1.8, "marker-end": "url(#s1)" }, g);
-    el("text", { x: (a + b) / 2, y: y - 5, "text-anchor": "middle" }, g).textContent = t;
+  const g = $("#st-g");
+  const L = { host: 55, rt: 200, mod: 360, pe: 525, sram: 690 };
+  const names = [["host", "run.py", L.host], ["SdkRuntime +", "memcpy fabric", L.rt], ["memcpy module", "on your PE (sys_mod)", L.mod], ["your code", "saxpy()", L.pe], ["SRAM", "x[64], y[64]", L.sram]];
+  names.forEach(([a, b, x]) => {
+    el("text", { x, y: 18, "text-anchor": "middle", "font-weight": 700, "font-size": 12.5 }, g).textContent = a;
+    el("text", { x, y: 33, "text-anchor": "middle", "font-size": 11.5, class: "muted" }, g).textContent = b;
+    el("line", { x1: x, x2: x, y1: 40, y2: 360, class: "line", "stroke-dasharray": "4 3" }, g);
   });
+  // [from, to, label, file, line, c0, c1, stream, sram, text, dashed]
+  const S = [
+    ["host", "rt", "load() · run()", "run", 17, 0, 115, "free", 0, "The host loads the ELF onto the simulated fabric and starts it. Your PE has nothing to do until a command arrives."],
+    ["host", "rt", "memcpy_h2d(x)", "run", 19, 115, 115, "busy", 0, "A copy request for 64 words to symbol x (id 1)."],
+    ["rt", "mod", "cmd · color 22 · 15 pushes", "run", 19, 115, 1124, "busy", 0, "The command arrives as 15 parameter wavelets on color 22, about 51 cycles apart; memcpy's command task T01 pushes each onto its stack, decodes (PE, address, length) and blocks the command stream while the copy runs. Cycles 115–1,124."],
+    ["mod", "sram", "data · color 23 → x[0..63]", "run", 19, 1128, 1469, "busy", 1, "The 64 values arrive on color 23 into input queue 0 and are stored to x by memcpy (task T29 handles the teardown at the end). Cycles 1,128–1,469: about 5 cycles per element."],
+    ["mod", "rt", "H2D done · UBLK", "run", 19, 1470, 1470, "free", 1, "Task T27 executes UBLK: the command stream is free again and memcpy_h2d(x) returns to Python. Cycle 1,470.", 1],
+    ["host", "sram", "memcpy_h2d(y): same again", "run", 20, 1489, 2780, "free", 2, "The same pattern copies y: 1,489–2,780. Each H2D costs about 1,300 cycles, mostly the fixed command cost."],
+    ["host", "rt", "launch('saxpy', 2.5)", "run", 21, 2796, 2796, "free", 2, "An RPC request. launch() returns to Python as soon as the command is sent; it does not wait for your function."],
+    ["rt", "mod", "cmd · color 22 · count, a (2×u16), id 3", "run", 21, 2796, 3089, "busy", 2, "Six pushes: the wavelet count, the float 2.5 split into two 16-bit halves, and function id 3 from out_rpc.json. Cycles 2,796–3,088."],
+    ["mod", "pe", "BLK · call saxpy(2.5)", "pe", 16, 3089, 3123, "blocked", 2, "memcpy executes BLK on its command task (cycle 3,089) and calls your function. From now on, any further command waits in input queue 1."],
+    ["pe", "sram", "@fmacs ×64", "pe", 18, 3124, 3250, "blocked", 3, "One instruction walks all 64 elements: y[i] = y[i] + x[i]·2.5. Seq 0 at cycle 3,124, Seq 63 at 3,250: 127 cycles, 2 per element (a bank conflict; see 'Measure the kernel')."],
+    ["pe", "mod", "unblock_cmd_stream() · UBLK", "pe", 20, 3251, 3251, "free", 3, "Your line executes UBLK at cycle 3,251. Without it the stream stays blocked forever and the next memcpy aborts with 'could be a kernel stall'.", 1],
+    ["host", "mod", "memcpy_d2h(y) · cmd · color 22", "run", 23, 3252, 3776, "busy", 3, "The read command (already waiting if Python sent it early) is decoded and the send path set up. Cycles 3,252–3,776."],
+    ["sram", "rt", "data · color 21 · 1 elem + 1 ctrl ×64", "run", 23, 3777, 7645, "busy", 3, "One element at a time: a data send (task T21, 35 cycles) then a control wavelet that advances memcpy's switch (T30, 21 cycles). About 60 cycles per element: 57% of the whole run."],
+    ["rt", "host", "64 floats → out · stop()", "run", 24, 7689, 7740, "free", 3, "memcpy's exit task T28 unblocks at 7,689; the simulator stops after 50 idle cycles, at 7,740. run.py compares with numpy and prints SUCCESS!", 1],
+  ];
+  const rowY = i => 58 + i * 21.5;
+  const items = S.map((s, i) => {
+    const [a, b, t] = s, xa = L[a], xb = L[b], y = rowY(i), dir = xb > xa ? 1 : -1;
+    const grp = el("g", {}, g);
+    const p = el("path", { d: `M${xa} ${y} H${xb - dir * 4}`, class: "s-blu", "stroke-width": 1.6, "marker-end": "url(#st-a)", fill: "none" }, grp);
+    if (s[10]) p.setAttribute("stroke-dasharray", "5 3");
+    const tx = el("text", { x: (xa + xb) / 2, y: y - 4, "text-anchor": "middle", "font-size": 11.5 }, grp);
+    tx.textContent = t;
+    return { grp, p, tx };
+  });
+  // blocked activation bar on the module lifeline
+  const blk = el("rect", { x: L.mod - 6, y: rowY(8) - 6, width: 12, height: rowY(10) - rowY(8) + 6, rx: 2, class: "red", "stroke-width": 1.2 }, g);
+  const blkT = el("text", { x: L.mod - 12, y: rowY(9) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, g);
+  blkT.textContent = "cmd stream blocked";
+  // timeline
+  const T0 = 70, T1 = 740, TMAX = 7740, ty = 392, X = c => T0 + (T1 - T0) * c / TMAX;
+  el("text", { x: 10, y: ty + 14, "font-size": 11.5, "font-weight": 700 }, g).textContent = "cycles";
+  const phases = [[0, 115, "", "box"], [115, 1470, "H2D x", "blu"], [1489, 2780, "H2D y", "blu"], [2796, 3251, "RPC", "red"], [3252, 7689, "D2H y (57%)", "amb"], [7690, 7740, "", "box"]];
+  const ph = phases.map(([a, b, t, c]) => {
+    const r = el("rect", { x: X(a), y: ty, width: Math.max(1.5, X(b) - X(a)), height: 22, class: c, "stroke-width": 1 }, g);
+    if (t) { const tt = el("text", { x: (X(a) + X(b)) / 2, y: ty + 15, "text-anchor": "middle", "font-size": 11 }, g); tt.textContent = t; }
+    return r;
+  });
+  el("rect", { x: X(3124), y: ty - 6, width: X(3250) - X(3124), height: 34, class: "f-acc" }, g);
+  el("text", { x: X(3187), y: ty - 10, "text-anchor": "middle", "font-size": 11, "font-weight": 700 }, g).textContent = "@fmacs";
+  [0, 2000, 4000, 6000, 7740].forEach(c => { el("text", { x: X(c), y: ty + 38, "text-anchor": "middle", "font-size": 10.5, class: "muted" }, g).textContent = fmt(c); });
+  const cur = el("rect", { x: 0, y: ty - 3, width: 2, height: 28, rx: 1, class: "f-acc", opacity: 0.85 }, g);
+  const curBox = el("rect", { x: 0, y: ty - 3, width: 2, height: 28, fill: "none", class: "s-acc", "stroke-width": 2 }, g);
+
+  const files = { run: codeLines("programs/01-saxpy/run.py"), pe: codeLines("programs/01-saxpy/pe_program.csl") };
+  const ranges = { run: [15, 24], pe: [16, 21] };
+  const X0 = ["0.12573022", "-0.13210486", "0.64042264", "0.10490011"], Y0 = ["0.32896963", "-0.25857255", "1.5834728", "1.320361"], Y1 = ["0.64329517", "-0.5888347", "3.1845295", "1.5826113"];
+  const fill = (row, vals, hot) => { const tr = $(row); tr.querySelectorAll("td").forEach(t => t.remove()); vals.forEach(v => { const td = document.createElement("td"); td.textContent = v; if (hot) td.className = "hot"; tr.appendChild(td); }); };
+  let k = 0, timer = null;
+  function show() {
+    const s = S[k];
+    items.forEach((it, i) => {
+      it.grp.style.opacity = i < k ? 0.45 : i === k ? 1 : 0.12;
+      it.p.setAttribute("stroke-width", i === k ? 2.6 : 1.6);
+      it.tx.setAttribute("font-weight", i === k ? 700 : 400);
+    });
+    const bOn = k >= 8 && k <= 10;
+    blk.style.opacity = k >= 8 ? (bOn ? 1 : 0.35) : 0; blkT.style.opacity = bOn ? 1 : 0;
+    const pill = $("#st-pill");
+    pill.className = "pill " + s[7]; pill.textContent = { free: "free", busy: "busy (memcpy)", blocked: "BLOCKED by your RPC" }[s[7]];
+    const c0 = s[5], c1 = s[6];
+    cur.setAttribute("x", X(c1) - 1);
+    curBox.setAttribute("x", X(c0)); curBox.setAttribute("width", Math.max(2, X(c1) - X(c0)));
+    $("#st-out").textContent = `Step ${k + 1}/${S.length} · cycles ${c0 === c1 ? fmt(c0) : fmt(c0) + "–" + fmt(c1)}\n${s[9]}`;
+    $("#st-count").textContent = "";
+    // code panel
+    const f = s[3], [lo, hi] = ranges[f], lines = files[f];
+    const box = $("#st-code"); box.innerHTML = "";
+    const h = document.createElement("div"); h.className = "fn"; h.textContent = f === "run" ? "run.py" : "pe_program.csl"; box.appendChild(h);
+    for (let n = lo; n <= hi; n++) {
+      const d = document.createElement("div"); d.className = "l" + (n === s[4] ? " sel" : "");
+      d.innerHTML = `<span class="ln">${n}</span>` + (lines[n - 1] || ""); box.appendChild(d);
+    }
+    fill("#st-x", s[8] >= 1 ? X0 : ["?", "?", "?", "?"], s[8] === 1);
+    fill("#st-y", s[8] >= 3 ? Y1 : s[8] >= 2 ? Y0 : ["?", "?", "?", "?"], s[8] === 2 || (s[8] === 3 && k === 9));
+    $("#st-prev").disabled = k === 0; $("#st-next").disabled = k === S.length - 1;
+  }
+  const go = d => { k = Math.max(0, Math.min(S.length - 1, k + d)); show(); };
+  $("#st-prev").onclick = () => go(-1);
+  $("#st-next").onclick = () => go(1);
+  $("#st-play").onclick = () => {
+    if (timer) { clearInterval(timer); timer = null; $("#st-play").textContent = "Play"; return; }
+    if (k === S.length - 1) k = -1;
+    $("#st-play").textContent = "Pause"; go(1);
+    timer = setInterval(() => { if (k >= S.length - 1) { clearInterval(timer); timer = null; $("#st-play").textContent = "Play"; } else go(1); }, 1800);
+  };
+  const w = $("#st"); w.tabIndex = 0;
+  w.addEventListener("keydown", e => { if (e.key === "ArrowRight") { go(1); e.preventDefault(); } if (e.key === "ArrowLeft") { go(-1); e.preventDefault(); } });
+  show();
+})();
+
+// ---------- cycles vs N chart ----------
+(function () {
+  const svg = $("#cn-svg");
+  const N = [16, 64, 256, 1024, 4096], W3 = [4669, 7740, 20018, 69307, 266295], W2 = [4008, 6826, 18364, 64107, 245355];
+  const x0 = 58, x1 = 365, y0 = 215, y1 = 15;
+  const lx = n => x0 + (x1 - x0) * (Math.log10(n) - Math.log10(10)) / (Math.log10(8000) - 1);
+  const ly = c => y0 - (y0 - y1) * (Math.log10(c) - 3) / (Math.log10(400000) - 3);
+  el("line", { x1: x0, x2: x1, y1: y0, y2: y0, class: "stroke", "stroke-width": 1 }, svg);
+  el("line", { x1: x0, x2: x0, y1: y0, y2: y1, class: "stroke", "stroke-width": 1 }, svg);
+  [16, 64, 256, 1024, 4096].forEach(n => { el("text", { x: lx(n), y: y0 + 15, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg).textContent = fmt(n); });
+  el("text", { x: (x0 + x1) / 2, y: y0 + 31, "text-anchor": "middle", "font-size": 11.5 }, svg).textContent = "N (elements)";
+  [1000, 10000, 100000].forEach(c => {
+    el("line", { x1: x0, x2: x1, y1: ly(c), y2: ly(c), class: "line", "stroke-width": 1 }, svg);
+    el("text", { x: x0 - 5, y: ly(c) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = c >= 1000 ? (c / 1000) + "k" : c;
+  });
+  const series = [[W3, 3640, 64.1, "--accent", "WSE-3"], [W2, 3060, 59.0, "--blue", "WSE-2"]];
+  series.forEach(([d, a, b, col, name], si) => {
+    let p = ""; for (let n = 12; n <= 6000; n *= 1.15) p += (p ? " L" : "M") + lx(n).toFixed(1) + " " + ly(a + b * n).toFixed(1);
+    el("path", { d: p, fill: "none", stroke: cssVar(col), "stroke-width": 1.5, "stroke-dasharray": si ? "5 3" : "" }, svg);
+    d.forEach((c, i) => { const m = el(si ? "rect" : "circle", si ? { x: lx(N[i]) - 3.5, y: ly(c) - 3.5, width: 7, height: 7, fill: cssVar(col) } : { cx: lx(N[i]), cy: ly(c), r: 4, fill: cssVar(col) }, svg);
+      const t = el("title", {}, m); t.textContent = `${name}, N=${N[i]}: ${fmt(c)} cycles`; });
+    el("text", { x: x0 + 10, y: y1 + 14 + si * 16, "font-size": 12, fill: cssVar(col), "font-weight": 700 }, svg).textContent = `${si ? "■" : "●"} ${name} ≈ ${fmt(a)} + ${b}·N`;
+  });
+})();
+
+// ---------- Widget 2: measured schedule of program 02 ----------
+(function () {
+  const svg = $("#rc-svg");
+  // on_value() start cycles from sim.log (WSE-3, N=100), with and without the barrier. Measured.
+  const ST = { bar: [1331,1368,1406,1444,1484,1524,1564,1604,1644,1684,1722,1762,1802,1842,1882,1922,1962,2002,2042,2082,2122,2162,2202,2242,2280,2320,2360,2400,2440,2480,2520,2560,2600,2640,2680,2720,2760,2800,2840,2880,2920,2960,3000,3040,3080,3120,3160,3200,3240,3280,3320,3360,3400,3440,3480,3520,3560,3600,3640,3680,3720,3760,3798,3838,3878,3918,3958,3998,4038,4078,4118,4158,4198,4238,4278,4318,4390,4430,4470,4510,4550,4590,4630,4670,4712,4771,4830,4889,4948,5033,5072,5111,5150,5189,5226,5265,5304,5343,5382,5421],
+    nob: [1325,1362,1400,1438,1478,1518,1558,1598,1638,1678,1716,1756,1796,1836,1876,1916,1956,1996,2036,2076,2116,2156,2196,2236,2274,2314,2354,2394,2434,2474,2514,2554,2594,2634,2674,2714,2754,2794,2834,2874,2914,2954,2994,3034,3074,3114,3154,3194,3234,3274,3314,3354,3394,3434,3474,3514,3554,3594,3634,3674,3714,3754,3792,3832,3872,3912,3952,3992,4032,4072,4112,4152,4192,4232,4272,4312,4384,4424,4464,4504,4544,4584,4624,4664,4706,4765,4824,4883,4942,5001,5060,5119,5178,5266,5502,5598,5694,5790,5886,5953] };
+  // running f32 sum after k values (np.cumsum of rng(1).uniform(-10,10,100)); device matches it exactly
+  const CS = [0.236432,9.24571,2.1289,11.1019,7.33852,5.80504,12.3591,10.5431,11.535,2.08613,7.1564,7.91926,4.5139,10.2825,6.34637,5.41633,-1.90284,-3.84058,-9.77148,-14.5252,-9.51792,-13.9097,-14.2059,-4.59118,4.64197,9.13777,9.9623,5.50013,-1.28683,8.11168,8.43305,0.75036,3.22015,8.75382,11.0139,19.3598,10.1517,10.7235,9.9102,1.15719,3.98375,11.0364,12.8952,8.09718,14.8948,15.0847,15.3025,20.3631,13.3215,19.7141,23.3798,29.1218,22.9541,29.0014,22.8278,14.4589,21.5634,28.7891,36.3198,35.758,31.239,21.3808,24.2953,28.6935,35.4048,31.0424,25.3468,28.1334,34.2345,43.5079,36.5184,36.1626,44.057,42.5113,44.3013,34.7912,38.2604,46.6421,53.1786,60.889,64.0961,59.0072,64.3775,58.611,65.2365,56.4909,63.0006,56.2908,53.7937,50.1285,53.9552,47.5267,45.4518,35.5683,30.818176,29.242,21.3604,24.0236,21.6321,26.137941];
+  const RUN = {
+    bar: { h2d: [236, 4709], blk: [4987, 5460], reads: [[5876, "stats[0] sum"], [5936, "stats[1]"], [5996, "stats[2]"], [6056, "stats[3]"], [6885, "count"]], end: 7068 },
+    nob: { h2d: [235, 4703], blk: null, reads: [[5539, "stats[0] sum"], [5635, "stats[1]"], [5731, "stats[2]"], [5827, "stats[3]"], [7777, "count"]], end: 8021 },
+  };
+  const x0 = 120, x1 = 745, TM = 8100, X = c => x0 + (x1 - x0) * c / TM;
+  const rows = [["memcpy_h2d", "(stream)", 40], ["on_value()", "tasks", 100], ["host · cmd", "stream", 165]];
+  rows.forEach(([a, b, y]) => {
+    el("text", { x: 8, y: y + 2, "font-size": 12, "font-weight": 700 }, svg).textContent = a;
+    el("text", { x: 8, y: y + 16, "font-size": 11, class: "muted" }, svg).textContent = b;
+    el("line", { x1: x0, x2: x1, y1: y + 22, y2: y + 22, class: "line" }, svg);
+  });
+  [0, 2000, 4000, 6000, 8000].forEach(c => el("text", { x: X(c), y: 222, "text-anchor": "middle", "font-size": 10.5, class: "muted" }, svg).textContent = fmt(c));
+  el("text", { x: x1, y: 240, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = "simulated cycles (WSE-3, N = 100, measured)";
+  const dyn = el("g", {}, svg);
+  const cur = el("line", { x1: 0, x2: 0, y1: 22, y2: 210, class: "s-acc", "stroke-width": 2 }, svg);
+  let mode = "bar";
+  function draw() {
+    dyn.innerHTML = "";
+    const R = RUN[mode], st = ST[mode];
+    el("rect", { x: X(R.h2d[0]), y: 32, width: X(R.h2d[1]) - X(R.h2d[0]), height: 22, rx: 3, class: "pur", "stroke-width": 1 }, dyn);
+    el("line", { x1: X(R.h2d[1]), x2: X(R.h2d[1]), y1: 26, y2: 128, class: "s-pur", "stroke-width": 1.5, "stroke-dasharray": "3 2" }, dyn);
+    const done84 = st.filter(c => c < R.h2d[1]).length;
+    el("text", { x: X(R.h2d[1]) + 4, y: 28, "font-size": 11 }, dyn).textContent = `H2D "done" @${fmt(R.h2d[1])}: ${done84}/100 run`;
+    st.forEach((c, i) => el("rect", { x: X(c) - 0.6, y: 90, width: 1.4, height: 22, class: "f-amb", "data-i": i }, dyn));
+    if (R.blk) {
+      el("rect", { x: X(R.blk[0]), y: 157, width: X(R.blk[1]) - X(R.blk[0]), height: 22, rx: 3, class: "red", "stroke-width": 1 }, dyn);
+      el("text", { x: X(R.blk[0]) - 4, y: 172, "font-size": 11, "text-anchor": "end" }, dyn).textContent = "wait_done: BLK";
+    }
+    R.reads.forEach(([c, t], i) => {
+      el("path", { d: `M${X(c)} 186 l-4 -8 h8 z`, class: "f-grn" }, dyn);
+      if (i === 0 || i === 4) el("text", { x: X(c), y: 200, "font-size": 10.5, "text-anchor": "middle" }, dyn).textContent = t;
+    });
+  }
+  function upd() {
+    const t = +$("#rc-t").value, R = RUN[mode], st = ST[mode];
+    $("#rc-to").textContent = fmt(t);
+    cur.setAttribute("x1", X(t)); cur.setAttribute("x2", X(t));
+    const k = st.filter(c => c <= t).length;
+    const done = (c) => st.filter(s => s < c).length;
+    let s = `cycle ${fmt(t)}: ${k} of 100 on_value() tasks have started; running sum = ${k ? CS[k - 1] : 0}\n`;
+    if (t < R.h2d[1]) s += "memcpy is still streaming; the host waits in memcpy_h2d().";
+    else if (R.blk && t < R.blk[0]) s += "memcpy_h2d() has returned; the host has sent launch('wait_done').";
+    else if (R.blk && t < R.blk[1]) s += `stream BLOCKED by wait_done (count was ${done(R.blk[0])} < 100): reads must wait.`;
+    else if (t < R.reads[0][0]) s += "the host's memcpy_d2h(stats) command is being decoded.";
+    else {
+      const kk = done(R.reads[0][0]), k2 = done(R.reads[1][0]);
+      s += `host read sum after ${kk} values = ${CS[kk - 1]}  (expected 26.137941)` + (kk < 100 ? `  ✗\nsum of squares read after ${k2} values; count read at ${fmt(R.reads[4][0])} shows ${done(R.reads[4][0])}` : "  ✓");
+    }
+    $("#rc-out").textContent = s;
+  }
+  $("#rc-bar").onchange = e => { mode = e.target.checked ? "bar" : "nob"; draw(); upd(); };
+  $("#rc-t").oninput = upd;
+  let timer = null;
+  $("#rc-play").onclick = () => {
+    if (timer) { clearInterval(timer); timer = null; $("#rc-play").textContent = "Play"; return; }
+    const r = $("#rc-t"); if (+r.value >= 8000) r.value = 1000;
+    $("#rc-play").textContent = "Pause";
+    timer = setInterval(() => { r.value = +r.value + 40; upd(); if (+r.value >= 8100) { clearInterval(timer); timer = null; $("#rc-play").textContent = "Play"; } }, 40);
+  };
+  draw(); upd();
 })();
 </script>
 </body>

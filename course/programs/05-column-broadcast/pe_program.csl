@@ -5,6 +5,13 @@ param bcast: color;
 
 const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
 
+// Kernel timer, as in program 03: 48-bit TSC stamps at go() and at completion.
+const tsc = @import_module("<time>");
+var t_start = @zeros([tsc.tsc_size_words]u16);
+var t_end   = @zeros([tsc.tsc_size_words]u16);
+var t_start_ptr: [*]u16 = &t_start;
+var t_end_ptr:   [*]u16 = &t_end;
+
 var x: [M]f32;      // root: source vector; others: received copy
 var y: [M]f32;      // result y = s * x
 var s = [1]f32 { 0.0 };
@@ -25,15 +32,23 @@ const recv_done: local_task_id = @get_local_task_id(10);
 const send_done: local_task_id = @get_local_task_id(11);
 
 task t_recv() void {               // x has fully arrived
+  tsc.get_timestamp(&t_end);
   @fmuls(y_dsd, x_dsd, s[0]);      // y = x * s
   sys_mod.unblock_cmd_stream();
 }
 task t_send() void {               // root: broadcast is out
+  tsc.get_timestamp(&t_end);
   @fmuls(y_dsd, x_dsd, s[0]);
   sys_mod.unblock_cmd_stream();
 }
 
+fn start_timer() void {            // launched first, so every PE resets together
+  tsc.enable_tsc();
+  sys_mod.unblock_cmd_stream();
+}
+
 fn go() void {
+  tsc.get_timestamp(&t_start);
   if (is_root) {
     @fmovs(out_dsd, x_dsd, .{ .async = true, .activate = send_done });
   } else {
@@ -53,4 +68,7 @@ comptime {
   @export_symbol(y_ptr, "y");
   @export_symbol(s_ptr, "s");
   @export_symbol(go);
+  @export_symbol(start_timer);
+  @export_symbol(t_start_ptr, "t_start");
+  @export_symbol(t_end_ptr, "t_end");
 }
