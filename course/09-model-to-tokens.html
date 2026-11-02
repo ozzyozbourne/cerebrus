@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>From Model to Tokens</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .seg button { font: 600 13px var(--sans); padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .seg .lbl { font-size: 14px; color: var(--muted); margin-right: 2px; }
+  .note { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
+  .steps li { margin: 6px 0; }
+  .halo { paint-order: stroke; stroke: var(--surface); stroke-width: 3.5px; stroke-linejoin: round; }
+  .callout ul { margin: 6px 0; padding-left: 20px; }
+  .callout ol { margin: 6px 0; padding-left: 22px; }
+  .widget .controls + .controls { margin-top: 0; }
+  .kgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 16px; margin: 10px 0; font-size: 14px; }
+  .kgrid label { display: flex; align-items: center; gap: 6px; }
+  .kgrid input[type=range] { width: 110px; accent-color: var(--accent); }
+  .kgrid .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border); flex: none; }
+  pre.formula { font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 9 · Part II · The machine</div>
+<h1>From model to tokens: compiling and serving on wafers</h1>
+<p class="lede">Chapter 8 showed the two ways Cerebras gets past the 44 GB of SRAM on one wafer: stream the weights through it, or pin them across several wafers. This chapter follows a model the rest of the way: how a compiler turns its graph into rectangles of PEs, how pinned layers become a decode pipeline, what one token's ~0.5 ms is plausibly made of, and why the same four CS-3s went from 450 to 2,100 tokens per second.</p>
+
+<div class="objectives">
+<h4>After this chapter you can</h4>
+<ul>
+<li>Describe the compile path (extract → match → size, place and route → link) and explain why placing kernels is a floorplanning problem whose slowest rectangle sets the throughput.</li>
+<li>Contrast the two compile targets (weight streaming and the layer pipeline), and explain how an inference wafer runs a model as a pipeline of regions, where the KV cache lives, and why per-user speed and total throughput are different numbers.</li>
+<li>Build a per-token decode latency budget from this course's measured constants, say which parts are derived and which are guessed, and check it against the published 476 µs per token.</li>
+<li>Compute the expected speedup of speculative decoding from the acceptance rate, and explain why a layer pipeline makes verification cheap for one user but not free for the system.</li>
+<li>Explain what mixture-of-experts, 4-bit weights, disaggregated prefill and sparsity do on a wafer, and attribute each jump in the speed history to a mechanism, where the sources allow.</li>
+</ul>
+</div>
+
+<div class="callout warn">
+<strong>What is public, and what is not</strong>
+Cerebras's ML compiler and its production inference kernels are closed. The primary sources are a few talks and blogs: the ISPD 2020 placement contest slides, Hot Chips 2022 and 2024, the weight-streaming white paper, and product blogs. Everything below that goes beyond them is labelled <span class="tag derived">Derived</span> (arithmetic on published or measured numbers) or <span class="tag unv">Unverified</span>. The decode budget in particular is a model built from this course's own simulator measurements, not a description of Cerebras's kernels.
+</div>
+
+<h2 id="compile">The compile path: from a graph to rectangles</h2>
+<p>Cerebras's clearest public account of its compiler is in the slides it presented when it set the <strong>ISPD 2020 placement contest</strong>: a public challenge, run with the International Symposium on Physical Design, to place neural networks on the CS-1 <span class="tag vendor">Vendor</span> (<a href="https://ispd.cc/ispd2026/slides/2020/ISPD_Contest_Closing_Session.pdf">ISPD 2020 contest closing session</a>). They describe a four-stage stack:</p>
+
+<figure>
+<svg id="cp" viewBox="0 0 760 170" width="760" role="img" aria-label="Compile pipeline: framework graph, extract, match, place and route, link, executable"></svg>
+<figcaption><b>The compile path, as Cerebras drew it in 2020.</b> TensorFlow was the front end then (via XLA into Cerebras's "LAIR" graph IR); the current stack takes PyTorch. The stage names and their one-line definitions are from the ISPD 2020 slides <span class="tag vendor">Vendor</span>. A Hot Chips 2020 live blog summarises the same talk as "extract compute graph, create a graph in the WSE format, route kernels on the fabric, then create executable", with hand-optimised kernels that "can be resized as needed" <span class="tag indep">Press, AnandTech live blog, via search extract</span> (<a href="https://www.anandtech.com/show/16006">anandtech.com/show/16006</a>; the page itself was not reachable from this session).</figcaption>
+</figure>
+
+<ol class="steps">
+<li><strong>Extract.</strong> "Convert TF via XLA to Cerebras graph IR." The model becomes a graph of operations.</li>
+<li><strong>Match.</strong> "Obtain graph covering of Cerebras graph with Cerebras kernels." Each group of operations is replaced by a hand-written kernel from a library. A kernel is a parameterised spatial program, much like the CSL programs of Part III.</li>
+<li><strong>Place &amp; route.</strong> "Assign kernels to WSE regions and connect them up." Each kernel gets a rectangle of PEs, and the compiler picks fabric routes (Chapter 4's colors) between rectangles.</li>
+<li><strong>Link.</strong> "Create executable output."</li>
+</ol>
+<p>Step 3 is the interesting one, because the wafer gives the compiler "freedom to pick and choose size (# cores) and location" for every kernel <span class="tag vendor">Vendor</span>. The slides frame it as a global optimisation. The variables are the area and location of each kernel. The constraints are to fit compute within the cores, fit memory within the SRAMs, and reduce communication. The objectives are to "maximize throughput, utilization" and "minimize latency". And it must "compile in seconds to compete with CPU/GPUs".</p>
+
+<h3>One layer, many shapes</h3>
+<p>Each layer is "a program with nested loops", and parallelising it means mapping some of those loops onto the 2-D mesh. The contest gave teams the cost model for a convolution kernel. Its free variables are the <em>splits</em> h′, w′, c′, k′: how many ways the image height, width, input channels and output channels are cut <span class="tag vendor">Vendor</span>:</p>
+<pre class="formula"><code>convperf(H, W, R, S, C, K; h', w', c', k'):
+  height = h'·w'·(k'+1)                     rectangle rows
+  width  = 3·c'                             rectangle columns
+  time   = ⌈H/h'⌉·⌈W/w'⌉·⌈C/c'⌉·⌈K/k'⌉·R·S    Δt, cycles per sample
+  memory = (C/c')·(K/k')·R·S + ((W+S−1)/w')·((H+R−1)/h')·(K/k')   per core</code></pre>
+<p>Double the splits and the rectangle gets bigger, Δt halves and the per-core memory roughly halves: the slide's example takes a 6×6 split to 6×12 for "½ Δt" and "~½ memory". The whole network is a pipeline of these rectangles, and <strong>"overall Δt is the max of the layer's Δt"</strong>: the slowest rectangle sets the rate for everything. Two more costs come from the joins. Wire length approximates fabric congestion between layers ("L1 distance between layers"). An <em>adapter</em> is needed when one layer's output split does not match the next layer's input split (h = 6 feeding h = 12, say), and it costs extra area. The contest score was a weighted sum of pipeline time, wire length, adapter cost and optimizer runtime, subject to the memory limit, non-overlapping rectangles and the total wafer size. Cerebras called it "a simplified version of our commercial objective function" <span class="tag vendor">Vendor</span>.</p>
+<p>The contest had 20 benchmark graphs (ResNet-like vision models, U-Net-like scientific ones, language models), each scored at two weightings. A CUHK team, RippleWafer, won. Their lesson was that "conventional floorplanning methods may not be suitable" and that "how to determine best kernel shapes efficiently is the key". Their final method searched for the smallest achievable Δt, generated the legal shapes that met it for each kernel, then placed them in rows that follow the graph's topology. On one benchmark that cut wire length from 2,080 to 562, against simulated annealing, for an 8% worse Δt <span class="tag vendor">Vendor, team slide</span>. Follow-up work, CU.POKer, was published in IEEE TCAD (<a href="https://aminer.org/pub/62d16af05aee126c0fd027f0/cu-poker-placing-dnns-on-wse-with-optimal-kernel-sizing-and-efficient">abstract</a>) <span class="tag indep">Indep</span>.</p>
+
+<div class="widget" id="kp">
+<h4>Place the layers: the slowest rectangle sets the pace</h4>
+<p class="hint">A toy 6-layer network on a 48 × 24-core fabric. Each kernel is 12 cores tall; its slider sets its width in columns, so its area. Δt = work ÷ cores, and the pipeline runs at the largest Δt. The memory a layer needs sets a minimum width. Kernels are packed in two shelves, snaking left to right and then back, so that consecutive layers stay adjacent. Shuffle the order to see the wire length grow. This is a simplified version of the contest's cost model, not Cerebras's; the work and memory numbers are illustrative.</p>
+<div class="controls">
+<div class="seg" id="kp-mode"><span class="lbl">Sized for</span><button type="button" data-v="0" aria-pressed="true">compute (CS-1 training)</button><button type="button" data-v="1">memory (pinned inference)</button></div>
+</div>
+<div class="kgrid" id="kp-sl"></div>
+<div class="controls">
+<button class="btn" id="kp-bal" type="button">Balance Δt</button>
+<button class="btn secondary" id="kp-eq" type="button">Equal widths</button>
+<button class="btn secondary" id="kp-shuf" type="button">Shuffle order</button>
+<button class="btn secondary" id="kp-topo" type="button">Graph order</button>
+</div>
+<svg id="kp-svg" viewBox="0 0 720 330" width="720" role="img" aria-label="Kernel rectangles placed on a 48 by 24 fabric"></svg>
+<div class="readout" id="kp-out" aria-live="polite"></div>
+</div>
+
+<p>Two things carry over to everything later in the chapter. First, <strong>balance</strong>: a pipeline is only as fast as its slowest stage, so the compiler spends area where the work is. Second, <strong>sizing by memory</strong>: switch the widget to "pinned inference" and each layer's weights must fit in its own rectangle's SRAM. The minimum widths then use most of the wafer, and little freedom is left to balance. Hot Chips 2024 says the same of inference regions: their size is "determined based on memory and compute requirements" <span class="tag vendor">Vendor</span>.</p>
+
+<h2 id="targets">Two compile targets, one graph</h2>
+<p>The 2020 stack compiled for the <strong>layer-pipelined</strong> mode of Chapter 8: every layer resident at once, each in its own rectangle. Weight streaming (2021) changed the target: "the compiler maps one kernel (layer) at a time onto the entire WSE, first for the forward pass and then for the backward pass" <span class="tag vendor">Vendor</span> (training docs). Pinned-weight inference (2024) went back to rectangles, now sized to hold weights and KV cache.</p>
+<div class="table-wrap"><table>
+<tr><th></th><th>Weight streaming (training)</th><th>Layer pipeline (CS-1 training; inference since 2024)</th><th>CSL SDK (this course)</th></tr>
+<tr><td>What is placed</td><td>one layer's kernel, over the whole wafer</td><td>every layer at once, each as a region</td><td>your own kernels, rectangles you choose</td></tr>
+<tr><td>Region size set by</td><td>the whole wafer; batch fills it</td><td>compute (training) or weights + KV + compute (inference)</td><td><code>@set_rectangle</code>, <code>@set_tile_code</code> (Chapter 10)</td></tr>
+<tr><td>What crosses the wafer edge</td><td>weights in, gradients out (MemoryX, SwarmX)</td><td>activations only, between wafers</td><td>host memcpy (Chapter 7)</td></tr>
+<tr><td>Hard limit</td><td>activations of the batch must fit</td><td>all weights (and KV) must fit across the wafers</td><td>~44 KB per PE of user data on WSE-3 (Chapter 10)</td></tr>
+<tr><td>Who places</td><td>compiler, same mapping on every system</td><td>compiler</td><td>you, by hand</td></tr>
+</table></div>
+<p class="note">Rows for the two Cerebras modes <span class="tag vendor">Vendor</span> (white paper, training docs, HC2024). The SDK column is from the SDK 2.10.1 docs and Chapter 10's measurements <span class="tag sdk">SDK 2.10.1</span>.</p>
+
+<h2 id="pipeline">The inference pipeline</h2>
+<p>Inference flips the trade. Decode is bandwidth-bound (Chapter 1), so the winning move is to keep every weight in SRAM and never fetch it: "we don't need to access external memory to load parameters because they're already there" <span class="tag vendor">Vendor</span>. The cost is capacity. Besides the weights, decode keeps a <strong>KV cache</strong> (Chapter 1): the attention keys and values of every earlier token, one copy per sequence, growing with context length. On a GPU it lives in HBM. On Cerebras it must fit in whatever SRAM the weights leave free. Llama 3.1-70B needs about 140 GB at 16-bit <span class="tag derived">Derived</span>, so at launch in August 2024 its 80 layers were spread across <strong>four CS-3 systems</strong>, each holding a contiguous block of 20 layers, with only activations passing between wafers <span class="tag vendor">Vendor</span> (Hot Chips 2024).</p>
+<p>Hot Chips 2024 describes the mapping directly <span class="tag vendor">Vendor</span>:</p>
+<ul>
+<li><strong>The opposite of a GPU.</strong> "GPU: multiple chips to run a single layer. Cerebras: fraction of a chip to run a single layer."</li>
+<li><strong>Regions.</strong> "Model layers are mapped to wafer regions", with "model weights and KV cache stored locally in the region memory close to the compute".</li>
+<li><strong>One token per stage.</strong> "Each wafer region processes 1 token": a matrix × vector at local batch 1. "Regions are placed to reduce latency": the next region is "physically adjacent", and the "last region output [is] cycled back to generate next token". That loop is the autoregressive decode of Chapter 1.</li>
+<li><strong>Many users fill the pipe.</strong> "Single user is using only a fraction of the total memory bandwidth", so other users' tokens occupy the other stages at the same moment, and "every user gets full performance".</li>
+<li><strong>Prefill.</strong> "Prompt tokens can be processed in parallel": several of one user's prompt tokens are in the pipe at once, one stage behind another.</li>
+<li><strong>Across wafers.</strong> "Keep almost all high communication on wafer… Transfer only activations between wafers", over CS-3's "low latency RDMA over Ethernet". Llama 3.1-8B (16 GB) fits on one wafer.</li>
+</ul>
+
+<div class="widget" id="pd">
+<h4>Pipeline decode: one user versus many</h4>
+<p class="hint">Llama 3.1-70B on four CS-3s, drawn as 20 stages of 4 layers each (the real pipeline has 80 layer regions). Each dot is one user's current token. The chart below records which stage held which user at each tick. Pick how many users are in flight and press Play.</p>
+<div class="controls">
+<button class="btn" id="pd-play" type="button">Play</button>
+<button class="btn secondary" id="pd-step" type="button">Step</button>
+<button class="btn secondary" id="pd-reset" type="button">Reset</button>
+<div class="seg" id="pd-u"><span class="lbl">Users in flight</span><button type="button" data-v="1" aria-pressed="true">1</button><button type="button" data-v="2">2</button><button type="button" data-v="4">4</button><button type="button" data-v="10">10</button><button type="button" data-v="20">20</button></div>
+</div>
+<svg id="pd-svg" viewBox="0 0 760 380" width="760" role="img" aria-label="Four wafers as a 20-stage decode pipeline, with a stage-occupancy timeline"></svg>
+<div class="readout" id="pd-out" aria-live="polite"></div>
+</div>
+<p>This is <strong>pipeline parallelism</strong>. A single sequence's token visits the regions in order, so at any moment only one region of one wafer is working on it. The rest are kept busy only when other sequences are in flight. Adding users raises total throughput without slowing anyone, until the pipe is full or the KV cache runs out of SRAM. At 2,100 tok/s, one token's full trip through all four wafers takes about <b>476 µs</b> <span class="tag derived">Derived</span>. The even 20-layer split is shown on the Hot Chips 2024 slide <span class="tag vendor">Vendor</span>; ~35 GB of weights per wafer follows from it <span class="tag derived">Derived</span>, though the embedding and output layers make the real split slightly uneven.</p>
+
+<div class="callout">
+<strong>Worked example: the inter-wafer budget</strong>
+<ul>
+<li>Per token, the data crossing each wafer boundary is one activation vector: Llama-70B's hidden size of 8,192 <span class="tag vendor">Vendor</span> (Meta's model config) × 2 B ≈ <b>16 KB</b> <span class="tag derived">Derived</span>.</li>
+<li>HC2024: "CS-3 IO is &lt;5us; 4 hops required; &lt;1% impact to latency" <span class="tag vendor">Vendor</span>. The four hops are three wafer-to-wafer hops plus the return trip.</li>
+<li>At 450 tok/s (launch), one token takes 2.2 ms. Four hops at 5 µs add 20 µs, about <b>0.9%</b>. At 2,100 tok/s the same 20 µs is about <b>4%</b> <span class="tag derived">Derived</span>. That is one reason CS-4 cuts the hop to "as low as 2 microseconds" <span class="tag vendor">Vendor</span>.</li>
+<li>Bandwidth: HC2024 budgets 100 Gb/s of CS-3's 1.2 Tb/s, "&lt;10% of available" <span class="tag vendor">Vendor</span>. One user at 2,100 tok/s moves only about 34 MB/s per boundary <span class="tag derived">Derived</span>; the headroom is for many users and prefill.</li>
+</ul>
+</div>
+
+<h3>KV-cache arithmetic: what limits users and context</h3>
+<p>For Llama-3-70B (80 layers, 8 KV heads of width 128 <span class="tag vendor">Vendor</span>, Meta config), the KV cache per token is 80 × 8 × 128 × 2 (K and V) × 2 B = <b>327,680 B ≈ 0.33 MB</b> <span class="tag derived">Derived</span>, the same figure as Chapter 1. Four wafers hold 176 GB. Take away 140 GB of weights and ~36 GB is left. Even if all of it held KV and none held activations or code, that is about <b>110,000 tokens of context in total across all users</b>: roughly 13 users at 8K context, or less than one user at 128K <span class="tag derived">Derived</span>. On the GPU side the same KV cache sits in HBM next to the weights. This is why Hot Chips 2024 lists "KV cache optimizations" among the next techniques <span class="tag vendor">Vendor</span>, and why long-context deployments such as Llama 3.1-405B at 128K need many wafers.</p>
+
+<div class="widget" id="cap">
+<h4>How many wafers, and how fast can it possibly decode?</h4>
+<p class="hint">Weights and KV cache pinned in SRAM (44 GB per WSE-3), compared with the HBM of H100s and B200s. KV assumes Llama-3 shapes (8 KV heads × 128, stored at 16-bit). Layer counts for sizes between the presets are interpolated, so treat those as illustrative. The bound is bandwidth ÷ bytes read per decode step (all weights plus every user's KV). For GPUs it assumes tensor parallelism, with every device working on every layer. For the wafer it follows the region mapping, where one user's token is in one layer region at a time, so it divides the aggregate by the number of layers. It ignores compute, collectives, hops, MoE and speculative decoding. Device figures: WSE-3 44 GB and 21 PB/s; H100 80 GB and 3.35 TB/s; B200 192 GB and ~8 TB/s <span class="tag vendor">Vendor</span>. The kernel rate is this chapter's measured f16 GEMV. Red marks are published Cerebras speeds (16-bit presets only). All outputs <span class="tag derived">Derived</span>.</p>
+<div class="controls">
+<div class="seg" id="p-pre"><span class="lbl">Model</span><button type="button" data-v="8">8B</button><button type="button" data-v="70" aria-pressed="true">70B</button><button type="button" data-v="120">120B</button><button type="button" data-v="405">405B</button><button type="button" data-v="1000">1T</button></div>
+</div>
+<div class="controls">
+<label>Params <input type="range" id="p-n" min="0" max="3" step="0.01" value="1.845" aria-label="Parameters, log scale"> <span id="p-nv" class="mono"></span></label>
+<label>Weights <select id="p-b"><option value="2">16-bit</option><option value="1">8-bit</option><option value="0.5">4-bit</option></select></label>
+<label>Context <select id="p-c"><option value="1024">1K</option><option value="8192" selected>8K</option><option value="32768">32K</option><option value="131072">128K</option></select></label>
+<label>Users <input type="range" id="p-u" min="1" max="64" step="1" value="1"> <span id="p-uv" class="mono"></span></label>
+</div>
+<svg id="p-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Devices needed"></svg>
+<svg id="p-bw" viewBox="0 0 680 210" width="680" role="img" aria-label="Decode speed bound per user, log scale"></svg>
+<div class="readout" id="p-out" aria-live="polite"></div>
+</div>
+
+<h2 id="budget">A decode latency budget</h2>
+<p>Chapter 8 ended with "the sources do not break this down". They still do not, but this course has measured most of the ingredients in the simulator. Below is a bounded estimate of one token's trip through Llama 3.1-70B on four CS-3s. It is built from those constants and a simple, explicit model of the mapping. Treat it as an engineering estimate, not a reverse-engineering of Cerebras's kernels.</p>
+
+<h3>The model</h3>
+<ol class="steps">
+<li><strong>Regions.</strong> One region per layer, 20 per wafer, so ~45,000 PEs per region, about 212 × 212 <span class="tag derived">Derived</span>. Every PE in a region holds a slice of all of that layer's matrices (Q, K, V, O, and the three FFN matrices) and joins in each matrix-vector product in turn. This follows HC2024's "fraction of a chip to run a single layer" and Hot Chips 2022's GEMM mechanism (Chapter 8) <span class="tag unv">Unverified mapping</span>.</li>
+<li><strong>Weights per PE.</strong> 140 GB ÷ (4 × 900,000 PEs) ≈ <b>38.9 KB</b> per PE, about 81% of each 48 KB SRAM <span class="tag derived">Derived</span>. That leaves ~9 KB per PE for KV cache, code and buffers, matching the ~36 GB above.</li>
+<li><strong>GEMV time per layer.</strong> Each PE streams its 38.9 KB of weights once per token, at the measured rate below.</li>
+<li><strong>Collectives per layer.</strong> Each of the layer's four sequential matrix-vector stages (QKV, O, gate/up, down) needs the input vector broadcast across the region and partial sums reduced across it. That is about 8 collectives, each spanning ~212 hops, at Chapter 4's and Lab 2's measured cycles per hop.</li>
+<li><strong>Attention.</strong> Reading the user's KV cache for this layer: 4,096 B per context token (8 heads × 128 × K and V × 2 B), spread over the region's PEs, at the same streaming rate <span class="tag derived">Derived</span>.</li>
+<li><strong>Hops.</strong> Four wafer hops at &lt;5 µs (CS-3) <span class="tag vendor">Vendor</span>.</li>
+</ol>
+
+<div class="callout ok">
+<strong>Experiment: a decode-like GEMV on one PE, f32 and f16, measured this session</strong>
+<p>The kernel is adapted from the SDK benchmark <code>benchmarks/single-tile-matvec</code> <span class="tag sdk">SDK 2.10.1</span>. One PE holds an N × N tile and computes y += A[:, j] · x[j] for every column j, one <code>@fmacs</code> (f32) or <code>@fmach</code> (f16) per column, under <code>@map</code>. The A and y streams are offset by one word to avoid the bank clash of note 22. It was timed with the on-tile TSC, on a 1 × 1 rectangle in the simulator <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>Kernel</th><th>Weight bytes</th><th>WSE-3 cycles</th><th>WSE-3 B/cycle</th><th>WSE-2 cycles</th><th>WSE-2 B/cycle</th></tr>
+<tr><td>f32, N = 100</td><td>40,000</td><td>10,147</td><td>3.94</td><td>10,153</td><td>3.94</td></tr>
+<tr><td>f32, N = 50</td><td>10,000</td><td>2,698</td><td>3.71</td><td>2,700</td><td>3.70</td></tr>
+<tr><td>f16, N = 140</td><td>39,200</td><td><b>5,228</b></td><td><b>7.50</b></td><td>10,271</td><td>3.82</td></tr>
+<tr><td>f16, N = 70</td><td>9,800</td><td>1,394</td><td>7.03</td><td>2,637</td><td>3.72</td></tr>
+</table></div>
+<p>The f32 result reproduces Chapter 8's benchmark run (10,160 cycles). In f16, WSE-3 streams weights about twice as fast, matching its ~4 f16 multiply-accumulates per cycle (note 22), while WSE-2 gains nothing. The f16 N = 140 tile is 39.2 KB, almost exactly the 38.9 KB per PE above, so <b>one layer's weights take ~5,200 cycles to stream</b>. At the SDK's assumed 850 MHz that is 6.1 µs <span class="tag derived">Derived</span>. No WSE-3 clock is published; WSE-2 runs at 1.1 GHz (HC22) <span class="tag vendor">Vendor</span>.</p>
+</div>
+
+<p>Now the budget. 2,100 tok/s means 476 µs per token, or <b>5.95 µs per layer</b> over 80 layers, which is 5,060 cycles at 850 MHz <span class="tag derived">Derived</span>. The measured GEMV alone takes ~5,200 cycles. So on this model, streaming a region's own weights is not a rounding error. <strong>It is the biggest single term, about the size of the whole per-layer budget</strong>, before any reduction, attention or hop. The model can still fit the published speed in three ways: a WSE-3 clock above 850 MHz; production kernels that beat this naive one; or speculative decoding, which spreads one pass over more than one output token. The sources do not say which of these is true.</p>
+
+<div class="widget" id="lb">
+<h4>One token's trip: a latency budget you can argue with</h4>
+<p class="hint">Llama 3.1-70B on 4 × CS-3 under the region model above. Bars show one target pass (all 80 layers plus the hops), and the time per output token once speculative decoding's accepted tokens per pass are counted. Dashed lines mark the published speeds. Constants are measured in the simulator (GEMV, hops) or vendor figures (wafer hop); the mapping, collective count and clock are assumptions you can change. All outputs <span class="tag derived">Derived</span>.</p>
+<div class="controls">
+<div class="seg" id="lb-pre"><span class="lbl">What-if</span><button type="button" data-v="a">A: reductions through PE compute, no speculation</button><button type="button" data-v="b" aria-pressed="true">B: router-speed collectives, ~2 tokens/pass</button></div>
+</div>
+<div class="controls">
+<label>Clock <input type="range" id="lb-clk" min="0.75" max="1.3" step="0.05" value="0.85"> <span id="lb-clkv" class="mono"></span></label>
+<label>GEMV rate <select id="lb-rate"><option value="7.5" selected>7.5 B/cycle · f16, WSE-3 (measured)</option><option value="3.94">3.94 B/cycle · f32 (measured)</option><option value="24">24 B/cycle · HC22 port peak</option></select></label>
+<label>Context <select id="lb-ctx"><option value="1024">1K</option><option value="8192" selected>8K</option><option value="32768">32K</option><option value="131072">128K</option></select></label>
+</div>
+<div class="controls">
+<label>Collectives / layer <input type="range" id="lb-nc" min="0" max="16" step="1" value="8"> <span id="lb-ncv" class="mono"></span></label>
+<label>Hops / collective <input type="range" id="lb-hops" min="0" max="424" step="4" value="212"> <span id="lb-hopsv" class="mono"></span></label>
+<label>Cycles / hop <select id="lb-cph"><option value="2" selected>2.0 · router hop, WSE-3 (measured)</option><option value="9.2">9.2 · through a PE's compute, WSE-3 (measured)</option><option value="1">1.0 · router hop, WSE-2 (measured)</option></select></label>
+</div>
+<div class="controls">
+<label>Wafer hop <input type="range" id="lb-wh" min="0" max="5" step="0.5" value="5"> <span id="lb-whv" class="mono"></span></label>
+<label>Accepted tokens / pass <input type="range" id="lb-e" min="1" max="4" step="0.1" value="2"> <span id="lb-ev" class="mono"></span></label>
+</div>
+<svg id="lb-svg" viewBox="0 0 700 230" width="700" role="img" aria-label="Stacked latency budget per token"></svg>
+<div class="readout" id="lb-out" aria-live="polite"></div>
+</div>
+
+<p>Things to try. With what-if A, collectives that hop through each PE's compute at 9.2 cycles cost ~15,600 cycles per layer. With no speculation the token then takes about 2 ms, which is near the 450 tok/s of the August 2024 launch. What-if B, with collectives at router speed and about two accepted tokens per pass, lands at ~420 µs per token, in the range of the measured 2,100–2,314 tok/s. Cerebras's October 2024 blog credits "re-written or optimized" "reduce/broadcast" kernels, asynchronous wafer I/O and speculative decoding <span class="tag vendor">Vendor</span>. The budget shows those are the right kind of changes to give a 4.7× gain on the same silicon. It does not show that these were the actual numbers. Two more lessons:</p>
+<ul>
+<li><strong>Hops between wafers are small but not free.</strong> Twenty microseconds is 4% of 476 µs. At CS-4's claimed &gt;4,400 tok/s per user on gpt-oss-120B (227 µs per token), four 5 µs hops would be ~9% of a token, which is why the 2 µs hop matters <span class="tag derived">Derived</span>.</li>
+<li><strong>Context length shows up late.</strong> At 8K tokens, attention adds ~100 cycles per layer. At 128K it adds ~1,500 cycles per layer, comparable to the collectives, and the KV no longer fits in four wafers anyway.</li>
+</ul>
+
+<div class="callout key">
+<strong>Two ceilings, not one: a correction to the bandwidth argument</strong>
+<ul>
+<li><b>Pipe-full ceiling.</b> If every region is busy with a different user, the system reads all 140 GB of weights per "round" at the aggregate rate. Four WSE-3s give 84 PB/s ÷ 140 GB ≈ <b>600,000 tokens/s in total</b> across users at the headline bandwidth <span class="tag derived">Derived</span>.</li>
+<li><b>One-user ceiling.</b> A single user's token is in one region at a time, so it sees only 1/80 of that bandwidth. That gives <b>~7,500 tok/s</b> at the headline 21 PB/s, or about <b>2,000 tok/s</b> at the measured f16 kernel rate of 7.5 B/cycle at 850 MHz <span class="tag derived">Derived</span>. HC2024 says it in words: "single user is using only a fraction of the total memory bandwidth" <span class="tag vendor">Vendor</span>.</li>
+<li>So "decode on the wafer is not bandwidth-bound" is true of the <em>aggregate</em>. For one user, the bound that matters is a region's own SRAM rate, which is within a small factor of the published speeds. That leaves reductions, synchronisation, attention and hops to fill the rest. Earlier chapters' "~18,000 tok/s from the GEMV benchmark" is the four-wafer figure without the 20 sequential regions per wafer. It is a throughput ceiling, not a per-user one.</li>
+<li>A GPU at batch 1 really does use all its bandwidth for one user, through tensor parallelism. One H100 tops out near 3.35 TB/s ÷ 140 GB ≈ 24 tok/s (it cannot even hold the model), eight near 190. The best measured DGX-H100 in HC2024 is 86 tok/s, at "&lt;30% memory bandwidth utilization" <span class="tag vendor">Vendor, citing Artificial Analysis</span>. The wafer still wins per user. Each region streams its 1.75 GB of weights in ~6 µs at the measured kernel rate, about 290 TB/s for one layer, so the whole model takes ~0.5 ms. Eight H100s share 26.8 TB/s across all 140 GB, ~5 ms per token <span class="tag derived">Derived</span>.</li>
+</ul>
+</div>
+
+<h2 id="spec">Speculative decoding on an SRAM machine</h2>
+<p>Speculative decoding (Leviathan, Kalman and Matias, ICML 2023, <a href="https://arxiv.org/abs/2211.17192">arXiv:2211.17192</a>) <span class="tag indep">Indep</span> pairs the big <em>target</em> model with a small, fast <em>draft</em> model:</p>
+<ol class="steps">
+<li>The draft proposes the next <i>k</i> tokens, one at a time (cheap).</li>
+<li>The target runs <em>once</em> over the context plus those <i>k</i> positions and gets its own distribution at each.</li>
+<li>Draft tokens are accepted left to right while they agree (by a rejection-sampling rule that leaves the output distribution exactly the target's). At the first rejection the target's own token is used, and if all <i>k</i> are accepted it adds one more for free.</li>
+</ol>
+<p>If each draft token is accepted independently with probability α, the expected number of tokens produced per target pass is</p>
+<pre class="formula"><code>E[tokens per pass] = (1 − α^(k+1)) / (1 − α)          e.g. α = 0.8, k = 4 → 3.36
+speedup (GPU, Leviathan et al.) = E / (1 + k·c)         c = draft cost ÷ target cost per token</code></pre>
+<p>On a GPU, step 2 is nearly free: batch-1 decode is bandwidth-bound, so a pass over <i>k</i> + 1 positions reads the weights once and does the extra multiply-adds with otherwise idle compute.</p>
+<p><strong>On the wafer that argument fails, and a different one works.</strong> A PE's datapath is balanced against its SRAM ports. Each f16 multiply-accumulate reads a weight and an accumulator and writes the accumulator, so a <i>k</i>-wide pass in one region costs about <i>k</i> times the GEMV time, not ~1×. A naive <i>k</i>-wide version of the kernel above measured 15,028 cycles for <i>k</i> = 2 and 32,110 for <i>k</i> = 4, against 5,648 for <i>k</i> = 1. That is worse than <i>k</i>× because of per-operation set-up, an upper bound rather than a production figure <span class="tag measured">Measured</span>. What saves verification is the <em>pipeline</em>. The <i>k</i> + 1 positions enter one stage behind another, exactly as HC2024's prompt tokens "processed in parallel" do. The first finishes after one full trip and each extra one a single stage-time later. With 80 stages, verifying <i>k</i> = 4 extra positions adds about 4/80 = 5% to the trip <span class="tag derived">Derived</span>, so the per-user speedup is about E ÷ (1 + <i>k</i>/S + <i>k</i>·c). The price moves to the system. Every position, accepted or not, occupies a stage slot that another user could have used. When the pipe is full, output tokens per slot fall from 1 to E ÷ (<i>k</i> + 1).</p>
+
+<div class="widget" id="sd">
+<h4>Speculative decoding: expected speedup</h4>
+<p class="hint">Expected tokens per target pass E = (1 − α<sup>k+1</sup>)/(1 − α) (Leviathan et al. 2023). GPU: a pass over k+1 positions costs about one pass, so speedup = E/(1 + k·c). Wafer pipeline: the k extra positions trail by one stage each, so speedup = E/(1 + k/S + k·c). The dashed curve is the share of pipe slots that turn into output tokens, E/(k+1), which is what a full pipe gives up. Where Cerebras runs its draft model, and its α, are not published; c and α here are inputs. All outputs <span class="tag derived">Derived</span>.</p>
+<div class="controls">
+<label>Acceptance α <input type="range" id="sd-a" min="0.3" max="0.95" step="0.01" value="0.8"> <span id="sd-av" class="mono"></span></label>
+<label>Draft length k <input type="range" id="sd-k" min="1" max="10" step="1" value="4"> <span id="sd-kv" class="mono"></span></label>
+<label>Draft cost c <input type="range" id="sd-c" min="0" max="0.4" step="0.01" value="0.08"> <span id="sd-cv" class="mono"></span></label>
+</div>
+<div class="controls">
+<label>Pipeline stages S <input type="range" id="sd-s" min="1" max="160" step="1" value="80"> <span id="sd-sv" class="mono"></span></label>
+<label>Speed without speculation <input type="number" id="sd-base" min="10" max="10000" step="10" value="1000"> tok/s</label>
+</div>
+<svg id="sd-svg" viewBox="0 0 680 240" width="680" role="img" aria-label="Speedup versus draft length"></svg>
+<div class="readout" id="sd-out" aria-live="polite"></div>
+</div>
+
+<p>What the sources say. Cerebras added speculative decoding in October 2024 and warned that "20% higher or lower than the 2,100 tokens/sec average is normal", which is the signature of a speedup that depends on how predictable the text is <span class="tag vendor">Vendor</span> (<a href="https://www.cerebras.ai/blog/cerebras-inference-3x-faster">blog</a>). Mistral Le Chat's "Flash Answers" ran Mistral Large 2 (123B) at "over 1,100 tokens per second", using "speculative decoding techniques developed in collaboration with researchers at Mistral" <span class="tag vendor">Vendor</span> (<a href="https://www.cerebras.ai/blog/mistral-le-chat">blog, Feb 2025</a>). The Kimi K2.6 deployment credits "custom kernels and speculative decoding" <span class="tag vendor">Vendor</span>. <strong>No Cerebras source quantifies the speedup from speculation alone</strong>, or says which draft model, <i>k</i> or α is used.</p>
+
+<h2 id="moe">Mixture-of-experts, precision and disaggregation</h2>
+<h3>Mixture-of-experts: all resident, few read</h3>
+<p>In a mixture-of-experts (MoE) model, each layer's feed-forward block is split into many <em>experts</em>, and a router picks a few per token. Kimi K2.6 has ~1T parameters with "32 billion parameters active per token" <span class="tag vendor">Vendor</span> (<a href="https://cerebras.ai/blog/which-is-faster-gemini-3-5-flash-or-kimi-k2-6-on-cerebras">Cerebras blog</a>). Llama 4 Maverick (~400B total, 17B active <span class="tag vendor">Vendor, Meta</span>) ran at 2,522 tok/s on Cerebras against 1,038 for a DGX B200 <span class="tag indep">Indep, Artificial Analysis via press release</span> (<a href="https://www.businesswire.com/news/home/20250528123694/en/Cerebras-Beats-NVIDIA-Blackwell-in-Llama-4-Maverick-Inference">May 2025</a>). MoE suits pinned SRAM for two reasons. First, capacity is the hard limit, and every expert must be resident, because the router can pick any of them. Second, per-token traffic is low, because only the chosen experts' regions do work: in the budget above, ~32B active parameters stream like a ~32B dense model's. The cost is routing. Tokens must reach the experts' regions and come back, an all-to-all exchange. On GPUs that traffic crosses NVLink. Cerebras says that for Kimi, "all-to-all communications between layers run entirely using on-wafer network fabric" <span class="tag vendor">Vendor</span> (<a href="https://www.cerebras.ai/blog/cerebras-kimi-k2-Enterprise">May 2026</a>), and that across systems "execution is pipelined to keep high-volume tensor and expert communication within each wafer" <span class="tag vendor">Vendor</span> (Hot Chips 2026 blog). A side effect, by the same logic as the pipeline widget: a token occupies only its experts' regions, so the other experts' PEs sit idle unless other users' tokens route to them <span class="tag derived">Derived</span>.</p>
+
+<h3>Precision: 16-bit originals, then native 4-bit</h3>
+<div class="table-wrap"><table>
+<tr><th>Deployment</th><th>Weights / compute</th><th>Source</th></tr>
+<tr><td>Llama 3.1-70B, Aug–Oct 2024</td><td>"all models continue to use 16-bit original weights"</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Llama 3.1-405B, Nov 2024</td><td>16-bit, 128K context</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Kimi K2.6, May 2026</td><td>"the model's original 4-bit weights while performing computation at 16-bit floating point"</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>GPT-5.6 Sol, Aug 2026</td><td>"not … quantized to lower precision"; same weights and precision as OpenAI's standard endpoint</td><td><span class="tag vendor">Vendor</span></td></tr>
+</table></div>
+<p>The pattern is that Cerebras serves a model at the precision it was released in, and makes a point of saying so. Halving the bytes per weight halves the wafers needed (Kimi at 4-bit: 1T × 0.5 B = 500 GB, so ≥ 12 wafers before KV; press reports quote "approximately 20 CS-3 systems" <span class="tag vendor">Vendor, via press</span>) <span class="tag derived">Derived</span>. In the budget it halves the bytes each PE streams per token. Computing at 16 bits means unpacking 4-bit weights before the multiply-accumulate. How that is done on the PE is not public. HC2024 listed quantization as a future technique for both "speed" and "footprint" <span class="tag vendor">Vendor</span>.</p>
+
+<h3>Disaggregation: prefill elsewhere, decode on the wafer</h3>
+<p>Prefill and decode want different machines. Prefill processes the whole prompt at once, a compute-bound GEMM (Chapter 1). Decode is the latency-bound loop above. Fast decode does not shorten time to first token. CS-4 is marketed with "native support for disaggregated inference": the prompt is processed on another platform (AMD Helios and AWS Trainium are named), and the model state, meaning the KV cache, moves to CS-4 for decode <span class="tag vendor">Vendor</span>. In the KV arithmetic above, a single 8K-context Llama-70B user's cache is ~2.7 GB <span class="tag derived">Derived</span>. That is the payload to move per request, and a reason the 2.4 Tb/s CS-4 wafer I/O matters <span class="tag vendor">Vendor</span>.</p>
+<p>NVIDIA has moved the same way from the other side. After a ~$20B licensing deal with Groq (December 2025), it showed the Groq 3 LPU and LPX rack at GTC 2026 as a decode co-processor next to Vera Rubin NVL72. Each chip has ~500 MB of SRAM at ~150 TB/s, against 22 TB/s of HBM4 per Rubin GPU. Rubin handles prefill and decode attention, and the LPUs run the decode feed-forward and MoE layers; NVIDIA calls this "Attention-FFN disaggregation" <span class="tag indep">Press</span> (<a href="https://www.tomshardware.com/tech-industry/semiconductors/nvidias-20-billion-groq-deal-produces-its-first-chip">Tom's Hardware</a>; <a href="https://www.servethehome.com/decoding-the-future-of-inference-at-nvidia-groq-lpus-join-vera-rubin-platform-for-low-latency-inference/">ServeTheHome</a>). Reports give the rack as 128 or 256 LPUs <span class="tag unv">Unverified</span>, and say the Rubin CPX prefill part was set aside <span class="tag unv">Unverified</span>. The comparison is the reticle argument of Chapter 2 again. Many 0.5 GB SRAM chips (a 1T-parameter model at 4-bit needs about a thousand) against 44 GB wafers (about a dozen) <span class="tag derived">Derived</span>.</p>
+
+<h2 id="sparsity">What sparsity does in practice</h2>
+<p>The wafer's "native unstructured sparsity" is real hardware. In weight streaming, a zero weight is never sent, so it is never computed: "sparse GEMM is one AXPY per non-zero weight" (Hot Chips 2022, Chapter 8) <span class="tag vendor">Vendor</span>. Chapter 3's data-triggered FMAC is the reason it costs nothing to skip. But it was a <em>training</em> claim, and the sparse petaflop headlines (125 PF for CS-3, Chapter 2) assume it. Production inference runs dense 16-bit or native 4-bit weights, as the table above shows. No Cerebras serving announcement claims weight sparsity, and HC2024 lists sparsity only as a future technique <span class="tag vendor">Vendor</span>. With pinned weights there is a structural reason too. A sparse weight stored as a 16-bit value plus a 16-bit index (the MemoryX working-copy format of Chapter 8) takes 4 B per non-zero instead of 2 B. Below 50% sparsity it costs SRAM rather than saving it <span class="tag derived">Derived</span>. So the sparse PF figures say nothing about dense LLM serving.</p>
+
+<h2 id="history">The speed history, explained</h2>
+<div class="table-wrap"><table>
+<tr><th>When · model · result</th><th>Configuration, and what made the jump</th><th>Tag</th></tr>
+<tr><td>Aug 2024 · Llama 3.1-8B 1,800 tok/s; 70B 450 tok/s</td><td>8B on one CS-3, 70B on four; 16-bit. The first implementation "utilized only a fraction of its peak bandwidth, compute, and IO capacity". In the budget, this is what-if A territory</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Oct 2024 · Llama 3.1-70B · 2,100 tok/s</td><td>Same hardware, 4.7× <span class="tag derived">Derived</span>. "Re-written or optimized" MatMul, reduce/broadcast, element-wise and activation kernels; wafer I/O "asynchronously from compute"; speculative decoding; still 16-bit; ±20% variance "normal"</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Llama 3.3-70B · 2,314 tok/s, 170 ms time to first token</td><td>Measured by Artificial Analysis, reported in an interview</td><td><span class="tag indep">Indep</span></td></tr>
+<tr><td>Nov 2024 · Llama 3.1-405B · 969 tok/s (1,000-token prompt); 539 tok/s (100,000-token prompt); 240 ms TTFT</td><td>16-bit, 128K context: ≥ 19 wafers for the weights <span class="tag derived">Derived</span>. The long prompt halves the speed: attention over a 100K-token KV cache, the late-arriving term in the budget</td><td><span class="tag vendor">Vendor</span>, citing AA</td></tr>
+<tr><td>Feb 2025 · Mistral Large 2 (123B) · &gt;1,100 tok/s</td><td>Speculative decoding co-developed with Mistral</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>May 2025 · Llama 4 Maverick (MoE, 17B active) · 2,522 tok/s</td><td>vs 1,038 for DGX B200. MoE: few weights streamed per token</td><td><span class="tag indep">Indep</span> AA, via press release</td></tr>
+<tr><td>May 2026 · Kimi K2.6 (~1T, MoE) · 981 tok/s, 6.7× the fastest GPU cloud</td><td>Native 4-bit weights, 16-bit compute, expert all-to-all on the wafer fabric, custom kernels and speculative decoding <span class="tag vendor">Vendor</span>; ~20 CS-3s <span class="tag vendor">Vendor, via press</span></td><td><span class="tag indep">Indep</span> AA for speed</td></tr>
+<tr><td>gpt-oss-120B · ~3,000 tok/s claimed vs ~1,700 measured</td><td>—</td><td><span class="tag vendor">Vendor</span> vs <span class="tag indep">Indep</span></td></tr>
+<tr><td>Aug 2026 · GPT-5.6 Sol · up to 750 tok/s</td><td>"Partitions it at layer boundaries across multiple CS-3 systems … only activations move between stages"; same weights and precision as the standard endpoint</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Aug 2026 · CS-4 · &gt;4,400 tok/s per user on gpt-oss-120B</td><td>Same WSE-3 silicon (WSE-3T), twice the power for "higher operating frequencies", 2 µs wafer hops (Chapter 8). In the budget, a higher clock shrinks every on-wafer term in proportion</td><td><span class="tag vendor">Vendor</span> <span class="tag unv">Unverified</span></td></tr>
+</table></div>
+<p>The 450 → 2,100 jump is the system's most instructive number: 4.7× on identical hardware, from software alone. The budget says the plausible levers are collectives (how many cycles each hop costs, and how many collectives per layer), overlap (asynchronous I/O hides the wafer hops and handoffs), and tokens per pass (speculation). Clock and kernel streaming rate, the hardware-bound terms, did not change. CS-4 then pulls the hardware lever. The table's other lesson is that every row after 2024 is a different model. Comparing tok/s across rows compares models as much as machines.</p>
+
+<div class="callout warn">
+<strong>Fast per user is not the same as cheap per token</strong>
+Pinning weights makes each user's decode fast. But a wafer serves relatively few concurrent sequences compared with a GPU running large batches <span class="tag analyst">Analyst</span>, because each one's KV cache must fit in the SRAM the weights leave free, and speculation spends pipe slots. Analysts put batched H100 serving at ~$0.10–0.25 per million tokens <span class="tag analyst">Analyst</span>, against Cerebras's launch list price of $0.60 for Llama 3.1-70B <span class="tag vendor">Vendor</span>. Chapter 18 returns to this.
+</div>
+
+<h2 id="sdk">Where the SDK fits</h2>
+<p>None of this is programmed in CSL. The production stack is closed. But every mechanism above rests on a primitive that Part III's labs build and measure:</p>
+<div class="table-wrap"><table>
+<tr><th>Production mechanism</th><th>Primitive underneath</th><th>Where you build or measure it</th></tr>
+<tr><td>Kernel placed as a rectangle</td><td><code>@set_rectangle</code>, <code>@set_tile_code</code>, fabric offsets and the memcpy halo</td><td>Chapter 10 (toolchain), every lab's <code>layout.csl</code></td></tr>
+<tr><td>Region streams its weights (GEMV)</td><td>DSD <code>@fmacs</code>/<code>@fmach</code> over memory, 1 or 4 elements per cycle</td><td>Chapter 6; this chapter's experiment; SDK <code>gemv-*</code> tutorials</td></tr>
+<tr><td>Weights arriving trigger work</td><td>data-triggered tasks, fabric DSDs</td><td>Chapter 5, Lab 1 (Chapter 11)</td></tr>
+<tr><td>Broadcast and reduce within a region</td><td>routes and colors; chain reduce ≈ M + 7P cycles; 2.0 vs 9.2 cycles/hop</td><td>Chapter 4, Lab 2 (Chapter 12)</td></tr>
+<tr><td>Region-to-region handoff</td><td>a color between adjacent rectangles, ghost exchange</td><td>Lab 3 (Chapter 13)</td></tr>
+<tr><td>k-wide verify or prefill (GEMM)</td><td>SUMMA with <code>&lt;collectives_2d&gt;</code>, compute-bound regime</td><td>Lab 4 (Chapter 14)</td></tr>
+<tr><td>Loading weights onto the wafer</td><td>host memcpy, ~14 GB/s, so ~3 s per 44 GB</td><td>Chapter 7, Chapter 1</td></tr>
+</table></div>
+<div class="callout">
+<strong>Optional exercise: a toy inference pipeline in CSL</strong>
+Place two or three GEMV "layer regions" side by side on a small rectangle, each holding its weights resident. Pass a 1 × H activation vector east between them on a color, and loop the last region's output back to the first. Time one "token" with the TSC on one PE, using a round trip as in note 19. Then add a second "user" one stage behind and check that the time per token does not change. Start from <code>benchmarks/single-tile-matvec</code> and <code>tutorials/gemv-*</code> <span class="tag sdk">SDK 2.10.1</span>.
+</div>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>In the placement problem, why can making one kernel's rectangle bigger fail to speed the network up?</summary><p>The pipeline runs at the largest Δt over all kernels. Growing a kernel that is not the slowest changes nothing except wire length and area, and it may take area away from the bottleneck. The contest's objective counts maximum compute time, not total.</p></details>
+<details><summary>One user is generating with Llama 70B on four CS-3s. While wafer 3 processes their token, what are wafers 1, 2 and 4 doing?</summary><p>Nothing for that user: the next token cannot start until this one leaves wafer 4 and loops back. The other wafers stay busy only with other users' tokens in flight. That is why per-user speed and total throughput are separate numbers.</p></details>
+<details><summary>Why can't the 36 GB left on a 4-wafer Llama-70B deployment serve 100 users at 8K context?</summary><p>Each token of context costs ~0.33 MB of KV cache per sequence, so 100 × 8,192 tokens ≈ 268 GB, far more than 36 GB. About 13 users at 8K fit <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Roughly how many WSE-3 wafers to hold a 405B model at 16-bit?</summary><p>810 GB of weights ÷ 44 GB ≈ 19 wafers before any KV cache, or about 5 at 4-bit. In the widget, one 8K-context user (~4 GB of KV) still fits in 19; ten such users need 20 <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Using the measured f16 GEMV (7.5 B/cycle per PE) and 38.9 KB of weights per PE, how long does one layer's GEMV take at 850 MHz, and what does that imply for 2,100 tok/s?</summary><p>38,900 ÷ 7.5 ≈ 5,190 cycles ≈ 6.1 µs. Eighty layers in sequence give ~490 µs, already more than the 476 µs per token at 2,100 tok/s, before any reduction or hop. So a higher clock, faster kernels than this naive one, or more than one accepted token per pass (speculation) must make up the difference <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Why is "four WSE-3s have an 84 PB/s ceiling of ~600,000 tok/s" not a per-user bound?</summary><p>It assumes all PEs read weights for the same token. In the region mapping, one user's token is in one of 80 layer regions at a time, so it sees ~1/80 of the bandwidth, which gives ~7,500 tok/s at the headline rate. The 600,000 is a pipe-full total across users <span class="tag derived">Derived</span>.</p></details>
+<details><summary>α = 0.8, k = 4, draft cost c = 0.05. What is the expected speedup on a GPU, and on an 80-stage wafer pipeline? What does the wafer give up?</summary><p>E = (1 − 0.8⁵)/0.2 ≈ 3.36. GPU: 3.36/(1 + 0.2) ≈ 2.8×. Wafer: 3.36/(1 + 0.05 + 0.2) ≈ 2.7×. When the pipe is full, each pass uses 5 stage slots for 3.36 output tokens, so system throughput falls to ~67% of the non-speculative rate <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Why does an MoE model suit pinned SRAM, and what does it cost?</summary><p>Every expert must be resident (capacity, which SRAM across wafers provides), but only the active ~32B of Kimi's ~1T parameters are streamed per token, so per-token work is like a much smaller dense model. The cost is all-to-all routing of tokens to expert regions, which Cerebras keeps on the wafer fabric, and idle expert regions when few users are in flight.</p></details>
+<details><summary>Why did production inference not use the wafer's unstructured sparsity?</summary><p>Served models are dense (16-bit originals or native 4-bit). A sparse pinned weight needs an index as well as a value, so it saves SRAM only above ~50% sparsity, and accuracy would change. Sparsity was a training-mode feature of weight streaming, where zeros are simply never sent.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const txt = (parent, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y }, a), parent); t.textContent = s; return t; };
+  function seg(id, onPick) {
+    const box = $(id);
+    box.querySelectorAll("button").forEach(b => b.onclick = () => {
+      box.querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", o === b ? "true" : "false"));
+      onPick(b.dataset.v);
+    });
+  }
+  const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "k" : n >= 100 ? Math.round(n).toLocaleString("en") : n >= 10 ? n.toFixed(0) : n.toFixed(1);
+
+  /* ---------- Compile path figure ---------- */
+  (function () {
+    const svg = $("#cp");
+    el("defs", {}, svg).innerHTML = '<marker id="cpa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>';
+    const st = [["PyTorch / TF", "framework graph", "box"], ["Extract", "graph IR", "blu"], ["Match", "kernel graph", "blu"], ["Size, place", "& route", "acc"], ["Link", "executable", "grn"]];
+    st.forEach(([a, b, c], i) => {
+      const x = 8 + i * 152;
+      el("rect", { x, y: 20, width: 128, height: 58, rx: 9, class: c, "stroke-width": 1.6 }, svg);
+      txt(svg, x + 64, 44, a, { "text-anchor": "middle", "font-weight": 700, "font-size": 14 });
+      txt(svg, x + 64, 64, b, { "text-anchor": "middle", "font-size": 12, class: "muted" });
+      if (i < st.length - 1) el("path", { d: `M${x + 130} 49 H${x + 150}`, class: "s-acc", "stroke-width": 2, "marker-end": "url(#cpa)" }, svg);
+    });
+    // mini wafer with rectangles under place & route
+    const wx = 8 + 3 * 152, wy = 92;
+    el("rect", { x: wx, y: wy, width: 128, height: 70, rx: 6, class: "box", "stroke-width": 1 }, svg);
+    [[4, 4, 30, 30, "--blue"], [36, 4, 50, 30, "--accent"], [88, 4, 36, 30, "--green"], [4, 36, 60, 30, "--purple"], [66, 36, 58, 30, "--amber"]].forEach(([x, y, w, h, c]) =>
+      el("rect", { x: wx + x, y: wy + y, width: w, height: h, rx: 3, fill: cssVar(c), opacity: 0.45 }, svg));
+    txt(svg, wx - 8, wy + 30, "each kernel: a rectangle", { "text-anchor": "end", "font-size": 12 });
+    txt(svg, wx - 8, wy + 46, "of PEs, sized for its work", { "text-anchor": "end", "font-size": 12, class: "muted" });
+    txt(svg, wx - 8, wy + 62, "and memory, then wired up", { "text-anchor": "end", "font-size": 12, class: "muted" });
+    txt(svg, 8 + 2 * 152 + 64, 100, "hand-written", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+    txt(svg, 8 + 2 * 152 + 64, 116, "kernel library", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+  })();
+
+  /* ---------- Placement toy ---------- */
+  (function () {
+    const FW = 48, FH = 24, SH = 12, CELL = 12, OX = 12, OY = 26;
+    const names = ["L1 conv", "L2 conv", "L3 conv", "L4 attn", "L5 mlp", "L6 head"];
+    const colors = ["--blue", "--accent", "--green", "--purple", "--amber", "--red"];
+    const work = [9600, 28800, 19200, 38400, 14400, 4800];           // core-cycles per sample (illustrative)
+    const memKB = [[96, 480, 960, 2400, 1440, 192], [2304, 12672, 6912, 11520, 10368, 8064]]; // per layer, by mode
+    let mode = 0, w = [16, 16, 16, 16, 16, 16], order = [0, 1, 2, 3, 4, 5];
+    const minW = i => Math.max(1, Math.ceil(memKB[mode][i] / 48 / SH));
+    const box = $("#kp-sl"), sl = [];
+    names.forEach((n, i) => {
+      const lab = document.createElement("label");
+      lab.innerHTML = `<span class="sw" style="background:var(${colors[i]})"></span>${n} <input type="range" min="1" max="40" step="1" aria-label="${n} width in columns"> <span class="mono"></span>`;
+      box.appendChild(lab);
+      const r = lab.querySelector("input"), v = lab.querySelector(".mono");
+      r.oninput = () => { w[i] = Math.max(minW(i), +r.value); draw(); };
+      sl.push([r, v]);
+    });
+    function balance() {
+      const tot = work.reduce((a, b) => a + b, 0);
+      w = work.map((x, i) => Math.max(minW(i), Math.floor(2 * FW * x / tot)));
+      // trim if over budget
+      let over = w.reduce((a, b) => a + b, 0) - 2 * FW;
+      while (over > 0) { let j = -1, best = -1; w.forEach((x, i) => { const dt = work[i] / ((x - 1) * SH); if (x > minW(i) && (j < 0 || dt < best)) { j = i; best = dt; } }); if (j < 0) break; w[j]--; over--; }
+    }
+    function draw() {
+      w = w.map((x, i) => Math.max(minW(i), x));
+      sl.forEach(([r, v], i) => { r.value = w[i]; r.min = 1; v.textContent = `${w[i]} col · ${w[i] * SH} cores`; });
+      const svg = $("#kp-svg"); svg.innerHTML = "";
+      txt(svg, OX, 16, `fabric ${FW} × ${FH} cores · each core 48 KB`, { "font-size": 12.5, "font-weight": 600 });
+      el("rect", { x: OX, y: OY, width: FW * CELL, height: FH * CELL, class: "box", "stroke-width": 1.2 }, svg);
+      for (let c = 1; c < FW; c++) el("line", { x1: OX + c * CELL, y1: OY, x2: OX + c * CELL, y2: OY + FH * CELL, class: "line", "stroke-width": 0.5 }, svg);
+      for (let r = 1; r < FH; r++) el("line", { x1: OX, y1: OY + r * CELL, x2: OX + FW * CELL, y2: OY + r * CELL, class: "line", "stroke-width": 0.5 }, svg);
+      // serpentine shelf packing in `order`
+      let shelf = 0, x = 0, illegal = false; const pos = [];
+      order.forEach(i => {
+        if (shelf === 0 && x + w[i] > FW) { shelf = 1; x = 0; }
+        let px;
+        if (shelf === 0) px = x; else px = FW - x - w[i];
+        if (shelf === 1 && x + w[i] > FW) illegal = true;
+        pos[i] = { c: px, r: shelf * SH, ill: shelf === 1 && x + w[i] > FW };
+        x += w[i];
+      });
+      const dts = work.map((x, i) => x / (w[i] * SH)), dtMax = Math.max(...dts), bott = dts.indexOf(dtMax);
+      order.forEach(i => {
+        const p = pos[i], rx = OX + p.c * CELL, ry = OY + p.r * CELL, ww = w[i] * CELL, hh = SH * CELL;
+        el("rect", { x: rx + 1, y: ry + 1, width: ww - 2, height: hh - 2, rx: 3, fill: cssVar(colors[i]), opacity: p.ill ? 0.25 : 0.42, stroke: cssVar(p.ill ? "--red" : i === bott ? "--text" : colors[i]), "stroke-width": i === bott ? 3 : 1.5, "stroke-dasharray": p.ill ? "4 3" : "none" }, svg);
+        if (ww >= 34) {
+          txt(svg, rx + ww / 2, ry + hh / 2 - 4, names[i], { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: "halo" });
+          txt(svg, rx + ww / 2, ry + hh / 2 + 12, `Δt ${Math.round(dts[i])}`, { "text-anchor": "middle", "font-size": 11.5, class: "halo" });
+        } else txt(svg, rx + ww / 2, ry + hh / 2 + 4, String(i + 1), { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: "halo" });
+      });
+      // wires between consecutive layers (graph order L1→L6)
+      let wire = 0;
+      for (let i = 0; i < 5; i++) {
+        const a = pos[i], b = pos[i + 1];
+        const ax = a.c + w[i] / 2, ay = a.r + SH / 2, bx = b.c + w[i + 1] / 2, by = b.r + SH / 2;
+        wire += Math.abs(ax - bx) + Math.abs(ay - by);
+        el("path", { d: `M${OX + ax * CELL} ${OY + ay * CELL} L${OX + bx * CELL} ${OY + ay * CELL} L${OX + bx * CELL} ${OY + by * CELL}`, fill: "none", class: "s-muted", "stroke-width": 1.6, "stroke-dasharray": "3 3" }, svg);
+      }
+      // side panel: Δt bars
+      const PX = OX + FW * CELL + 16, bw = 720 - PX - 8;
+      txt(svg, PX, 16, "Δt per layer (cycles)", { "font-size": 12.5, "font-weight": 600 });
+      const sc = Math.max(...dts, 1);
+      names.forEach((n, i) => {
+        const y = OY + 6 + i * 40;
+        txt(svg, PX, y + 10, `L${i + 1}`, { "font-size": 12 });
+        el("rect", { x: PX + 22, y, width: Math.max(2, (bw - 26) * dts[i] / sc), height: 14, rx: 3, fill: cssVar(colors[i]), opacity: 0.55, stroke: cssVar(i === bott ? "--text" : colors[i]), "stroke-width": i === bott ? 2 : 1 }, svg);
+        txt(svg, PX + 22, y + 28, `${Math.round(dts[i])}${i === bott ? "  ← sets the pace" : ""}`, { "font-size": 11.5, class: i === bott ? "" : "muted" });
+      });
+      const used = w.reduce((a, b) => a + b, 0) * SH, memNote = mode ? "minimum widths come from each layer's pinned weights" : "minimum widths come from activations and small weights";
+      $("#kp-out").textContent =
+        (illegal ? "ILLEGAL: kernels overflow the fabric. Narrow some kernels (or balance).\n" : "") +
+        `pipeline Δt = max = ${Math.round(dtMax)} cycles per sample (bottleneck L${bott + 1}) · relative throughput ${(100 / dtMax).toFixed(2)} samples per 100 cycles\n` +
+        `cores used ${used} of ${FW * FH} (${Math.round(100 * used / (FW * FH))}%) · wire length (L1, consecutive layers) ${wire.toFixed(0)} cores\n` +
+        `${memNote}; balanced Δt ≈ ${Math.round(work.reduce((a, b) => a + b, 0) / (FW * FH))} if every core is used.`;
+      svg.setAttribute("aria-label", `Pipeline delta t ${Math.round(dtMax)} cycles, bottleneck layer ${bott + 1}${illegal ? ", illegal placement" : ""}`);
+    }
+    seg("#kp-mode", v => { mode = +v; balance(); draw(); });
+    $("#kp-bal").onclick = () => { balance(); draw(); };
+    $("#kp-eq").onclick = () => { w = w.map(() => 16); draw(); };
+    $("#kp-shuf").onclick = () => { for (let i = 5; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; } if (order.join() === "0,1,2,3,4,5") order.reverse(); draw(); };
+    $("#kp-topo").onclick = () => { order = [0, 1, 2, 3, 4, 5]; draw(); };
+    draw();
+  })();
+
+  /* ---------- Pipeline decode (moved from Chapter 8) ---------- */
+  (function () {
+    const svg = $("#pd-svg"), S = 20, W = 4, per = S / W, COLS = 36;
+    const colors = ["--accent", "--blue", "--green", "--purple", "--amber", "--red"];
+    let U = 1, tick = 0, playing = false, timer = null, hist = [];
+    const bx = i => 20 + i * 186, cellX = (i, j) => bx(i) + 12 + j * 30;
+    const g = el("g", {}, svg), dots = el("g", {}, svg), gantt = el("g", {}, svg);
+    el("defs", {}, svg).innerHTML = '<marker id="pdb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>';
+    for (let i = 0; i < W; i++) {
+      el("rect", { x: bx(i), y: 26, width: 166, height: 90, rx: 10, class: "acc", "stroke-width": 1.6 }, g);
+      txt(g, bx(i) + 83, 44, `CS-3 #${i + 1} · layers ${i * 20 + 1}–${i * 20 + 20}`, { "text-anchor": "middle", "font-size": 12.5, "font-weight": 700 });
+      for (let j = 0; j < per; j++) el("rect", { x: cellX(i, j), y: 54, width: 24, height: 40, rx: 4, class: "box", "stroke-width": 1 }, g);
+      txt(g, bx(i) + 83, 109, "weights + KV in each region", { "text-anchor": "middle", "font-size": 11, class: "muted" });
+      if (i < W - 1) el("path", { d: `M${bx(i) + 168} 74 H${bx(i + 1) - 3}`, class: "s-blu", "stroke-width": 2.2, "marker-end": "url(#pdb)" }, g);
+    }
+    txt(g, 380, 14, "16 KB activation per hop · <5 µs per hop on CS-3", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+    el("path", { d: `M${bx(3) + 150} 117 C ${bx(3) + 150} 150, ${bx(0) + 16} 150, ${bx(0) + 16} 121`, class: "s-blu", "stroke-width": 2, fill: "none", "stroke-dasharray": "5 4", "marker-end": "url(#pdb)" }, g);
+    txt(g, 380, 146, "output token re-enters layer 1 as the next input (autoregressive loop)", { "text-anchor": "middle", "font-size": 12, class: "halo" });
+    const GX = 110, GY = 166, rh = 9, cw = (740 - GX) / COLS;
+    for (let i = 0; i < W; i++) {
+      txt(g, GX - 8, GY + i * per * rh + per * rh / 2 + 4, `wafer ${i + 1}`, { "text-anchor": "end", "font-size": 12 });
+      el("rect", { x: GX, y: GY + i * per * rh, width: COLS * cw, height: per * rh, class: "box", "stroke-width": 1 }, g);
+    }
+    txt(g, GX, GY + S * rh + 16, "time → (one column = one stage-time; rows = the 20 stages)", { "font-size": 12, class: "muted" });
+    const pos = (j, t) => (t + j * (S / U)) % S;
+    function render() {
+      dots.innerHTML = ""; gantt.innerHTML = "";
+      for (let j = 0; j < U; j++) {
+        const p = pos(j, tick), i = Math.floor(p / per), k = p % per;
+        el("circle", { cx: cellX(i, k) + 12, cy: 74, r: 8, fill: cssVar(colors[j % colors.length]), stroke: cssVar("--surface"), "stroke-width": 1.5 }, dots);
+      }
+      const start = Math.max(0, hist.length - COLS);
+      hist.slice(start).forEach((col, c) => col.forEach((u, st) => {
+        if (u >= 0) el("rect", { x: GX + c * cw + 0.5, y: GY + st * rh + 0.5, width: cw - 1, height: rh - 1, fill: cssVar(colors[u % colors.length]) }, gantt);
+      }));
+      const busyW = [0, 1, 2, 3].map(i => { let n = 0; for (let j = 0; j < U; j++) if (Math.floor(pos(j, tick) / per) === i) n++; return n; });
+      const toks = U === 1 ? Math.floor(tick / S) : null;
+      $("#pd-out").textContent =
+        `users in flight: ${U} · stage utilisation: ${U}/${S} = ${Math.round(100 * U / S)}% · wafers holding a token now: ${busyW.filter(n => n).length} of 4\n` +
+        `each user still gets 1 token per ${S} stage-times; the pipe delivers ${U} tokens per ${S} stage-times in total\n` +
+        (U === 1 ? `one user: only one region of one wafer is ever busy; the rest wait for the token to come round${toks !== null ? ` (tokens generated: ${toks})` : ""}` :
+          U === S ? "pipe full: every stage busy, every user at full speed. More users would now queue (or need a second copy of the model)." :
+          "more users fill more stages without slowing anyone, until the pipe is full or KV cache runs out of SRAM");
+    }
+    function stepOnce() { const col = new Array(S).fill(-1); for (let j = 0; j < U; j++) col[pos(j, tick)] = j; hist.push(col); tick++; render(); }
+    function reset() { tick = 0; hist = []; render(); }
+    function stop() { playing = false; clearInterval(timer); timer = null; $("#pd-play").textContent = "Play"; }
+    $("#pd-play").onclick = () => { if (playing) return stop(); playing = true; $("#pd-play").textContent = "Pause"; timer = setInterval(stepOnce, reduced ? 700 : 260); };
+    $("#pd-step").onclick = () => { stop(); stepOnce(); };
+    $("#pd-reset").onclick = () => { stop(); reset(); };
+    seg("#pd-u", v => { U = +v; reset(); });
+    reset();
+  })();
+
+  /* ---------- Capacity + decode bound (moved from Chapter 8; per-user wafer bound now divides by layer count) ---------- */
+  (function () {
+    const shapes = [[8, 32], [70, 80], [405, 126]];
+    function layers(n) {
+      const lg = Math.log; let a = shapes[0], b = shapes[1];
+      if (n > 70) { a = shapes[1]; b = shapes[2]; }
+      return Math.max(16, Math.round(a[1] + (b[1] - a[1]) * (lg(n) - lg(a[0])) / (lg(b[0]) - lg(a[0]))));
+    }
+    const measured = { 8: [[1800, "launch 1,800"]], 70: [[450, "Aug 2024: 450"], [2100, "Oct 2024: 2,100"]], 405: [[969, "Nov 2024: 969"]] };
+    const KBW = 7.5 * 0.85e9 * 900000; // measured f16 GEMV rate per PE × 850 MHz × 900k PEs
+    const devs = [
+      { n: "WSE-3", gb: 44, bw: 21e15, cls: "acc", wafer: 1 },
+      { n: "WSE-3 (kernel)", gb: 44, bw: KBW, cls: "acc", wafer: 1, same: 0 },
+      { n: "H100", gb: 80, bw: 3.35e12, cls: "blu" },
+      { n: "B200", gb: 192, bw: 8e12, cls: "grn" },
+    ];
+    let preset = 70;
+    function nVal() { return preset || Math.max(1, Math.round(Math.pow(10, +$("#p-n").value))); }
+    function cap() {
+      const n = nVal(), b = +$("#p-b").value, ctx = +$("#p-c").value, users = +$("#p-u").value;
+      $("#p-nv").textContent = n >= 1000 ? (n / 1000).toFixed(n % 1000 ? 2 : 0) + "T" : n + "B";
+      $("#p-uv").textContent = users;
+      const L = layers(n), kvTok = L * 8 * 128 * 2 * 2, wGB = n * b, kvGB = users * ctx * kvTok / 1e9, tot = wGB + kvGB;
+      const cnt = d => Math.ceil(tot / d.gb);
+      const svg = $("#p-svg"); svg.innerHTML = "";
+      const rows = [devs[0], devs[2], devs[3]];
+      let y = 12;
+      rows.forEach(d => {
+        const c = cnt(d), group = c > 40 ? Math.ceil(c / 40) : 1, boxes = Math.ceil(c / group);
+        txt(svg, 0, y + 14, `${d.n} × ${c}`, { "font-size": 13, "font-weight": 700 });
+        txt(svg, 0, y + 30, group > 1 ? `1 box = ${group} devices` : `${d.gb} GB each`, { "font-size": 11.5, class: "muted" });
+        const perW = wGB / c / d.gb, perK = kvGB / c / d.gb;
+        for (let i = 0; i < boxes; i++) {
+          const x = 130 + (i % 20) * 27, yy = y + Math.floor(i / 20) * 26, h = 22;
+          el("rect", { x, y: yy, width: 22, height: h, rx: 3, class: "box", "stroke-width": 1 }, svg);
+          const hw = Math.min(1, perW) * h, hk = Math.min(1 - Math.min(1, perW), perK) * h;
+          el("rect", { x: x + 1, y: yy + h - hw, width: 20, height: hw, fill: cssVar("--amber") }, svg);
+          if (hk > 0.3) el("rect", { x: x + 1, y: yy + h - hw - hk, width: 20, height: hk, fill: cssVar("--purple") }, svg);
+        }
+        y += Math.max(1, Math.ceil(boxes / 20)) * 26 + 16;
+      });
+      el("rect", { x: 130, y: y, width: 12, height: 10, fill: cssVar("--amber") }, svg); txt(svg, 147, y + 9, "weights", { "font-size": 12 });
+      el("rect", { x: 210, y: y, width: 12, height: 10, fill: cssVar("--purple") }, svg); txt(svg, 227, y + 9, "KV cache", { "font-size": 12 });
+      txt(svg, 300, y + 9, "(load spread evenly; empty = free memory)", { "font-size": 12, class: "muted" });
+      svg.setAttribute("viewBox", `0 0 680 ${y + 18}`);
+      svg.setAttribute("aria-label", `${cnt(devs[0])} WSE-3 wafers, ${cnt(devs[2])} H100s or ${cnt(devs[3])} B200s needed`);
+      const bw = $("#p-bw"); bw.innerHTML = "";
+      const x0 = 150, x1 = 660, lo = 0, hi = 7, X = v => x0 + (Math.log10(Math.max(1, v)) - lo) / (hi - lo) * (x1 - x0);
+      txt(bw, x0, 14, "upper bound on tokens/s for one user (log scale)", { "font-size": 12.5, "font-weight": 600 });
+      for (let e = lo; e <= hi; e++) {
+        el("line", { x1: X(Math.pow(10, e)), y1: 22, x2: X(Math.pow(10, e)), y2: 168, class: "line", "stroke-width": 1 }, bw);
+        txt(bw, X(Math.pow(10, e)), 184, e < 3 ? String(Math.pow(10, e)) : e < 6 ? Math.pow(10, e - 3) + "k" : Math.pow(10, e - 6) + "M", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+      }
+      const ceil = {}; let pipeFull = 0;
+      devs.forEach((d, i) => {
+        const c = cnt(d), agg = c * d.bw, v = agg / (tot * 1e9) / (d.wafer ? L : 1);
+        if (i === 0) pipeFull = agg / (tot * 1e9);
+        ceil[d.n] = v;
+        const yy = 28 + i * 34;
+        txt(bw, x0 - 8, yy + 12, `${d.n.replace(" (kernel)", "")} × ${c}`, { "text-anchor": "end", "font-size": 12.5, "font-weight": 600 });
+        txt(bw, x0 - 8, yy + 25, d.same === 0 ? "f16 GEMV, measured" : d.wafer ? `headline, ÷ ${L} regions` : "tensor-parallel", { "text-anchor": "end", "font-size": 11, class: "muted" });
+        el("rect", { x: x0, y: yy, width: Math.max(2, X(v) - x0), height: 18, rx: 3, class: d.cls, "stroke-width": 1.2, opacity: d.same === 0 ? 0.6 : 1 }, bw);
+        txt(bw, Math.min(X(v) + 6, x1 - 4), yy + 13, fmt(v), { "font-size": 12, "font-weight": 600, "text-anchor": X(v) + 50 > x1 ? "end" : "start", class: "halo" });
+      });
+      const ms = (b === 2 && preset && measured[preset]) || [];
+      ms.forEach(([v, l], k) => {
+        el("line", { x1: X(v), y1: 24, x2: X(v), y2: 94, class: "s-red", "stroke-width": 2, "stroke-dasharray": "3 2" }, bw);
+        txt(bw, X(v) + (k ? 4 : -4), 200, l, { "text-anchor": k ? "start" : "end", "font-size": 11.5, class: "f-red" });
+      });
+      bw.setAttribute("viewBox", `0 0 680 ${ms.length ? 210 : 192}`);
+      const gbs = v => v < 10 ? v.toFixed(1) : v.toFixed(0);
+      $("#p-out").textContent =
+        `weights ${gbs(wGB)} GB + KV ${gbs(kvGB)} GB (${users} × ${ctx.toLocaleString("en")} tokens × ${(kvTok / 1e6).toFixed(2)} MB, ${L} layers) = ${gbs(tot)} GB\n` +
+        `→ ${cnt(devs[0])} × WSE-3 (${cnt(devs[0]) * 44} GB)  ·  ${cnt(devs[2])} × H100  ·  ${cnt(devs[3])} × B200\n` +
+        `one-user bound: WSE-3 ${fmt(ceil["WSE-3"])} tok/s at 21 PB/s, ${fmt(ceil["WSE-3 (kernel)"])} at the measured f16 kernel rate (850 MHz) · H100 ${fmt(ceil["H100"])} · B200 ${fmt(ceil["B200"])}\n` +
+        `pipe-full total for the wafers (all ${L} regions busy with different users): ${fmt(pipeFull)} tok/s. Per user, the wafer's bound is a region's SRAM rate, not the whole wafer's.`;
+    }
+    $("#p-n").oninput = () => { preset = 0; $("#p-pre").querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", "false")); cap(); };
+    seg("#p-pre", v => { preset = +v; $("#p-n").value = Math.log10(+v).toFixed(3); cap(); });
+    ["#p-b", "#p-c"].forEach(s => $(s).onchange = cap);
+    $("#p-u").oninput = cap;
+    cap();
+  })();
+
+  /* ---------- Latency budget ---------- */
+  (function () {
+    const L = 80, BPE = 140e9 / (4 * 900000), REGION = 900000 / 20, KVB = 8 * 128 * 2 * 2;
+    const ids = ["clk", "rate", "ctx", "nc", "hops", "cph", "wh", "e"];
+    const v = id => +$("#lb-" + id).value;
+    function draw() {
+      const clk = v("clk"), rate = v("rate"), ctx = v("ctx"), nc = v("nc"), hops = v("hops"), cph = v("cph"), wh = v("wh"), E = v("e");
+      $("#lb-clkv").textContent = (clk * 1000).toFixed(0) + " MHz";
+      $("#lb-ncv").textContent = nc; $("#lb-hopsv").textContent = hops;
+      $("#lb-whv").textContent = wh.toFixed(1) + " µs"; $("#lb-ev").textContent = E.toFixed(1);
+      const cyc = { g: BPE / rate, c: nc * hops * cph, k: ctx * KVB / REGION / rate };
+      const us = c => c * L / (clk * 1e3); // cycles per layer → µs over 80 layers
+      const seg = [["GEMV (weights)", us(cyc.g), "--amber"], ["collectives", us(cyc.c), "--blue"], ["attention / KV", us(cyc.k), "--purple"], ["wafer hops", 4 * wh, "--red"]];
+      const pass = seg.reduce((a, s) => a + s[1], 0), tok = pass / E;
+      const svg = $("#lb-svg"); svg.innerHTML = "";
+      const x0 = 150, x1 = 680, maxU = Math.max(2400, pass * 1.05), X = u => x0 + (x1 - x0) * u / maxU;
+      for (let t = 0; t <= maxU; t += maxU > 4000 ? 1000 : 500) {
+        el("line", { x1: X(t), y1: 20, x2: X(t), y2: 150, class: "line", "stroke-width": 1 }, svg);
+        txt(svg, X(t), 166, t >= 1000 ? (t / 1000) + " ms" : t + " µs", { "text-anchor": "middle", "font-size": 11.5, class: "muted" });
+      }
+      function bar(y, label, sub, scale) {
+        txt(svg, x0 - 8, y + 15, label, { "text-anchor": "end", "font-size": 12.5, "font-weight": 600 });
+        txt(svg, x0 - 8, y + 30, sub, { "text-anchor": "end", "font-size": 11, class: "muted" });
+        let x = x0;
+        seg.forEach(([n, u, c]) => { const w = (X(u * scale) - x0); if (w > 0.2) el("rect", { x, y, width: w, height: 26, fill: cssVar(c), opacity: 0.75, stroke: cssVar("--surface"), "stroke-width": 1 }, svg); x += w; });
+        txt(svg, Math.min(x + 6, x1 - 2), y + 18, `${Math.round(pass * scale)} µs`, { "font-size": 12, "font-weight": 600, "text-anchor": x + 60 > x1 ? "end" : "start", class: "halo" });
+      }
+      bar(30, "one target pass", "80 layers + 4 hops", 1);
+      bar(90, "per output token", `÷ ${E.toFixed(1)} accepted / pass`, 1 / E);
+      [[2222, "450"], [476, "2,100"], [432, "2,314"]].forEach(([u, l], i) => {
+        if (u > maxU) return;
+        el("line", { x1: X(u), y1: 22, x2: X(u), y2: 126, class: "s-red", "stroke-width": 1.6, "stroke-dasharray": "4 3" }, svg);
+        txt(svg, X(u) + (i === 2 ? -3 : 3), 20 + (i === 2 ? 0 : 0), l + " tok/s", { "font-size": 11, class: "f-red", "text-anchor": i === 2 ? "end" : "start" });
+      });
+      let lx = x0;
+      seg.forEach(([n, u, c]) => { el("rect", { x: lx, y: 186, width: 12, height: 10, fill: cssVar(c), opacity: 0.75 }, svg); txt(svg, lx + 16, 195, n, { "font-size": 12 }); lx += 26 + n.length * 6.6; });
+      txt(svg, x0, 218, "dashed: published per-token times (2.22 ms, 476 µs, 432 µs)", { "font-size": 11.5, class: "muted" });
+      const pl = c => (c).toFixed(0);
+      $("#lb-out").textContent =
+        `per layer: GEMV ${pl(cyc.g)} + collectives ${pl(cyc.c)} + attention ${pl(cyc.k)} = ${pl(cyc.g + cyc.c + cyc.k)} cycles = ${((cyc.g + cyc.c + cyc.k) / (clk * 1e3)).toFixed(2)} µs at ${(clk * 1000).toFixed(0)} MHz\n` +
+        `one pass = ${Math.round(pass)} µs (${Math.round(1e6 / pass).toLocaleString("en")} passes/s) → per output token ${Math.round(tok)} µs ≈ ${Math.round(1e6 / tok).toLocaleString("en")} tok/s per user\n` +
+        `budget at 2,100 tok/s: 476 µs per token = ${(476 * E).toFixed(0)} µs per pass at ${E.toFixed(1)} tokens/pass · weights per PE ${(BPE / 1000).toFixed(1)} KB, region ≈ ${REGION.toLocaleString("en")} PEs (derived)`;
+      svg.setAttribute("aria-label", `One target pass ${Math.round(pass)} microseconds, about ${Math.round(1e6 / tok)} tokens per second per user`);
+    }
+    ids.forEach(id => { const n = $("#lb-" + id); n.oninput = n.onchange = () => { $("#lb-pre").querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", "false")); draw(); }; });
+    const presets = { a: { cph: "9.2", e: 1, nc: 8, hops: 212, rate: "7.5", clk: 0.85, wh: 5 }, b: { cph: "2", e: 2, nc: 8, hops: 212, rate: "7.5", clk: 0.85, wh: 5 } };
+    seg("#lb-pre", k => { const p = presets[k]; Object.keys(p).forEach(id => $("#lb-" + id).value = p[id]); draw(); });
+    draw();
+  })();
+
+  /* ---------- Speculative decoding ---------- */
+  (function () {
+    const v = id => +$("#sd-" + id).value;
+    const Ef = (a, k) => (1 - Math.pow(a, k + 1)) / (1 - a);
+    function draw() {
+      const a = v("a"), k = v("k"), c = v("c"), S = v("s"), base = Math.max(1, v("base") || 1);
+      $("#sd-av").textContent = a.toFixed(2); $("#sd-kv").textContent = k; $("#sd-cv").textContent = c.toFixed(2); $("#sd-sv").textContent = S;
+      const gpu = kk => Ef(a, kk) / (1 + kk * c), waf = kk => Ef(a, kk) / (1 + kk / S + kk * c), slot = kk => Ef(a, kk) / (kk + 1);
+      const svg = $("#sd-svg"); svg.innerHTML = "";
+      const x0 = 50, x1 = 560, y0 = 200, y1 = 18;
+      let ymax = 1; for (let kk = 1; kk <= 10; kk++) ymax = Math.max(ymax, gpu(kk), waf(kk));
+      ymax = Math.ceil(ymax + 0.2);
+      const X = kk => x0 + (x1 - x0) * (kk - 1) / 9, Y = s => y0 - (y0 - y1) * s / ymax;
+      for (let s = 0; s <= ymax; s++) { el("line", { x1: x0, y1: Y(s), x2: x1, y2: Y(s), class: "line", "stroke-width": 1 }, svg); txt(svg, x0 - 6, Y(s) + 4, s + "×", { "text-anchor": "end", "font-size": 11.5, class: "muted" }); }
+      for (let kk = 1; kk <= 10; kk++) txt(svg, X(kk), y0 + 16, String(kk), { "text-anchor": "middle", "font-size": 11.5, class: "muted" });
+      txt(svg, (x0 + x1) / 2, y0 + 34, "draft length k", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+      const line = (f, cls, dash) => { let d = ""; for (let kk = 1; kk <= 10; kk++) d += (kk > 1 ? "L" : "M") + X(kk).toFixed(1) + " " + Y(f(kk)).toFixed(1); el("path", { d, fill: "none", class: cls, "stroke-width": 2.4, "stroke-dasharray": dash || "none" }, svg); };
+      line(gpu, "s-blu"); line(waf, "s-acc"); line(slot, "s-muted", "5 4");
+      el("line", { x1: X(k), y1: y1, x2: X(k), y2: y0, class: "s-muted", "stroke-width": 1, "stroke-dasharray": "2 3" }, svg);
+      [[gpu, "f-blu"], [waf, "f-acc"], [slot, "f-pur"]].forEach(([f, cl]) => el("circle", { cx: X(k), cy: Y(f(k)), r: 5, class: cl }, svg));
+      const LX = x1 + 14;
+      [["GPU per-user speedup", "s-blu", ""], ["wafer per-user speedup", "s-acc", ""], ["slot efficiency E/(k+1)", "s-muted", "5 4"]].forEach(([n, cl, d], i) => {
+        el("line", { x1: LX, y1: 30 + i * 22, x2: LX + 18, y2: 30 + i * 22, class: cl, "stroke-width": 2.4, "stroke-dasharray": d || "none" }, svg);
+        txt(svg, LX + 22, 34 + i * 22, n.split(" ")[0], { "font-size": 11.5 });
+        txt(svg, LX + 22, 46 + i * 22, "", {});
+      });
+      txt(svg, LX, 110, "blue: GPU", { "font-size": 11, class: "muted" });
+      txt(svg, LX, 124, "orange: wafer", { "font-size": 11, class: "muted" });
+      txt(svg, LX, 138, "dashed: slots → tokens", { "font-size": 11, class: "muted" });
+      const E = Ef(a, k);
+      $("#sd-out").textContent =
+        `E = (1 − ${a.toFixed(2)}^${k + 1}) / (1 − ${a.toFixed(2)}) = ${E.toFixed(2)} tokens per target pass\n` +
+        `GPU: ${gpu(k).toFixed(2)}× per user → ${Math.round(base * gpu(k)).toLocaleString("en")} tok/s · wafer (S = ${S}): ${waf(k).toFixed(2)}× → ${Math.round(base * waf(k)).toLocaleString("en")} tok/s\n` +
+        `full pipe: ${k + 1} slots per pass for ${E.toFixed(2)} tokens → system throughput × ${slot(k).toFixed(2)} (${slot(k) < 1 ? "speculation trades total throughput for per-user speed" : "no loss"})`;
+      svg.setAttribute("aria-label", `Expected ${E.toFixed(2)} tokens per pass; wafer speedup ${waf(k).toFixed(2)} times`);
+    }
+    ["a", "k", "c", "s", "base"].forEach(id => $("#sd-" + id).oninput = draw);
+    draw();
+  })();
+})();
+</script>
+</body>
+</html>

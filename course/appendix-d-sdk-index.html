@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDK Example Index</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+  .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 12px; margin: 8px 0 6px; font-size: 14px; }
+  .filters label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-weight: 600; font-size: 12.5px; }
+  .filters select, .filters input { font: 14px var(--sans); padding: 5px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); min-width: 0; }
+  #ix-table td { vertical-align: top; }
+  #ix-table td.nm { font: 600 13px var(--mono); white-space: nowrap; }
+  #ix-table td.nm small { display: block; font: 12px var(--sans); color: var(--muted); white-space: normal; }
+  #ix-table .note { display: block; color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .arch { display: inline-block; font: 600 11px/1 var(--sans); padding: 3px 6px; border-radius: 4px; white-space: nowrap; border: 1px solid; margin: 0 2px 2px 0; }
+  .arch.both { color: var(--green); border-color: var(--green); background: var(--green-soft); }
+  .arch.w3 { color: var(--blue); border-color: var(--blue); background: var(--blue-soft); }
+  .arch.w2 { color: var(--amber); border-color: var(--amber); background: var(--amber-soft); }
+  .arch.none { color: var(--muted); border-color: var(--border); background: var(--surface-2); }
+  .st { font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .st.lab { color: var(--green); } .st.exp { color: var(--blue); } .st.nam { color: var(--amber); } .st.no { color: var(--red); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+  .chips button { font: 600 13px var(--sans); padding: 5px 10px; border-radius: 999px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+  .chips button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  ol.ladder { margin: 6px 0 4px; padding-left: 22px; }
+  ol.ladder li { margin: 5px 0; }
+  ol.ladder code { font-weight: 600; }
+  .count { font-size: 13.5px; color: var(--muted); margin: 6px 0 0; }
+  .legend { font-size: 13.5px; color: var(--muted); margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+<div class="kicker">Appendix D · Reference</div>
+<h1>SDK example index</h1>
+<p class="lede">SDK 2.10.1 ships 34 tutorials, 21 benchmarks and two reusable benchmark libraries in its extras, and two "kernel" libraries inside the compiler image. This page lists every one of them: what it teaches, which chip it has a run script for, and where this course explains the idea. Use it to pick your next example after each chapter.</p>
+
+<div class="objectives">
+<h4>After this appendix you can</h4>
+<ul>
+<li>Find the SDK example that exercises a concept from any chapter, and check before you start whether it runs on your target chip.</li>
+<li>Follow a suggested order of SDK examples after each course chapter.</li>
+<li>Build the solver benchmarks that import <code>benchmark-libs</code>, which fail out of the box.</li>
+</ul>
+</div>
+
+<h2 id="how">How this index was made</h2>
+<p>The list is every directory under <code>extras/csl-extras-202604101435-6-d2f7d96e/examples/{tutorials,benchmarks}</code> of the installed SDK, plus <code>benchmarks/benchmark-libs/*</code> and <code>csl-libs/kernels/*</code> from the SDK image <span class="tag sdk">SDK 2.10.1</span>. The chip column comes from the run scripts each example ships (<code>commands_wse2.sh</code>, <code>commands_wse3.sh</code>); we checked that each script's <code>--arch</code> matches its name. A missing script means the SDK provides no tested command line for that chip, not necessarily that the code cannot be ported. The "Where in the course" column uses the current chapter numbers (Chapter 14 is the SUMMA lab built on <code>gemm-collectives_2d</code>, Chapter 15 the CG lab). It extends the Phase 3 SDK coverage audit. Two corrections to that audit: <code>fft-3d</code> and <code>topic-15</code> are <b>WSE-3 only</b>, and <code>gemv-00</code> has no run script for either chip (it is a syntax tour, not a program).</p>
+<div class="stat-row">
+  <div class="stat"><div class="v">59</div><div class="l">items indexed <span class="tag sdk">SDK 2.10.1</span></div></div>
+  <div class="stat"><div class="v">48</div><div class="l">examples with scripts for both chips</div></div>
+  <div class="stat"><div class="v">4 + 2</div><div class="l">WSE-2 only / WSE-3 only</div></div>
+  <div class="stat"><div class="v">5</div><div class="l">not covered by any chapter</div></div>
+</div>
+
+<div class="callout key"><strong>Running an SDK example, and the one import fix you will need</strong>
+<p>Copy the example directory into your home directory (never under <code>/tmp</code>), <code>source /home/user/cerebras-sdk/env.sh</code>, and run <code>bash commands_wse3.sh</code> (or <code>_wse2</code>). Most examples print <code>SUCCESS!</code>.</p>
+<p>The four solver benchmarks (<code>conjugate-gradient</code>, <code>preconditioned-conjugate-gradient</code>, <code>bicgstab</code>, <code>power-method</code>) import <code>"../../benchmark-libs/…"</code> by a relative path. They fail with <code>error: Unable to open ./src/../../benchmark-libs/stencil_3d_7pts/layout.csl</code>, even in place in the extras tree, because the SDK wrappers run the compiler in a container that sees only the current directory <span class="tag measured">Measured</span>. The fix: keep <code>benchmark-libs/</code> as a sibling of the example directory (copy both), and let the container see it:</p>
+<pre><code>cp -r …/benchmarks/conjugate-gradient …/benchmarks/benchmark-libs ~/sdk/
+cd ~/sdk/conjugate-gradient
+export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)   # wrapper bind-mounts this path
+bash commands_wse3.sh                                   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
+<p><code>CSL_IMPORT_PATH</code> takes colon-separated <code>realpath</code>s and is read by the host wrapper. The compiler flag <code>cslc --import-path DIR</code> adds a search directory for <code>&lt;…&gt;</code> imports, which is what the library's own comment asks for, but on its own it did not fix this failure in our tests: the relative path still has to be visible inside the container <span class="tag measured">Measured, WSE-3, 5 × 5 PEs, 2 iterations</span>.</p></div>
+
+<h2 id="ladder">A ladder: what to run after each chapter</h2>
+<div class="widget" id="lad">
+<h4>Next SDK examples, by chapter</h4>
+<p class="hint">Pick the chapter you just finished. The examples are in a suggested order, easiest first. "Show in table" filters the index below.</p>
+<div class="chips" id="lad-chips" role="group" aria-label="Chapter"></div>
+<div id="lad-out" aria-live="polite"></div>
+<div class="controls"><button class="btn small" type="button" id="lad-show">Show in table</button></div>
+</div>
+
+<h2 id="index">The index</h2>
+<div class="widget" id="ix">
+<h4>Every tutorial, benchmark and library</h4>
+<p class="hint">Filter by topic, chapter, chip or kind, or type part of a name or concept.</p>
+<div class="filters">
+  <label>Topic <select id="f-topic"></select></label>
+  <label>Course chapter <select id="f-ch"></select></label>
+  <label>Chip <select id="f-arch">
+    <option value="">any</option><option value="both">both chips</option><option value="w3">runs on WSE-3</option><option value="w2">runs on WSE-2</option><option value="w3only">WSE-3 only</option><option value="w2only">WSE-2 only</option><option value="none">no run script</option>
+  </select></label>
+  <label>Kind <select id="f-kind"><option value="">any</option><option>tutorial</option><option>benchmark</option><option>library</option></select></label>
+  <label>Search <input id="f-q" type="search" placeholder="e.g. switch, FIFO, allreduce"></label>
+</div>
+<div class="controls"><button class="btn small" type="button" id="f-reset">Reset filters</button></div>
+<p class="count" id="ix-count" aria-live="polite"></p>
+<div class="table-wrap"><table id="ix-table">
+<thead><tr><th>Example</th><th>What it teaches</th><th>Chips</th><th>Where in the course</th><th>Coverage</th></tr></thead>
+<tbody></tbody>
+</table></div>
+<p class="legend">Chips: <span class="arch both">WSE-2 + WSE-3</span> <span class="arch w3">WSE-3</span> <span class="arch w2">WSE-2</span> <span class="arch none">no script</span>, from the shipped run scripts <span class="tag sdk">SDK 2.10.1</span>. Coverage: <span class="st lab">Labbed</span> a course program does it · <span class="st exp">Explained</span> a section explains it · <span class="st nam">Named</span> mentioned only · <span class="st no">Not covered</span>.</p>
+</div>
+
+<h2 id="notes">Notes on particular examples</h2>
+<ul>
+<li><b>WSE-2 only:</b> <code>topic-14-color-swap</code> (its README: "CSL currently does not support color swap on WSE-3"), <code>histogram-torus</code>, <code>spmv-hypersparse</code> and <code>25-pt-stencil</code> ship only <code>commands_wse2.sh</code> <span class="tag sdk">SDK 2.10.1</span>.</li>
+<li><b>WSE-3 only:</b> <code>topic-15-wse3-microthreads</code> (explicit microthread IDs exist only on WSE-3) and <code>fft-3d</code>, which is built on <code>csl-libs/kernels/fft</code> and uses input queues 2 and 4 and microthreads 2 and 3 by default <span class="tag sdk">SDK 2.10.1, kernels/fft/fft3d.csl</span>.</li>
+<li><b>Timing idiom.</b> Every solver and stencil benchmark times itself with the TSC plus an allreduce-based sync and a reference stamp, and converts at 850 MHz. Appendix C explains the method and its 1-cycle-per-hop correction (<a href="appendix-c-measuring.html">"Synchronise, then correct"</a>).</li>
+<li><b><code>device_run.py</code>.</b> The CG family ships a second host script that moves the iteration loop onto the device "to remove I/O pressure" <span class="tag sdk">SDK 2.10.1</span>. Chapter 15 compares the two.</li>
+<li><b>Libraries you can reuse.</b> <code>benchmark-libs/allreduce</code> (row reduce, column reduce, broadcast back) and <code>benchmark-libs/stencil_3d_7pts</code> (with separate <code>wse2/</code> and <code>wse3/</code> implementations) are ordinary CSL modules that take colors and queues as parameters. <code>kernels/tally</code> is a two-phase completion counter ("every PE must signal completion at least once") used by <code>histogram-torus</code> <span class="tag sdk">SDK 2.10.1, kernels/tally/layout.csl</span>.</li>
+</ul>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  // [name, kind, topic, teaches, arch, chapters, where, status, note]
+  // arch: both | w3 | w2 | none. chapters: numbers or "C". status: lab | exp | nam | no
+  const T = "tutorial", B = "benchmark", L = "library";
+  const D = [
+    ["gemv-00-basic-syntax", T, "Language", "CSL syntax tour: types, functions, loops, comptime. A code fragment, not a program", "none", [10], "Ch 10 · The language in one screen", "exp", "No run script: nothing to run."],
+    ["gemv-01-complete-program", T, "Language", "The three files: layout.csl, pe_program.csl, run.py; one GEMV on one PE", "both", [10, 11], "Ch 10 · Three files, three places; Ch 11 · Program 01", "lab"],
+    ["gemv-02-memory-dsds", T, "Memory & DSDs", "Memory DSDs replace loops over A, x and y", "both", [6], "Ch 6 · One instruction, a whole loop", "exp"],
+    ["gemv-03-memcpy", T, "Host I/O", "memcpy_h2d / memcpy_d2h initialise and read device arrays", "both", [7, 11], "Ch 7 · The host side in eight lines; Ch 11 · Program 01", "lab"],
+    ["gemv-04-params", T, "Language", "Compile-time params change both behaviour and compilation", "both", [10], "Ch 10 · The language in one screen", "exp"],
+    ["gemv-05-multiple-pes", T, "Language", "A width param and @set_rectangle put the program on several PEs", "both", [10, 12], "Ch 10 · layout.csl; Ch 12 · Roles are compile-time params", "exp"],
+    ["gemv-06-routes-1", T, "Fabric routing", "Split one GEMV across two PEs; first routes and colors", "both", [4, 12], "Ch 4 · Routes are set at load time; Ch 12 · Program 03", "lab"],
+    ["gemv-07-routes-2", T, "Fabric routing", "A 2 × 2 GEMV: routes in two directions, <layout> coordinates", "both", [4, 12], "Ch 4 · Why programs alternate colors; Ch 12 · Program 03/05", "lab"],
+    ["gemv-08-routes-3", T, "Fabric routing", "GEMV on a kernel_x_dim × kernel_y_dim rectangle", "both", [12], "Ch 12 · Composing the two: a distributed GEMV", "exp"],
+    ["gemv-09-streaming", T, "Host I/O", "memcpy streaming mode: x and b streamed in, y streamed out", "both", [7, 11], "Ch 7 · Copy mode vs streaming mode; Ch 11 · Program 02", "lab"],
+    ["pipeline-01-basic", T, "Memory & DSDs", "Fabric input/output DSDs move a whole tensor with one instruction; stalls past the queue size", "both", [6, 11], "Ch 6 · Fabric DSDs: communication is an operand; Ch 11 · Aside", "exp"],
+    ["pipeline-02-fifo", T, "Memory & DSDs", "A FIFO between H2D and the kernel removes the stall (two microthreads, a buffer)", "both", [6], "Ch 6 · FIFOs extend the tiny hardware queues", "exp"],
+    ["pipeline-03-multiple", T, "Memory & DSDs", "Move the FIFO into an 'artificial halo' of extra PEs (west.csl, east.csl)", "both", [6], "Ch 6 · FIFOs extend the tiny hardware queues", "nam"],
+    ["sdklayout-01-introduction", T, "SdkLayout", "The Python SdkLayout API: code regions instead of layout.csl", "both", [10], "Ch 10 · The other way to lay out: SdkLayout", "exp"],
+    ["sdklayout-02-routing", T, "SdkLayout", "Symbolic colors; the compiler assigns physical ones", "both", [10], "Ch 10 · The other way to lay out: SdkLayout", "exp", "Measured in Ch 10."],
+    ["sdklayout-03-ports-and-connections", T, "SdkLayout", "Ports on code regions, connected region to region", "both", [10], "Ch 10 · The other way to lay out: SdkLayout", "nam"],
+    ["sdklayout-04-h2d-d2h", T, "SdkLayout", "Ports connected to the host for streaming in and out", "both", [10], "Ch 10 · The other way to lay out: SdkLayout", "nam"],
+    ["sdklayout-05-gemv", T, "SdkLayout", "A full GEMV built with SdkLayout", "both", [10, 14], "Ch 10 · SdkLayout; compare Ch 14's layout.csl version", "nam"],
+    ["topic-01-arrays-and-pointers", T, "Language", "Arrays at comptime, pointers at run time; no null pointer", "both", [10], "Ch 10 · Ordinary parts", "exp"],
+    ["topic-02-libraries", T, "Debug & timing", "Standard libraries: <random>, <time> (the TSC), <math>", "both", [10, 11, "C"], "Ch 10 · The standard library map; Ch 11 · Measure the kernel itself; App C", "lab"],
+    ["topic-03-streaming-wavelet-data", T, "Tasks & queues", "A data task bound to a memcpy streaming color (input queue on WSE-3)", "both", [5, 7, 11], "Ch 11 · Program 02 · A task per wavelet; Ch 5 · What activates a task", "lab"],
+    ["topic-04-sparse-tensors", T, "Memory & DSDs", "Index in the upper 16 bits, value in the lower: skip zeros", "both", [3], "Ch 3 · Sparsity: skipping zeros with dataflow", "exp"],
+    ["topic-05-sentinels", T, "Tasks & queues", "Sentinel control wavelets end a stream and activate a task", "both", [5], "Ch 5 · Control tasks and sentinels", "exp"],
+    ["topic-06-switches", T, "Fabric routing", "Fabric switches: one color, several routes, advanced by control wavelets", "both", [4], "Ch 4 · Switches: one color, several routes", "exp"],
+    ["topic-07-switches-entrypt", T, "Fabric routing", "A control wavelet that also carries a task ID and a 16-bit payload", "both", [4, 5], "Ch 4 · Control wavelets; Ch 5 · Control tasks and sentinels", "exp"],
+    ["topic-08-filters", T, "Fabric routing", "Range filters: each PE accepts only a slice of one stream", "both", [4], "Ch 4 · Filters: one stream, many slices", "exp"],
+    ["topic-09-fifos", T, "Memory & DSDs", "FIFO DSDs buffer bursty fabric I/O and can compute in flight", "both", [6], "Ch 6 · FIFOs extend the tiny hardware queues", "exp"],
+    ["topic-10-map-builtin", T, "Memory & DSDs", "@map: custom element-wise operations over DSDs", "both", [6], "Ch 6 · Where the descriptor lives: DSRs, @load_to_dsr and @map", "exp"],
+    ["topic-11-collectives", T, "Collectives", "<collectives_2d>: broadcast, scatter, gather, reduce on rows and columns", "both", [12, 14], "Ch 12 · The library version: <collectives_2d>; Ch 14", "lab"],
+    ["topic-12-debug-library", T, "Debug & timing", "<debug> trace buffers (values, strings, timestamps) read by the host", "both", [10, "C"], "Ch 10 · Debugging; App C · Other ways to look inside", "exp"],
+    ["topic-13-simprint", T, "Debug & timing", "<simprint>: print to sim.log from the device", "both", [10, "C"], "Ch 10 · When it hangs: a four-step procedure", "lab"],
+    ["topic-14-color-swap", T, "Fabric routing", "Color swap: a router flips between two colors", "w2", [4], "Ch 4 · Runtime flexibility: switches, filters and teardown", "nam", "WSE-2 only; not supported on WSE-3 in 2.10.1."],
+    ["topic-15-wse3-microthreads", T, "Tasks & queues", "Explicit microthread IDs, decoupled from queue IDs", "w3", [3, 5], "Ch 3 · Microthreads: overlap, not more FLOPs; Ch 5 · WSE-2 versus WSE-3", "exp", "WSE-3 only."],
+    ["topic-16-queue-flush", T, "Tasks & queues", "@queue_flush: reuse a WSE-3 output queue with another color", "both", [5], "Ch 5 · Reusing a queue on WSE-3: @queue_flush and teardown task 29", "exp"],
+    ["25-pt-stencil", B, "Stencils & solvers", "3-D 25-point time-marching stencil (seismic), velocity and source fields", "w2", [13], "Ch 13 · How the SDK's stencils differ", "exp", "WSE-2 only."],
+    ["7pt-stencil-spmv", B, "Stencils & solvers", "3-D 7-point stencil as SpMV, timed with TSC + sync + time_ref", "both", [13, 15, "C"], "Ch 13 · How the SDK's stencils differ; Ch 15; App C", "exp"],
+    ["bandwidth-test", B, "Host I/O", "Host-device bandwidth measured on the device with the TSC", "both", [7, "C"], "Ch 7 · The narrow door; App C", "exp"],
+    ["bicgstab", B, "Stencils & solvers", "BiCGSTAB on a 7-point stencil matrix; host loop or device loop", "both", [15], "Ch 15 (same module structure as CG)", "nam", "Needs the benchmark-libs import fix."],
+    ["cholesky", B, "Linear algebra", "Right-looking Cholesky on the lower triangle", "both", [], "Not covered", "no"],
+    ["conjugate-gradient", B, "Stencils & solvers", "CG composed from stencil_3d_7pts (SpMV), allreduce (dots) and blas.csl", "both", [15], "Ch 15 · Lab 5", "lab", "Needs the benchmark-libs import fix."],
+    ["fft-1d-2d", B, "Other algorithms", "Radix-2 Cooley-Tukey 1-D and 2-D DFT with DSD base/length/stride moves", "both", [6], "Ch 6 · Two spellings, and moving a DSD", "nam"],
+    ["fft-3d", B, "Other algorithms", "3-D FFT by pencil decomposition: local FFTs and all-to-all transposes", "w3", [6, 18], "Ch 6 (DSD moves); Ch 18 names it", "nam", "WSE-3 only; uses kernels/fft."],
+    ["game-of-life", B, "Stencils & solvers", "Conway's Game of Life on a 2-D grid of PEs", "both", [4, 13], "Ch 4 (named); compare Ch 13's stencil", "nam"],
+    ["gemm-collectives_2d", B, "Linear algebra", "SUMMA GEMM with <collectives_2d> broadcasts along rows and columns", "both", [14], "Ch 14 · Lab 4: 2-D GEMM with SUMMA", "lab"],
+    ["gemv-checkerboard-pattern", B, "Linear algebra", "2-D GEMV with a checkerboard of colors for the reduction", "both", [6, 12], "Ch 6 · Data picks the address (code excerpt); Ch 12", "exp"],
+    ["gemv-collectives_2d", B, "Collectives", "2-D GEMV with <collectives_2d> scatter, broadcast and reduce", "both", [12], "Ch 12 · The library version: <collectives_2d>", "exp"],
+    ["histogram-torus", B, "Other algorithms", "Distributed histogram with buckets spread over PEs on a torus; kernels/tally for completion", "w2", [4], "Ch 4 (named)", "nam", "WSE-2 only."],
+    ["mandelbrot", B, "Other algorithms", "Pipeline-parallel Mandelbrot on 4 × 4 PEs (left/middle PE roles)", "both", [], "Not covered (try after Ch 12: load imbalance)", "no"],
+    ["power-method", B, "Stencils & solvers", "Power iteration for the largest eigenvalue of a 7-point stencil matrix", "both", [15, 18], "Ch 15 (same structure as CG); Ch 18 names it", "nam", "Needs the benchmark-libs import fix."],
+    ["preconditioned-conjugate-gradient", B, "Stencils & solvers", "PCG: CG with a preconditioner on the 7-point stencil", "both", [15], "Ch 15 (variant of CG)", "nam", "Needs the benchmark-libs import fix."],
+    ["residual", B, "Linear algebra", "|b − Ax| on 2 × 2 PEs: row reduction, then column reduction for the norm", "both", [12], "Concept: Ch 12 · Program 03 row reduction", "no"],
+    ["row-col-broadcast", B, "Host I/O", "memcpy_h2d_rowbcast / colbcast send one row or column to a region", "both", [7], "Ch 7 · How a copy reaches its PE", "exp"],
+    ["single-tile-matvec", B, "Linear algebra", "One-PE y = Ax sweep: memory bandwidth and FLOP/s per PE", "both", [3, 6, 8, 18], "Ch 3 · Is memory fast enough?; Ch 6; Ch 8; Ch 18", "exp"],
+    ["spmv-hypersparse", B, "Linear algebra", "Hypersparse SpMV with its own allreduce and f_sync timing", "w2", [3], "Ch 3 · Sparsity (concept)", "nam", "WSE-2 only."],
+    ["wide-multiplication", B, "Other algorithms", "128 × 128 → 256-bit integer multiply from 16-bit words: carry chains", "both", [], "Not covered", "no"],
+    ["benchmark-libs/allreduce", L, "Collectives", "Allreduce over a rectangle: row reduce, column reduce, broadcast back; also the sync for TSC timing", "both", [12, 15, "C"], "Ch 15; Ch 12 exercise; App C · Synchronise, then correct", "lab", "Library: runs through the CG-family scripts."],
+    ["benchmark-libs/stencil_3d_7pts", L, "Stencils & solvers", "3-D 7-point SpMV module, separate wse2/ and wse3/ implementations", "both", [13, 15], "Ch 13 · How the SDK's stencils differ; Ch 15", "lab", "Library: runs through 7pt-stencil-spmv and the CG family."],
+    ["csl-libs/kernels/fft", L, "Other algorithms", "3-D FFT module (fft3d, layout, RPC wrapper) inside the SDK image", "w3", [6, 10], "Ch 10 · The standard library map", "nam", "Used only by fft-3d (WSE-3 script)."],
+    ["csl-libs/kernels/tally", L, "Collectives", "Two-phase global completion tally reported from one PE", "w2", [10], "Ch 10 · The standard library map", "nam", "Used only by histogram-torus (WSE-2 script)."],
+  ];
+  const FILES = { 3: "03-processing-element.html", 4: "04-fabric.html", 5: "05-tasks.html", 6: "06-dsds.html", 7: "07-host-io.html", 8: "08-systems.html",
+    10: "10-csl-toolchain.html", 11: "11-lab-first-programs.html", 12: "12-lab-neighbours.html", 13: "13-lab-stencil.html", 14: "14-lab-gemm.html",
+    15: "15-lab-cg.html", 18: "18-comparison.html", C: "appendix-c-measuring.html" };
+  const ARCH = { both: ["both", "WSE-2 + WSE-3"], w3: ["w3", "WSE-3"], w2: ["w2", "WSE-2"], none: ["none", "no script"] };
+  const ST = { lab: "Labbed", exp: "Explained", nam: "Named", no: "Not covered" };
+  const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  // filters
+  const topics = [...new Set(D.map(d => d[2]))].sort();
+  $("#f-topic").innerHTML = `<option value="">any</option>` + topics.map(t => `<option>${esc(t)}</option>`).join("");
+  const chs = [3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 18, "C"];
+  $("#f-ch").innerHTML = `<option value="">any</option>` + chs.map(c => `<option value="${c}">${c === "C" ? "Appendix C" : "Chapter " + c}</option>`).join("") + `<option value="none">not covered</option>`;
+  let only = null;   // set of names from the ladder
+  function render() {
+    const tp = $("#f-topic").value, ch = $("#f-ch").value, ar = $("#f-arch").value, kd = $("#f-kind").value, q = $("#f-q").value.trim().toLowerCase();
+    const rows = D.filter(d => {
+      if (only && !only.has(d[0])) return false;
+      if (tp && d[2] !== tp) return false;
+      if (kd && d[1] !== kd) return false;
+      if (ch === "none" ? d[7] !== "no" : ch && !d[5].map(String).includes(ch)) return false;
+      if (ar === "both" && d[4] !== "both") return false;
+      if (ar === "w3" && !(d[4] === "both" || d[4] === "w3")) return false;
+      if (ar === "w2" && !(d[4] === "both" || d[4] === "w2")) return false;
+      if (ar === "w3only" && d[4] !== "w3") return false;
+      if (ar === "w2only" && d[4] !== "w2") return false;
+      if (ar === "none" && d[4] !== "none") return false;
+      if (q && !(d[0] + " " + d[3] + " " + d[6] + " " + d[2] + " " + (d[8] || "")).toLowerCase().includes(q)) return false;
+      return true;
+    });
+    $("#ix-table tbody").innerHTML = rows.map(d => {
+      const a = ARCH[d[4]];
+      const links = d[5].filter(c => FILES[c]).map(c => `<a href="${FILES[c]}">${c === "C" ? "App C" : "Ch " + c}</a>`).join(" · ");
+      return `<tr><td class="nm">${esc(d[0])}<small>${d[1]} · ${esc(d[2])}</small></td><td>${esc(d[3])}${d[8] ? `<span class="note">${esc(d[8])}</span>` : ""}</td>` +
+        `<td><span class="arch ${a[0]}">${a[1]}</span></td><td>${esc(d[6])}${links ? `<span class="note">${links}</span>` : ""}</td><td><span class="st ${d[7]}">${ST[d[7]]}</span></td></tr>`;
+    }).join("") || `<tr><td colspan="5">No example matches these filters.</td></tr>`;
+    $("#ix-count").textContent = `${rows.length} of ${D.length} shown` + (only ? " (ladder selection; Reset filters to clear)" : "");
+  }
+  ["#f-topic", "#f-ch", "#f-arch", "#f-kind"].forEach(s => $(s).addEventListener("change", render));
+  $("#f-q").addEventListener("input", render);
+  $("#f-reset").onclick = () => { only = null; ["#f-topic", "#f-ch", "#f-arch", "#f-kind"].forEach(s => $(s).value = ""); $("#f-q").value = ""; render(); };
+  render();
+
+  // ladder
+  const LAD = [
+    ["Ch 3", "After Chapter 3 (the PE)", [["single-tile-matvec", "read the README's bandwidth numbers, then run it"], ["topic-04-sparse-tensors", "the index-plus-value trick"]]],
+    ["Ch 4", "After Chapter 4 (the fabric)", [["topic-06-switches", ""], ["topic-07-switches-entrypt", ""], ["topic-08-filters", ""], ["topic-14-color-swap", "only if you target WSE-2"]]],
+    ["Ch 5", "After Chapter 5 (tasks)", [["topic-05-sentinels", ""], ["topic-16-queue-flush", ""], ["topic-15-wse3-microthreads", "WSE-3 only"]]],
+    ["Ch 6", "After Chapter 6 (DSDs)", [["gemv-02-memory-dsds", ""], ["topic-10-map-builtin", ""], ["pipeline-01-basic", "raise size until it stalls"], ["pipeline-02-fifo", ""], ["topic-09-fifos", ""]]],
+    ["Ch 7", "After Chapter 7 (host I/O)", [["gemv-03-memcpy", ""], ["gemv-09-streaming", ""], ["row-col-broadcast", ""], ["bandwidth-test", "TSC-timed transfers"]]],
+    ["Ch 10", "After Chapter 10 (CSL and the toolchain)", [["gemv-00-basic-syntax", "read only"], ["gemv-01-complete-program", ""], ["gemv-04-params", ""], ["topic-01-arrays-and-pointers", ""], ["topic-02-libraries", ""], ["topic-13-simprint", ""], ["topic-12-debug-library", ""], ["sdklayout-01-introduction", "then sdklayout-02"]]],
+    ["Ch 11", "After Chapter 11 (Lab 1)", [["topic-03-streaming-wavelet-data", "the SDK's version of program 02"], ["gemv-05-multiple-pes", ""], ["pipeline-03-multiple", ""], ["sdklayout-03-ports-and-connections", "then sdklayout-04"]]],
+    ["Ch 12", "After Chapter 12 (Lab 2)", [["gemv-06-routes-1", ""], ["gemv-07-routes-2", ""], ["gemv-08-routes-3", ""], ["residual", "row then column reduction"], ["topic-11-collectives", ""], ["gemv-collectives_2d", ""], ["gemv-checkerboard-pattern", ""], ["mandelbrot", "load imbalance along a pipeline"]]],
+    ["Ch 13", "After Chapter 13 (Lab 3)", [["game-of-life", "a 2-D stencil"], ["7pt-stencil-spmv", "3-D, TSC-timed"], ["25-pt-stencil", "WSE-2 only"]]],
+    ["Ch 14", "After Chapter 14 (Lab 4, SUMMA)", [["gemm-collectives_2d", "the original of the lab"], ["sdklayout-05-gemv", "the same idea with SdkLayout"], ["cholesky", "a factorisation instead of a product"]]],
+    ["Ch 15", "After Chapter 15 (Lab 5, CG)", [["conjugate-gradient", "with the import fix; then device_run.py"], ["preconditioned-conjugate-gradient", ""], ["bicgstab", ""], ["power-method", ""]]],
+    ["Beyond", "Beyond the course", [["fft-1d-2d", ""], ["fft-3d", "WSE-3 only; all-to-all transposes"], ["wide-multiplication", "carry chains"], ["histogram-torus", "WSE-2 only"], ["spmv-hypersparse", "WSE-2 only"]]],
+  ];
+  const byName = Object.fromEntries(D.map(d => [d[0], d]));
+  let cur = 0;
+  const lc = $("#lad-chips");
+  const lb = LAD.map((l, i) => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = l[0];
+    b.setAttribute("aria-pressed", "false"); b.onclick = () => lad(i); lc.appendChild(b); return b;
+  });
+  function lad(i) {
+    cur = i;
+    lb.forEach((b, k) => b.setAttribute("aria-pressed", k === i ? "true" : "false"));
+    const l = LAD[i];
+    $("#lad-out").innerHTML = `<p style="margin:4px 0"><b>${esc(l[1])}</b></p><ol class="ladder">` + l[2].map(([n, why]) => {
+      const d = byName[n], a = ARCH[d[4]];
+      return `<li><code>${esc(n)}</code> <span class="arch ${a[0]}">${a[1]}</span> ${esc(d[3])}${why ? ` <span style="color:var(--muted)">(${esc(why)})</span>` : ""}</li>`;
+    }).join("") + `</ol>`;
+  }
+  $("#lad-show").onclick = () => {
+    only = new Set(LAD[cur][2].map(x => x[0]));
+    ["#f-topic", "#f-ch", "#f-arch", "#f-kind"].forEach(s => $(s).value = ""); $("#f-q").value = "";
+    render();
+    $("#ix").scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  lad(0);
+})();
+</script>
+</body>
+</html>

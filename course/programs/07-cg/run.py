@@ -42,7 +42,8 @@ def cg_numpy(max_ite):                # the same recurrence, in f32
 HOST_ITE = min(args.host_ite, ITE)
 ref = {'host': cg_numpy(HOST_ITE), 'device': cg_numpy(ITE)}
 
-rt = SdkRuntime(args.name, cmaddr=args.cmaddr)
+# No per-cycle trace files: this lab simulates ~10^5 cycles, which would write gigabytes of them.
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr, suppress_simfab_trace=True)
 rt.load(); rt.run()
 f32 = dict(streaming=False, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=False)
 def h2d(sym, a, n): rt.memcpy_h2d(rt.get_id(sym), np.ascontiguousarray(a).ravel(), 0, 0, W, H, n, **f32)
@@ -88,12 +89,19 @@ for label, (x, rh, th, pr, K, which) in (('host-driven loop  ', host), ('device-
     np.testing.assert_allclose(x, x_ref, rtol=1e-4, atol=1e-5 * np.abs(x_ref).max())
     np.testing.assert_allclose(rh[py, px, :K + 1], hist_ref, rtol=1e-3, atol=1e-6 * hist_ref[0])
     assert np.all(rh[:, :, :K + 1] == rh[0, 0, :K + 1]), "every PE must see the same rho"
-    per = (th[py, px, K] - th[py, px, 0]) / K
+    if K == 0: print(f"{label}: 0 iterations"); continue
+    per = (th[:, :, K] - th[:, :, 0]) / K                # durations on each PE's own clock
     split = ', '.join(f"{n} {v / K:.0f}" for n, v in zip(names, pr[py, px]) if v)
-    print(f"{label}: {K} iterations, {per:.0f} cycles/iteration on PE ({px},{py})"
+    print(f"{label}: {K} iterations, {per[py, px]:.0f} cycles/iteration on PE ({px},{py})"
           + (f"  [{split}]" if pr[py, px].any() else ""))
-rel = np.sqrt(np.maximum(dev[1][py, px, :dev[4] + 1], 0)) / np.linalg.norm(b)
-print("|r_k|/|b| (device):", np.array2string(rel[::max(1, len(rel) // 8)], precision=2))
+    if which == 'device' and pr.any():
+        ar = pr[:, :, 3] / K
+        print(f"  all {W*H} PEs: {per.min():.0f}-{per.max():.0f} cycles/iteration, "
+              f"of which allreduce {ar.min():.0f}-{ar.max():.0f} (PE ({px},{py}) {ar[py, px]:.0f})")
+K = dev[4]
+rel = np.sqrt(np.maximum(dev[1][py, px, :K + 1], 0)) / np.linalg.norm(b)
+print("|r_k|/|b|, k = 0..%d (device):" % K)
+print(np.array2string(rel, precision=2, max_line_width=100))
 true_res = np.linalg.norm(b - A(dev[0])) / np.linalg.norm(b)
 print(f"true residual |b - A x|/|b| = {true_res:.2e}; max |x_wse - x_numpy| = {np.abs(dev[0] - ref['device'][0]).max():.1e}")
 print("SUCCESS!")

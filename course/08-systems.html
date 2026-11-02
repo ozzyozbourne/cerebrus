@@ -31,8 +31,7 @@
 <h4>After this chapter you can</h4>
 <ul>
 <li>Walk through one weight-streaming training step, say what MemoryX and SwarmX store and compute, and show with numbers why streaming weights does not starve the wafer.</li>
-<li>Explain how an inference wafer runs a model as a pipeline of layer regions, where the KV cache lives, and why per-user speed and total throughput are different numbers.</li>
-<li>Estimate how many wafers a model needs, including its KV cache, and the bandwidth ceiling on its decode speed.</li>
+<li>Say in one table how pinned-weight inference differs from weight streaming, and where Chapter 9 picks it up.</li>
 <li>Place CS-1 to CS-4, and the CS-5/CS-6 roadmap, on a timeline with the right numbers.</li>
 </ul>
 </div>
@@ -140,95 +139,15 @@
 <p>CS-1 and the original CS-2 installation used <strong>layer-pipelined</strong> execution, for models "below 1 billion parameters, which can fit entirely in the on-chip memory" <span class="tag vendor">Vendor</span>. All the layers are loaded onto the wafer at once. The compiler "maps each kernel/layer of the network onto a region (a rectangle)", connects the regions with on-wafer data paths, and sizes and places them "to optimize the throughput". Activations flow forward from region to region, and activation gradients flow back. Weights stay in their region and are updated on the wafer at the end of each backward step. After an initial fill latency, "all the layers of the network enter a steady state of active execution" <span class="tag vendor">Vendor</span>. Keep this picture in mind: 2024 inference brings back the same spatial idea.</p>
 
 <h2 id="inference">Inference: pin the weights, pass the tokens</h2>
-<p>Inference flips the trade. Decode is bandwidth-bound (Chapter 1), so the winning move is to keep every weight in SRAM and never fetch it: "we don't need to access external memory to load parameters because they're already there" <span class="tag vendor">Vendor</span>. The cost is capacity. Besides the weights, decode keeps a <strong>KV cache</strong> (Chapter 1): the attention keys and values of every earlier token, one copy per sequence, growing with context length. On a GPU it lives in HBM. On Cerebras it must fit in whatever SRAM the weights leave free. Llama 3.1-70B needs about 140 GB at 16-bit <span class="tag derived">Derived</span>, so at launch in August 2024 its 80 layers were spread across <strong>four CS-3 systems</strong>, each holding a contiguous block of 20 layers, with only activations passing between wafers <span class="tag vendor">Vendor</span> (Hot Chips 2024).</p>
-
-<h3>Inside the pipeline</h3>
-<p>Hot Chips 2024 describes the mapping directly <span class="tag vendor">Vendor</span>:</p>
-<ul>
-<li><strong>The opposite of a GPU.</strong> "GPU: multiple chips to run a single layer. Cerebras: fraction of a chip to run a single layer."</li>
-<li><strong>Regions.</strong> "Model layers are mapped to wafer regions", each sized "based on memory and compute requirements", with "model weights and KV cache stored locally in the region memory close to the compute". This is layer-pipelined mode again, now for decode.</li>
-<li><strong>One token per stage.</strong> "Each wafer region processes 1 token": a matrix × vector at local batch 1. The next region is physically adjacent, and the "last region output [is] cycled back to generate next token". That loop is the autoregressive decode of Chapter 1.</li>
-<li><strong>Many users fill the pipe.</strong> "Single user is using only a fraction of the total memory bandwidth", so other users' tokens occupy the other stages at the same moment, and "every user gets full performance".</li>
-<li><strong>Prefill.</strong> A prompt is known up front, so several of one user's prompt tokens can be in the pipe at once.</li>
-<li><strong>Across wafers.</strong> "Keep almost all high communication on wafer… Transfer only activations between wafers", over CS-3's "low latency RDMA over Ethernet". Llama 3.1-8B (16 GB) fits on one wafer.</li>
-</ul>
-
-<div class="widget" id="pd">
-<h4>Pipeline decode: one user versus many</h4>
-<p class="hint">Llama 3.1-70B on four CS-3s, drawn as 20 stages of 4 layers each (the real pipeline has 80 layer regions). Each dot is one user's current token. The chart below records which stage held which user at each tick. Pick how many users are in flight and press Play.</p>
-<div class="controls">
-<button class="btn" id="pd-play" type="button">Play</button>
-<button class="btn secondary" id="pd-step" type="button">Step</button>
-<button class="btn secondary" id="pd-reset" type="button">Reset</button>
-<div class="seg" id="pd-u"><span class="lbl">Users in flight</span><button type="button" data-v="1" aria-pressed="true">1</button><button type="button" data-v="2">2</button><button type="button" data-v="4">4</button><button type="button" data-v="10">10</button><button type="button" data-v="20">20</button></div>
-</div>
-<svg id="pd-svg" viewBox="0 0 760 380" width="760" role="img" aria-label="Four wafers as a 20-stage decode pipeline, with a stage-occupancy timeline"></svg>
-<div class="readout" id="pd-out" aria-live="polite"></div>
-</div>
-<p>This is <strong>pipeline parallelism</strong>. For a single sequence, each new token visits the wafers in order, so at any moment only one region of one wafer is working on it. The rest are kept busy only when other sequences are in flight. Adding users raises total throughput without slowing anyone, until the pipe is full or the KV cache runs out of SRAM. At 2,100 tok/s, one token's full trip through all four wafers takes about 476 µs <span class="tag derived">Derived</span>. The even 20-layer split is shown on the Hot Chips 2024 slide <span class="tag vendor">Vendor</span>; ~35 GB of weights per wafer follows from it <span class="tag derived">Derived</span>, though the embedding and output layers make the real split slightly uneven.</p>
-
-<div class="callout">
-<strong>Worked example: the inter-wafer budget</strong>
-<ul>
-<li>Per token, the data crossing each wafer boundary is one activation vector: Llama-70B's hidden size 8,192 <span class="tag vendor">Vendor</span> (Meta's model config) × 2 B ≈ <b>16 KB</b> <span class="tag derived">Derived</span>.</li>
-<li>HC2024: "CS-3 IO is &lt;5us; 4 hops required; &lt;1% impact to latency" <span class="tag vendor">Vendor</span>. The four hops are three wafer-to-wafer hops plus the return trip.</li>
-<li>At 450 tok/s (launch), one token takes 2.2 ms. Four hops at 5 µs add 20 µs, about <b>0.9%</b>. At 2,100 tok/s (0.48 ms per token), the same 20 µs is about <b>4%</b> <span class="tag derived">Derived</span>. That is one reason CS-4 cuts the hop to "as low as 2 microseconds" <span class="tag vendor">Vendor</span>.</li>
-<li>Bandwidth: HC2024 budgets 100 Gb/s of CS-3's 1.2 Tb/s, "&lt;10% of available" <span class="tag vendor">Vendor</span>. One user at 2,100 tok/s moves only about 34 MB/s per boundary <span class="tag derived">Derived</span>; the headroom is for many users and prefill.</li>
-</ul>
-</div>
-
-<h3 id="kv-cache">KV-cache arithmetic: what limits users and context</h3>
-<p>For Llama-3-70B (80 layers, 8 KV heads of width 128 <span class="tag vendor">Vendor</span>, Meta config), the KV cache per token is 80 × 8 × 128 × 2 (K and V) × 2 B = <b>327,680 B ≈ 0.33 MB</b> <span class="tag derived">Derived</span>, the same figure as Chapter 1. Four wafers hold 176 GB; minus 140 GB of weights leaves ~36 GB. Even if all of it held KV and none held activations, that is about <b>110,000 tokens of context in total across all users</b>: roughly 13 users at 8K context, or less than one user at 128K <span class="tag derived">Derived</span>. On the GPU side the same KV cache sits in HBM next to the weights. This is why Hot Chips 2024 lists "KV cache optimizations" among the next techniques <span class="tag vendor">Vendor</span>, and why long-context deployments such as Llama 3.1-405B at 128K need many wafers. The widget below makes the trade concrete.</p>
-
-<div class="widget" id="cap">
-<h4>How many wafers, and how fast can it possibly decode?</h4>
-<p class="hint">Weights and KV cache pinned in SRAM (44 GB per WSE-3), compared with the HBM of H100s and B200s. KV assumes Llama-3 shapes (8 KV heads × 128, KV stored at 16-bit); layer counts for sizes between the presets are interpolated, so treat those as illustrative. The speed limit is aggregate memory bandwidth ÷ bytes read per decode step (all weights + every user's KV). It assumes perfect splitting across devices and ignores compute, hops and speculative decoding. Device figures: WSE-3 44 GB and 21 PB/s, H100 80 GB and 3.35 TB/s, B200 192 GB and ~8 TB/s <span class="tag vendor">Vendor</span>; the GEMV rate is the SDK benchmark result below. Red marks are published Cerebras speeds (16-bit presets only). All outputs <span class="tag derived">Derived</span>.</p>
-<div class="controls">
-<div class="seg" id="p-pre"><span class="lbl">Model</span><button type="button" data-v="8">8B</button><button type="button" data-v="70" aria-pressed="true">70B</button><button type="button" data-v="120">120B</button><button type="button" data-v="405">405B</button><button type="button" data-v="1000">1T</button></div>
-</div>
-<div class="controls">
-<label>Params <input type="range" id="p-n" min="0" max="3" step="0.01" value="1.845" aria-label="Parameters, log scale"> <span id="p-nv" class="mono"></span></label>
-<label>Weights <select id="p-b"><option value="2">16-bit</option><option value="1">8-bit</option><option value="0.5">4-bit</option></select></label>
-<label>Context <select id="p-c"><option value="1024">1K</option><option value="8192" selected>8K</option><option value="32768">32K</option><option value="131072">128K</option></select></label>
-<label>Users <input type="range" id="p-u" min="1" max="64" step="1" value="1"> <span id="p-uv" class="mono"></span></label>
-</div>
-<svg id="p-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Devices needed"></svg>
-<svg id="p-bw" viewBox="0 0 680 210" width="680" role="img" aria-label="Decode speed ceiling per user, log scale"></svg>
-<div class="readout" id="p-out" aria-live="polite"></div>
-</div>
-
-<h2>What the speed looks like, and why it changed</h2>
+<p>Inference flips the trade. Decode uses each weight once per token per sequence (the <i>T</i> = 1 end of the widget above), so streaming weights in would leave the wafer idle. Instead the weights stay <em>on</em> the wafers. Llama 3.1-70B (~140 GB at 16-bit <span class="tag derived">Derived</span>) went onto <strong>four CS-3s</strong> in August 2024, 20 layers each. Each layer gets a region of PEs holding its weights and its share of the KV cache, and only one 16 KB activation vector per token crosses each wafer boundary <span class="tag vendor">Vendor</span> (Hot Chips 2024). This is the layer-pipelined idea of the previous section, brought back for decode.</p>
 <div class="table-wrap"><table>
-<tr><th>When · model · result</th><th>Configuration, and what made it possible</th><th>Tag</th></tr>
-<tr><td>Aug 2024 · Llama 3.1-70B · 450 tok/s</td><td>4 × CS-3, 16-bit weights. The first implementation "utilized only a fraction of its peak bandwidth, compute, and IO capacity"</td><td><span class="tag vendor">Vendor</span></td></tr>
-<tr><td>Oct 2024 · Llama 3.1-70B · 2,100 tok/s</td><td>Same hardware. "Re-written or optimized" MatMul, reduce/broadcast and other kernels; wafer I/O "asynchronously from compute"; speculative decoding; "all models continue to use 16-bit original weights"; ±20% variance is normal</td><td><span class="tag vendor">Vendor</span></td></tr>
-<tr><td>Llama 3.3-70B · 2,314 tok/s, 170 ms time to first token</td><td>Measured by Artificial Analysis, reported in an interview</td><td><span class="tag indep">Indep</span></td></tr>
-<tr><td>Nov 2024 · Llama 3.1-405B · 969 tok/s (1,000-token prompt); 539 tok/s (100,000-token prompt); 240 ms TTFT</td><td>16-bit weights, 128K context: ≥ 19 wafers for the weights alone, from the widget <span class="tag derived">Derived</span>. Listed at $6/$12 per M input/output tokens</td><td><span class="tag vendor">Vendor</span>, citing AA</td></tr>
-<tr><td>May 2026 · Kimi K2.6 (~1T params, MoE) · 981 tok/s, 6.7× the fastest GPU cloud</td><td>Press reports quoting Cerebras: ~20 CS-3s, the model's native 4-bit weights with 16-bit compute. 1T × 0.5 B = 500 GB, so ≥ 12 wafers for weights; the rest leaves room for KV and stage balance <span class="tag derived">Derived</span></td><td><span class="tag indep">Indep</span> AA for speed; config <span class="tag vendor">Vendor, via press</span></td></tr>
-<tr><td>gpt-oss-120B · ~3,000 tok/s claimed vs ~1,700 measured</td><td>—</td><td><span class="tag vendor">Vendor</span> vs <span class="tag indep">Indep</span></td></tr>
-<tr><td>Aug 2026 · GPT-5.6 Sol · up to 750 tok/s</td><td>"Partitions it at layer boundaries across multiple CS-3 systems"; same weights and precision as the standard endpoint</td><td><span class="tag vendor">Vendor</span></td></tr>
+<tr><th></th><th>Training (weight streaming)</th><th>Inference (pinned weights)</th></tr>
+<tr><td>Weights live</td><td>off the wafer, in MemoryX</td><td>in SRAM, spread over several wafers</td></tr>
+<tr><td>What crosses the wafer edge</td><td>weights in, gradients out, 1.2 Tb/s</td><td>activations only, ~16 KB per token per hop</td></tr>
+<tr><td>Parallelism across systems</td><td>data parallel (SwarmX)</td><td>pipeline: each wafer holds a block of layers</td></tr>
+<tr><td>Limited by</td><td>activation memory per wafer</td><td>weights + KV cache must fit in 44 GB per wafer</td></tr>
 </table></div>
-<p>The 450 → 2,100 jump is the system's most instructive number: 4.7× on identical hardware, from software alone <span class="tag derived">Derived</span>. Kimi K2.6 is a mixture-of-experts model, so only about 32B of its parameters are read per token, though all of them must be resident <span class="tag vendor">Vendor, via press</span>. Treat that row as a capability claim, not a recipe; the precise deployment was not published.</p>
-
-<div class="callout key">
-<strong>Worked example: where the decode speed limit actually is</strong>
-<ul>
-<li>At batch 1, every token reads all 140 GB of Llama-70B's weights. One H100 (3.35 TB/s) therefore tops out near 3.35 TB/s ÷ 140 GB ≈ <b>24 tok/s</b>, and it cannot even hold the model. Eight H100s (26.8 TB/s) top out near 190 tok/s; the best measured DGX-H100 result in Hot Chips 2024 is 86 tok/s, at "&lt;30% memory bandwidth utilization" <span class="tag vendor">Vendor</span>, citing Artificial Analysis.</li>
-<li>Four WSE-3s have 4 × 21 PB/s = 84 PB/s, a ceiling of about <b>600,000 tok/s</b>. At 2,100 tok/s the wafers read weights at only ~0.3 PB/s, about 0.35% of the headline <span class="tag derived">Derived</span>. (Speculative decoding changes the bytes per accepted token, so this is approximate.)</li>
-<li>Per byte held, a WSE-3 can read its whole 44 GB about 480,000 times per second; an H100 can read its 80 GB about 42 times <span class="tag derived">Derived</span>. That is "bandwidth per byte held", in numbers.</li>
-<li>So on Cerebras, raw weight bandwidth is <em>not</em> the limit. Reductions, pipeline synchronisation, attention and KV reads, and the hops set the pace. The sources do not break this down.</li>
-</ul>
-</div>
-
-<div class="callout ok">
-<strong>Experiment: a real GEMV kernel's bandwidth, measured with the SDK</strong>
-<p>The headline 21 PB/s is a peak. The SDK benchmark <code>benchmarks/single-tile-matvec</code> computes y = A·x in fp32 with one N × N tile per PE, and reports bandwidth assuming an 850 MHz clock <span class="tag sdk">SDK 2.10.1</span>. In a simulator run on a 2 × 2 rectangle (made for this course's review), N = 100 took about 10,160 cycles on both <code>--arch wse2</code> and <code>wse3</code> <span class="tag measured">Measured</span>. That is ≈ 4.0 B of useful weight per cycle per PE. The benchmark's own extrapolation to 750 × 994 PEs is <b>~2.5 PB/s of useful weight bytes</b> (7.5 PB/s of raw SRAM accesses) <span class="tag derived">Derived</span>, roughly 12% of the headline. Even at that rate, 35 GB per wafer takes ~14 µs per token, about 56 µs for four wafers, a ceiling near 18,000 tok/s <span class="tag derived">Derived</span>, still well above the measured 2,100. As a cross-check on the headline, Hot Chips 2022 gives "2 full reads + 1 full write per cycle" of 64 bits per PE, i.e. 24 B/cycle; 850k PEs × 24 B × 1.1 GHz (HC22) ≈ 22 PB/s, close to the WSE-2 headline of 20 PB/s <span class="tag derived">Derived</span>.</p>
-</div>
-
-<div class="callout warn">
-<strong>Fast per user is not the same as cheap per token</strong>
-Pinning weights makes each user's decode fast. But a wafer serves relatively few concurrent sequences compared with a GPU running large batches <span class="tag analyst">Analyst</span>, because each one's KV cache must fit in the SRAM the weights leave free. Analysts put batched H100 serving at ~$0.10–0.25 per million tokens <span class="tag analyst">Analyst</span>, against Cerebras's launch list price of $0.60 for Llama 3.1-70B <span class="tag vendor">Vendor</span>. Fast decode also does not shorten prefill. Chapter 18 returns to this.
-</div>
+<p class="note">Rows <span class="tag vendor">Vendor</span> (white paper, HC2024). <a href="09-model-to-tokens.html">Chapter 9</a> takes this apart. It covers how the compiler places layers as rectangles, the decode pipeline and its KV-cache arithmetic, the wafer-count widget, a per-token latency budget built from measured constants, speculative decoding, MoE and precision, and the speed history from 450 to 2,100 tok/s and beyond.</p>
 
 <h2 id="cs4">CS-4 and the roadmap</h2>
 <p>CS-4 keeps the WSE-3 silicon but rebuilds everything around it. The mechanism behind its "2× faster" claim is mostly power: conversion moved next to the wafer allows "twice as much power to the WSE-3 Turbo, enabling higher operating frequencies and faster token generation" <span class="tag vendor">Vendor</span>.</p>
@@ -241,21 +160,19 @@ Pinning weights makes each user's decode fast. But a wafer serves relatively few
 <tr><td>Use</td><td>"Native support for disaggregated inference": prefill on another platform (AMD Helios or AWS Trainium are named), then the model state moves to CS-4 for decode. Across systems, "execution is pipelined to keep high-volume tensor and expert communication within each wafer".</td></tr>
 <tr><td>Claims</td><td>Up to 2× CS-3 speed, up to 10× throughput per watt, up to 30× faster than GPU systems, and "more than 1,000 tokens per second on models exceeding 10 trillion parameters". Source: "internal benchmarking and projections". Unverified.</td></tr>
 </table></div>
-<p>The drop from &lt;5 µs to 2 µs per hop matters more as tok/s rises (the inter-wafer budget above). One check with the widget: a CS-4 rack holds 3 × 44 = 132 GB, so even a whole rack cannot pin Llama-70B at 16-bit <span class="tag derived">Derived</span>.</p>
+<p>The drop from &lt;5 µs to 2 µs per hop matters more as tok/s rises (Chapter 9's inter-wafer budget). One check with Chapter 9's wafer-count widget: a CS-4 rack holds 3 × 44 = 132 GB, so even a whole rack cannot pin Llama-70B at 16-bit <span class="tag derived">Derived</span>.</p>
 <p><strong>CS-5</strong>, targeted for 2027, pairs Nexus with a next-generation WSE. Cerebras targets up to 10,000 output tok/s per user on gpt-oss-120b and Gemma 4 31B, up to 5,000 tok/s per user and 3 million tok/s per megawatt on multi-trillion-parameter models, and support for "models with more than 50 trillion parameters" <span class="tag vendor">Vendor</span>. <strong>CS-6</strong> integrates "wafer-scale SRAM and compute with 3D-stacked DRAM through ultra-high-bandwidth connections" <span class="tag vendor">Vendor</span>. As ServeTheHome puts it, "Cerebras will be employing DRAM for the first time" <span class="tag indep">Press</span>. That is a direct attack on the capacity limit this whole chapter works around.</p>
 
 <div class="callout">
 <strong>Where this sits for a CSL programmer</strong>
-Weight streaming and multi-wafer inference are run by Cerebras's machine-learning stack, not by programs you write with the SDK. That stack compiles a PyTorch graph into per-layer kernels and runs the same mapping on every system <span class="tag vendor">Vendor</span>. The CSL SDK that the rest of this course teaches is a separate, lower-level path for custom kernels on one wafer (or the simulator), and its host path is the memcpy runtime of Chapter 7. The labs in Chapters 11–13 build the pieces such a mapping needs: data-triggered FMACs, broadcast along rows and columns, and reductions.
+Weight streaming and multi-wafer inference are run by Cerebras's machine-learning stack, not by programs you write with the SDK. That stack extracts a PyTorch graph, matches it to a library of hand-written kernels, sizes and places each kernel as a rectangle of PEs, routes them and links an executable (ISPD 2020 slides <span class="tag vendor">Vendor</span>). For weight streaming it maps one layer at a time onto the whole wafer and runs the same mapping on every system. <a href="09-model-to-tokens.html">Chapter 9</a> walks through that compile path and the inference side. The CSL SDK that Part III teaches is a separate, lower-level path for custom kernels on one wafer (or the simulator), where you place the rectangles yourself, and its host path is the memcpy runtime of Chapter 7. The labs in Chapters 11–15 build the pieces such a mapping needs: data-triggered FMACs, broadcast along rows and columns, reductions and a 2-D GEMM.
 </div>
 
 <div class="quiz">
 <h3>Check yourself</h3>
 <details><summary>Why does weight streaming suit training but not low-latency inference?</summary><p>In training, each weight arriving over the 1.2 Tb/s link is reused for every token in the shard; past about 50,000 tokens per shard a WSE-2 is compute-bound <span class="tag derived">Derived</span>. Decode uses each weight for only one token per sequence, so every token would wait on weights arriving over the off-wafer links (a few hundred GB/s per wafer, less than one GPU's HBM) <span class="tag derived">Derived</span>. Pinning weights in 21 PB/s SRAM avoids that.</p></details>
 <details><summary>How many times does each weight cross the MemoryX link in one training step, and in what format?</summary><p>Twice inward as FP16 (forward pass, then backward pass in transposed order) and once outward as an FP32 gradient, which SwarmX sums across systems before MemoryX applies the update. That is 32 bits in each direction per parameter <span class="tag vendor">Vendor</span>.</p></details>
-<details><summary>One user is generating with Llama 70B on four CS-3s. While wafer 3 processes their token, what are wafers 1, 2 and 4 doing?</summary><p>Nothing for that user: the next token cannot start until this one leaves wafer 4 and loops back. The other wafers stay busy only with other users' tokens in flight. That is why per-user speed and total throughput are separate numbers.</p></details>
-<details><summary>Why can't the 36 GB left on a 4-wafer Llama-70B deployment serve 100 users at 8K context?</summary><p>Each token of context costs ~0.33 MB of KV cache per sequence, so 100 × 8,192 tokens ≈ 268 GB, far more than 36 GB. About 13 users at 8K fit <span class="tag derived">Derived</span>.</p></details>
-<details><summary>Roughly how many WSE-3 wafers to hold a 405B model at 16-bit?</summary><p>810 GB of weights ÷ 44 GB ≈ 19 wafers before any KV cache, or about 5 at 4-bit. In the widget, one 8K-context user (~4 GB of KV) still fits in 19; ten such users need 20 <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Inference keeps weights pinned, and training streams them. Which one is limited by how many wafers you own, and why?</summary><p>Inference: all weights (plus KV cache) must fit in the SRAM of the wafers serving the model, so Llama 70B at 16-bit needs four CS-3s. Training only needs one layer to fit at a time; MemoryX holds the rest, so adding systems adds data parallelism, not capacity.</p></details>
 <details><summary>A CS-4 rack has three 44 GB wafers. Can it hold Llama 70B at 16-bit with weights pinned?</summary><p>No: 3 × 44 = 132 GB &lt; 140 GB before any KV cache. At 8-bit (70 GB) it fits, with about 62 GB to spare <span class="tag derived">Derived</span>.</p></details>
 </div>
 </main>
@@ -493,153 +410,6 @@ Weight streaming and multi-wafer inference are run by Cerebras's machine-learnin
     txt(svg, 14, gy + 90, "on the wafer at all", { "font-size": 12, class: "muted" });
   })();
 
-  /* ---------- Pipeline decode ---------- */
-  (function () {
-    const svg = $("#pd-svg"), S = 20, W = 4, per = S / W, COLS = 36;
-    const colors = ["--accent", "--blue", "--green", "--purple", "--amber", "--red"];
-    let U = 1, tick = 0, playing = false, timer = null, hist = [];
-    const bx = i => 20 + i * 186, cellX = (i, j) => bx(i) + 12 + j * 30;
-    const g = el("g", {}, svg), dots = el("g", {}, svg), gantt = el("g", {}, svg);
-    el("defs", {}, svg).innerHTML = '<marker id="pdb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>';
-    for (let i = 0; i < W; i++) {
-      el("rect", { x: bx(i), y: 26, width: 166, height: 90, rx: 10, class: "acc", "stroke-width": 1.6 }, g);
-      txt(g, bx(i) + 83, 44, `CS-3 #${i + 1} · layers ${i * 20 + 1}–${i * 20 + 20}`, { "text-anchor": "middle", "font-size": 12.5, "font-weight": 700 });
-      for (let j = 0; j < per; j++) el("rect", { x: cellX(i, j), y: 54, width: 24, height: 40, rx: 4, class: "box", "stroke-width": 1 }, g);
-      txt(g, bx(i) + 83, 109, "weights + KV in each region", { "text-anchor": "middle", "font-size": 11, class: "muted" });
-      if (i < W - 1) {
-        el("path", { d: `M${bx(i) + 168} 74 H${bx(i + 1) - 3}`, class: "s-blu", "stroke-width": 2.2, "marker-end": "url(#pdb)" }, g);
-      }
-    }
-    txt(g, 380, 14, "16 KB activation per hop · <5 µs per hop on CS-3", { "text-anchor": "middle", "font-size": 12, class: "muted" });
-    el("path", { d: `M${bx(3) + 150} 117 C ${bx(3) + 150} 150, ${bx(0) + 16} 150, ${bx(0) + 16} 121`, class: "s-blu", "stroke-width": 2, fill: "none", "stroke-dasharray": "5 4", "marker-end": "url(#pdb)" }, g);
-    txt(g, 380, 146, "output token re-enters layer 1 as the next input (autoregressive loop)", { "text-anchor": "middle", "font-size": 12, class: "halo" });
-    // gantt frame
-    const GX = 110, GY = 166, rh = 9, cw = (740 - GX) / COLS;
-    for (let i = 0; i < W; i++) {
-      txt(g, GX - 8, GY + i * per * rh + per * rh / 2 + 4, `wafer ${i + 1}`, { "text-anchor": "end", "font-size": 12 });
-      el("rect", { x: GX, y: GY + i * per * rh, width: COLS * cw, height: per * rh, class: "box", "stroke-width": 1 }, g);
-    }
-    txt(g, GX, GY + S * rh + 16, "time → (one column = one stage-time; rows = the 20 stages)", { "font-size": 12, class: "muted" });
-    const pos = (j, t) => (t + j * (S / U)) % S;
-    function render() {
-      dots.innerHTML = ""; gantt.innerHTML = "";
-      for (let j = 0; j < U; j++) {
-        const p = pos(j, tick), i = Math.floor(p / per), k = p % per;
-        el("circle", { cx: cellX(i, k) + 12, cy: 74, r: 8, fill: cssVar(colors[j % colors.length]), stroke: cssVar("--surface"), "stroke-width": 1.5 }, dots);
-      }
-      const start = Math.max(0, hist.length - COLS);
-      hist.slice(start).forEach((col, c) => col.forEach((u, st) => {
-        if (u >= 0) el("rect", { x: GX + c * cw + 0.5, y: GY + st * rh + 0.5, width: cw - 1, height: rh - 1, fill: cssVar(colors[u % colors.length]) }, gantt);
-      }));
-      const busyW = [0, 1, 2, 3].map(i => { let n = 0; for (let j = 0; j < U; j++) if (Math.floor(pos(j, tick) / per) === i) n++; return n; });
-      const toks = U === 1 ? Math.floor(tick / S) : null;
-      $("#pd-out").textContent =
-        `users in flight: ${U} · stage utilisation: ${U}/${S} = ${Math.round(100 * U / S)}% · wafers holding a token now: ${busyW.filter(n => n).length} of 4\n` +
-        `each user still gets 1 token per ${S} stage-times; the pipe delivers ${U} tokens per ${S} stage-times in total\n` +
-        (U === 1 ? `one user: only one region of one wafer is ever busy; the rest wait for the token to come round${toks !== null ? ` (tokens generated: ${toks})` : ""}` :
-          U === S ? "pipe full: every stage busy, every user at full speed. More users would now queue (or need a second copy of the model)." :
-          "more users fill more stages without slowing anyone, until the pipe is full or KV cache runs out of SRAM");
-    }
-    function stepOnce() {
-      const col = new Array(S).fill(-1);
-      for (let j = 0; j < U; j++) col[pos(j, tick)] = j;
-      hist.push(col); tick++; render();
-    }
-    function reset() { tick = 0; hist = []; render(); }
-    function stop() { playing = false; clearInterval(timer); timer = null; $("#pd-play").textContent = "Play"; }
-    $("#pd-play").onclick = () => { if (playing) return stop(); playing = true; $("#pd-play").textContent = "Pause"; timer = setInterval(stepOnce, reduced ? 700 : 260); };
-    $("#pd-step").onclick = () => { stop(); stepOnce(); };
-    $("#pd-reset").onclick = () => { stop(); reset(); };
-    seg("#pd-u", v => { U = v; reset(); });
-    reset();
-  })();
-
-  /* ---------- Capacity + decode ceiling ---------- */
-  (function () {
-    const shapes = [[8, 32], [70, 80], [405, 126]];
-    function layers(n) { // log-linear interpolation of Llama-3 layer counts (illustrative off-preset)
-      const lg = Math.log;
-      let a = shapes[0], b = shapes[1];
-      if (n > 70) { a = shapes[1]; b = shapes[2]; }
-      const L = a[1] + (b[1] - a[1]) * (lg(n) - lg(a[0])) / (lg(b[0]) - lg(a[0]));
-      return Math.max(16, Math.round(L));
-    }
-    const measured = { 8: [[1800, "launch 1,800"]], 70: [[450, "Aug 2024: 450"], [2100, "Oct 2024: 2,100"]], 405: [[969, "Nov 2024: 969"]] };
-    const devs = [
-      { n: "WSE-3", gb: 44, bw: 21e15, cls: "acc", tag: "21 PB/s each" },
-      { n: "WSE-3 (SDK GEMV)", gb: 44, bw: 2.5e15, cls: "acc", tag: "~2.5 PB/s each, measured kernel", same: 0 },
-      { n: "H100", gb: 80, bw: 3.35e12, cls: "blu", tag: "80 GB, 3.35 TB/s each" },
-      { n: "B200", gb: 192, bw: 8e12, cls: "grn", tag: "192 GB, ~8 TB/s each" },
-    ];
-    let preset = 70;
-    function nVal() { return preset || Math.max(1, Math.round(Math.pow(10, +$("#p-n").value))); }
-    function cap() {
-      const n = nVal(), b = +$("#p-b").value, ctx = +$("#p-c").value, users = +$("#p-u").value;
-      $("#p-nv").textContent = n >= 1000 ? (n / 1000).toFixed(n % 1000 ? 2 : 0) + "T" : n + "B";
-      $("#p-uv").textContent = users;
-      const L = layers(n), kvTok = L * 8 * 128 * 2 * 2, wGB = n * b, kvGB = users * ctx * kvTok / 1e9, tot = wGB + kvGB;
-      const cnt = d => Math.ceil(tot / d.gb);
-      // capacity drawing
-      const svg = $("#p-svg"); svg.innerHTML = "";
-      const rows = [devs[0], devs[2], devs[3]];
-      let y = 12;
-      rows.forEach(d => {
-        const c = cnt(d), group = c > 40 ? Math.ceil(c / 40) : 1, boxes = Math.ceil(c / group);
-        txt(svg, 0, y + 14, `${d.n} × ${c}`, { "font-size": 13, "font-weight": 700 });
-        txt(svg, 0, y + 30, group > 1 ? `1 box = ${group} devices` : `${d.gb} GB each`, { "font-size": 11.5, class: "muted" });
-        const perW = wGB / c / d.gb, perK = kvGB / c / d.gb;
-        for (let i = 0; i < boxes; i++) {
-          const x = 130 + (i % 20) * 27, yy = y + Math.floor(i / 20) * 26, h = 22;
-          el("rect", { x, y: yy, width: 22, height: h, rx: 3, class: "box", "stroke-width": 1 }, svg);
-          const hw = Math.min(1, perW) * h, hk = Math.min(1 - Math.min(1, perW), perK) * h;
-          el("rect", { x: x + 1, y: yy + h - hw, width: 20, height: hw, fill: cssVar("--amber") }, svg);
-          if (hk > 0.3) el("rect", { x: x + 1, y: yy + h - hw - hk, width: 20, height: hk, fill: cssVar("--purple") }, svg);
-        }
-        y += Math.max(1, Math.ceil(boxes / 20)) * 26 + 16;
-      });
-      el("rect", { x: 130, y: y, width: 12, height: 10, fill: cssVar("--amber") }, svg); txt(svg, 147, y + 9, "weights", { "font-size": 12 });
-      el("rect", { x: 210, y: y, width: 12, height: 10, fill: cssVar("--purple") }, svg); txt(svg, 227, y + 9, "KV cache", { "font-size": 12 });
-      txt(svg, 300, y + 9, "(load spread evenly; empty = free memory)", { "font-size": 12, class: "muted" });
-      svg.setAttribute("viewBox", `0 0 680 ${y + 18}`);
-      svg.setAttribute("aria-label", `${cnt(devs[0])} WSE-3 wafers, ${cnt(devs[2])} H100s or ${cnt(devs[3])} B200s needed`);
-      // bandwidth ceiling (log scale, per-user tok/s)
-      const bw = $("#p-bw"); bw.innerHTML = "";
-      const x0 = 150, x1 = 660, lo = 0, hi = 7, X = v => x0 + (Math.log10(Math.max(1, v)) - lo) / (hi - lo) * (x1 - x0);
-      txt(bw, x0, 14, "upper bound on tokens/s per user (log scale)", { "font-size": 12.5, "font-weight": 600 });
-      for (let e = lo; e <= hi; e++) {
-        el("line", { x1: X(Math.pow(10, e)), y1: 22, x2: X(Math.pow(10, e)), y2: 168, class: "line", "stroke-width": 1 }, bw);
-        txt(bw, X(Math.pow(10, e)), 184, e < 3 ? String(Math.pow(10, e)) : e < 6 ? Math.pow(10, e - 3) + "k" : Math.pow(10, e - 6) + "M", { "text-anchor": "middle", "font-size": 12, class: "muted" });
-      }
-      const ceil = {};
-      devs.forEach((d, i) => {
-        const c = cnt(d), agg = c * d.bw, v = agg / (tot * 1e9);
-        ceil[d.n] = v;
-        const yy = 28 + i * 34;
-        txt(bw, x0 - 8, yy + 12, `${d.n.replace(" (SDK GEMV)", "")} × ${c}`, { "text-anchor": "end", "font-size": 12.5, "font-weight": 600 });
-        if (d.same === 0) txt(bw, x0 - 8, yy + 25, "SDK GEMV rate", { "text-anchor": "end", "font-size": 11, class: "muted" });
-        el("rect", { x: x0, y: yy, width: Math.max(2, X(v) - x0), height: 18, rx: 3, class: d.cls, "stroke-width": 1.2, opacity: d.same === 0 ? 0.6 : 1 }, bw);
-        txt(bw, Math.min(X(v) + 6, x1 - 4), yy + 13, fmt(v), { "font-size": 12, "font-weight": 600, "text-anchor": X(v) + 50 > x1 ? "end" : "start", class: "halo" });
-      });
-      const ms = (b === 2 && preset && measured[preset]) || [];
-      ms.forEach(([v, l], k) => {
-        el("line", { x1: X(v), y1: 24, x2: X(v), y2: 94, class: "s-red", "stroke-width": 2, "stroke-dasharray": "3 2" }, bw);
-        txt(bw, X(v) + (k ? 4 : -4), 200, l, { "text-anchor": k ? "start" : "end", "font-size": 11.5, class: "f-red" });
-      });
-      if (ms.length) txt(bw, X(ms[0][0]), 200, "", {});
-      bw.setAttribute("viewBox", `0 0 680 ${ms.length ? 210 : 192}`);
-      const gbs = v => v < 10 ? v.toFixed(1) : v.toFixed(0);
-      $("#p-out").textContent =
-        `weights ${gbs(wGB)} GB + KV ${gbs(kvGB)} GB (${users} × ${ctx.toLocaleString("en")} tokens × ${(kvTok / 1e6).toFixed(2)} MB, ${L} layers) = ${gbs(tot)} GB\n` +
-        `→ ${cnt(devs[0])} × WSE-3 (${cnt(devs[0]) * 44} GB)  ·  ${cnt(devs[2])} × H100  ·  ${cnt(devs[3])} × B200\n` +
-        `decode ceiling per user: WSE-3 ${fmt(ceil["WSE-3"])} tok/s (or ${fmt(ceil["WSE-3 (SDK GEMV)"])} at the SDK GEMV rate) vs H100 ${fmt(ceil["H100"])}, B200 ${fmt(ceil["B200"])}\n` +
-        `each WSE-3 can read its whole 44 GB ~477,000×/s; an H100 its 80 GB ~42×/s. Measured Cerebras speeds (red) sit far below the WSE ceiling: bandwidth is not what limits them.`;
-    }
-    $("#p-n").oninput = () => { preset = 0; $("#p-pre").querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", "false")); cap(); };
-    seg("#p-pre", v => { preset = v; $("#p-n").value = Math.log10(v).toFixed(3); cap(); });
-    ["#p-b", "#p-c"].forEach(s => $(s).onchange = cap);
-    $("#p-u").oninput = cap;
-    cap();
-  })();
 })();
 </script>
 </body>

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 5: Conjugate Gradient</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+#tl-svg .dim { opacity: .25; }
+.bud-cell { cursor: default; }
+#bud-svg .hl { stroke-width: 2.5; }
+#bud-svg .fade { opacity: .25; }
+.halo-txt { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 15 · Part III · Programming</div>
+<h1>Lab 5: a conjugate-gradient solver</h1>
+<p class="lede">Lab 3's stencil marched a rod forward in time. Most stencils on a supercomputer do something else: they are the matrix inside an iterative solver. This lab solves a 3-D Poisson problem with conjugate gradient (CG) on a grid of PEs. The program combines three modules, memcpy plus two SDK libraries, so its main lesson is composition: how modules share one PE's colors, tasks and queues. Then we measure where an iteration's cycles go, and why every iteration waits for one global sum.</p>
+
+<div class="objectives">
+<h4>After this lab you can</h4>
+<ul>
+<li>Write CG and sort its steps into local, neighbour and global work, and say which one limits a wafer-sized solve.</li>
+<li>Combine library modules on one PE: give each its colors, task IDs, queues, microthreads and DSRs, and check the budget.</li>
+<li>Explain how the SDK's allreduce reroutes one color three times per call, and why it acts as a barrier.</li>
+<li>Compare a host-driven loop with an on-device loop, in simulated cycles and on real hardware.</li>
+<li>Measure a per-iteration cost split with the TSC and predict how it scales with the grid and the column height.</li>
+</ul>
+</div>
+
+<div class="callout ok">
+<strong>Run it yourself</strong>
+<p><code>source /home/user/cerebras-sdk/env.sh</code>, then in <code>course/programs/07-cg</code> run <code>bash commands.sh</code> (about a minute). Knobs are environment variables: <code>W</code>, <code>H</code> (PEs, default 5 × 5), <code>Z</code> (cells per PE, default 5), <code>ITERS</code> (iteration cap, 30), <code>EPS</code> (stop when |r| ≤ EPS·|b|, 1e-5), <code>HOST_ITERS</code> (iterations of the host-driven loop, 3), <code>BLOCK</code> (stencil message size, 2), <code>PROFILE</code> (1 = per-phase timers) and <code>ARCH</code> (<code>wse3</code> or <code>wse2</code>). For example <code>W=8 H=8 Z=8 ITERS=60 bash commands.sh</code>.</p>
+</div>
+
+<h2 id="problem">The problem and the CG algorithm</h2>
+<p>Take the Poisson equation −∇²u = f on a box, with u = 0 on the boundary. The 7-point finite-difference stencil turns it into a linear system <em>A u = b</em>. Each row of A has 6 on the diagonal and −1 for each of the six neighbours (west, east, south, north, below, above); neighbours outside the box drop out. A is symmetric and positive definite, so conjugate gradient applies. With 125 unknowns you could invert A; with a billion you cannot even store it. CG never forms A. It only needs to <em>apply</em> it, and applying A is exactly a stencil.</p>
+<p>Here is CG in numpy. It is the reference that <code>run.py</code> checks the device against, and it follows Golub and Van Loan's Algorithm 10.2.1, as the SDK benchmark does:</p>
+<pre><code><span class="k">def</span> cg_numpy(max_ite):
+    x = x0.copy(); r = b - A(x); rho = np.vdot(r, r); k = 0
+    <span class="k">while</span> rho &gt; tol * tol <span class="k">and</span> k &lt; max_ite:
+        k += 1
+        p = r.copy() <span class="k">if</span> k == 1 <span class="k">else</span> r + (rho / rho_old) * p   <span class="c"># axpy           local</span>
+        w = A(p)                                             <span class="c"># stencil SpMV   neighbours</span>
+        alpha = rho / np.vdot(p, w)                          <span class="c"># dot product    GLOBAL</span>
+        x = x + alpha * p;  r = r - alpha * w                <span class="c"># 2 axpy         local</span>
+        rho_old, rho = rho, np.vdot(r, r)                    <span class="c"># dot product    GLOBAL</span>
+    <span class="k">return</span> x</code></pre>
+<p>One iteration is one stencil application, two dot products, three vector updates (axpys) and two scalar divides. Spread over a grid of PEs, these are three kinds of work:</p>
+<div class="table-wrap"><table>
+<tr><th>Step</th><th>Data it needs</th><th>On the wafer</th><th>Grows with</th></tr>
+<tr><td>axpy (p, x, r updates)</td><td>this PE's cells</td><td><code>@fmacs</code> over the local column</td><td>cells per PE</td></tr>
+<tr><td>w = A p</td><td>the 4 neighbouring PEs' cells</td><td>one-hop messages, then <code>@fmacs</code></td><td>cells per PE</td></tr>
+<tr><td>⟨p, w⟩ and ⟨r, r⟩</td><td><em>every</em> PE's cells</td><td>local dot, then an allreduce across the whole grid</td><td>grid width + height</td></tr>
+</table></div>
+<p>The last row is new. In Lab 3 every PE waited only for its two neighbours. Here every iteration contains two global sums. No PE can compute α until every PE has contributed to ⟨p, w⟩, and no PE can decide whether to stop until the global ⟨r, r⟩ is back.</p>
+<p><strong>How many iterations?</strong> CG's error shrinks at least as fast as 2·((√κ − 1)/(√κ + 1))<sup>k</sup>, where κ = λ<sub>max</sub>/λ<sub>min</sub> is A's condition number (Golub and Van Loan, Theorem 10.2.6). For this A on an N × N × N box, λ = 6 ∓ 6·cos(π/(N+1)), so κ = cot²(π/(2N+2)): 13.9 at N = 5, 32.2 at N = 8, 67.8 at N = 12 <span class="tag derived">Derived</span>. The SDK benchmark prints the same 0.80 and 11.20 extreme eigenvalues for its 5 × 5 × 5 case <span class="tag sdk">SDK 2.10.1</span>. √κ grows like N, so the iteration count grows in proportion to the grid's side. A bigger grid needs more iterations, and each one contains two global sums whose latency also grows with the side. Keep that in mind for the scaling section.</p>
+
+<h2 id="mapping">Mapping onto the wafer</h2>
+<p>The SDK's 3-D stencils, and this lab, use the <em>pencil</em> decomposition from Lab 3's last table. The box is W × H × Z cells. PE (px, py) owns the whole z-column at (x = px, y = py), Z cells long, of every vector. A PE stores five vectors (b, x, p, w, r), so 20·Z bytes, plus 7 stencil coefficients.</p>
+<figure>
+<svg id="map-svg" viewBox="0 0 760 250" width="760" role="img" aria-label="Pencil decomposition: each PE holds a z-column of every vector"></svg>
+<figcaption><b>Pencils.</b> Left: a 5 × 5 grid of PEs, each owning one z-column of the box. Centre: the stencil at one cell needs its x/y neighbours from the four adjacent PEs (fabric, one hop) and its z neighbours from the same PE's memory. Right: what one PE stores. Only the w = A p step talks to neighbours; the dot products talk to everyone.</figcaption>
+</figure>
+<ul>
+<li><strong>SpMV, w = A p.</strong> The z-neighbours are in local memory, so the z part of the stencil is three <code>@fmacs</code> over shifted DSDs. The x/y part needs the four neighbouring columns. The library sends p to the east, west, north and south in blocks of <code>BLOCK_SIZE</code> wavelets, receives the four neighbours' blocks, and adds them in with four more <code>@fmacs</code>.</li>
+<li><strong>Dot products.</strong> Each PE sums over its own column (<code>@map</code>, as in the SDK's <code>blas.csl</code>), then the allreduce adds the W·H partial sums and returns the total to every PE. A single wavelet travels.</li>
+<li><strong>axpys.</strong> Purely local <code>@fmacs</code>. α and β are scalars that every PE computes from the same allreduced values, so every PE takes the same decision without any extra message.</li>
+</ul>
+
+<h2 id="modules">Composing modules</h2>
+<p>Labs 1–3 wrote every line on the PE themselves, apart from memcpy. This program writes about 200 lines and imports about 2,700: the SDK's <code>benchmark-libs/stencil_3d_7pts</code> (the SpMV) and <code>benchmark-libs/allreduce</code> (the global sums), each with a layout half and a PE half. The libraries live in <code>course/programs/07-cg/lib/</code>, copied from SDK 2.10.1 with an attribution header.</p>
+<figure>
+<svg id="mod-svg" viewBox="0 0 760 270" width="760" role="img" aria-label="Module graph of the CG program"></svg>
+<figcaption><b>The module graph.</b> <code>layout.csl</code> imports the layout half of each library, which computes per-PE parameters (which colors a PE sends and receives on, whether it is first or last in its row and column). It passes them to every PE's <code>pe_program.csl</code>, which imports the PE halves with the IDs it reserves for each. Both libraries finish by calling <code>phase_done()</code>, a function the program passes in as <code>f_callback</code>. Solid arrows are imports, dashed arrows are parameters and callbacks.</figcaption>
+</figure>
+<p>Three rules make composition work.</p>
+<ol>
+<li><strong>The top level owns every hardware ID.</strong> A library takes the colors, local task IDs, queues, microthread and DSR numbers it uses as parameters, and never picks its own. The layout comment in <code>layout.csl</code> is the ledger: stencil colors 0–7 and tasks 14–16; allreduce color 8 and tasks 17–20; the program's own state-machine task 12; queues 0–1 for memcpy, 2 for allreduce, 4–7 for the stencil.</li>
+<li><strong>Two halves, two kinds of parameter.</strong> A layout half runs at compile time for each (px, py) and returns a struct (for the stencil, the color parity of each direction, as in Lab 3's figure). The PE half takes that struct plus everything that is a property of the PE program, such as queue numbers.</li>
+<li><strong>Libraries hand control back through a callback.</strong> Neither library knows about the host. When <code>spmv()</code> or <code>allreduce()</code> finishes, it calls the function it was given. The SDK's host-driven kernel passes <code>sys_mod.unblock_cmd_stream</code>; its device-driven kernel passes a function that activates the next state. This program passes <code>phase_done()</code>, which does either. That one indirection is the whole difference between the two loops below.</li>
+</ol>
+
+<div class="widget" id="bud">
+<h4>The resource budget of one PE</h4>
+<p class="hint">Every slot one PE's program uses, by owner. Hover or tap a module name to highlight its slots. Pick an experiment to see what happens when two modules are given the same slot. Every outcome is <span class="tag measured">Measured</span> (SDK 2.10.1, 5 × 5 PEs). memcpy's own colors are assigned by <code>cslc --memcpy</code>; the SDK CG layout's comment marks 21–30 as reserved for it <span class="tag sdk">SDK 2.10.1</span>, and Chapter 7 shows its command stream on color 22.</p>
+<div class="controls">
+<label>chip <select id="bud-arch"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>experiment <select id="bud-x">
+<option value="none">none: the shipped assignment</option>
+<option value="queue">allreduce queue 2 → 4</option>
+<option value="color">allreduce color 8 → 7</option>
+<option value="task">state task 12 → 14</option>
+<option value="ut">stencil send microthread 3 → 2</option>
+<option value="c22">allreduce color 8 → 22</option>
+<option value="queue2">WSE-2: allreduce queue 2 → 3</option>
+</select></label>
+</div>
+<div id="bud-legend" class="controls"></div>
+<svg id="bud-svg" viewBox="0 0 700 300" width="700" role="img" aria-label="Resource budget map"></svg>
+<div class="readout" id="bud-out"></div>
+</div>
+
+%%CLASH%%
+
+<div class="callout bug">
+<strong>The import path trap</strong>
+<p>Copied out of the SDK on its own, the CG benchmark does not compile: <code>Unable to open ./src/../../benchmark-libs/stencil_3d_7pts/layout.csl</code> <span class="tag measured">Measured</span> (phase-3 review run). Its imports climb two directories to a sibling <code>benchmark-libs/</code> folder. Two more facts matter when you fix it. First, <code>cslc</code> resolves an import path relative to the directory of the top-level <code>layout.csl</code>, not the importing file: the stencil's dispatch file asked for <code>"wse3/pe.csl"</code> and got <code>Unable to open ./wse3/pe.csl</code> <span class="tag measured">Measured</span>. Second, <code>cslc</code> and <code>cs_python</code> run inside a container that only mounts the current directory, so a library elsewhere on disk needs <code>CSL_IMPORT_PATH</code> (or <code>--import-path</code>) <span class="tag sdk">SDK 2.10.1</span>. This lab avoids both by copying the libraries into <code>lib/</code> and changing the two dispatch paths to <code>"lib/stencil_3d_7pts/wse3/pe.csl"</code> and <code>…/wse2/pe.csl</code>, the only edit to the SDK files.</p>
+</div>
+
+<h2 id="allreduce">The allreduce every iteration waits on</h2>
+<p>A global sum over a 2-D grid needs a route for every partial sum to reach one PE and a route for the result to reach everyone. Lab 2 built a row reduce on two alternating colors and a broadcast on a multicast route, each with static routes. The SDK's allreduce does all three stages with <em>one</em> color, and rewrites that color's routes between stages:</p>
+<ol>
+<li><strong>Row reduce.</strong> Routes: every PE forwards from west to east, and the last PE in the row delivers to its CE. Every PE except the last sends its value, then a <em>switch-advance</em> control wavelet. The control wavelet flips the next router's switch from "forward from the west" (position 0) to "take from my own CE" (position 1), so values arrive at the last PE one at a time, nearest last. The last PE adds them as they arrive with an asynchronous <code>@fadds</code> from the fabric, W − 1 times. The first PE then sends a teardown wavelet.</li>
+<li><strong>Column reduce.</strong> The same, north to south, on the last column only: H − 1 values reach the bottom-right PE.</li>
+<li><strong>Broadcast.</strong> The bottom-right PE sends the sum north up the last column, and every PE in that column sends it west along its row, by multicast routes (Lab 2's mechanism). Then a teardown.</li>
+</ol>
+<p>Between stages each PE calls <code>reset_routes</code>, clears its switch position and exits teardown mode on that color (<code>tile_config</code>). The teardown wavelet is how the PEs agree that a stage is over: each PE's teardown handler activates the task that moves the library's state machine on. That is why it needs only one color, one queue and four task IDs. The cost is that a stage can only start once the previous one has drained, so the three stages run strictly one after another, and every message is a single wavelet whose cost is almost all latency.</p>
+<div class="callout key">
+<strong>Why the allreduce is a barrier</strong>
+<p>No PE gets the sum back until the broadcast reaches it, and the broadcast cannot start until the bottom-right PE has every row's partial sum. So no PE leaves an allreduce before the last PE has entered it. A PE that reaches the allreduce early just waits inside it. You can see this in the profile: on the default 5 × 5 grid every PE spends exactly the same %%PERIT%% cycles per iteration, but the share spent inside the allreduce varies from PE to PE by %%ARSPREAD%% cycles <span class="tag measured">Measured</span>. The fast PEs absorb the difference as waiting.</p>
+</div>
+<p>The SDK also ships a general-purpose 2-D library, <code>&lt;collectives_2d&gt;</code>, introduced in <a href="12-lab-neighbours.html#collectives">Chapter 12</a>. It uses two colors per dimension and also rewrites routes at runtime; <a href="14-lab-gemm.html">Chapter 14</a> uses it for SUMMA's row and column broadcasts and goes into its parameters. Chapter 12's review measured its fixed overhead at about 700 cycles per operation <span class="tag measured">Measured</span>, the same order as the allreduce here.</p>
+</main>
+</body>
+</html>
