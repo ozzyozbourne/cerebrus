@@ -143,7 +143,7 @@
 <p class="note" style="margin:6px 0 0">Totals <span class="tag vendor">Vendor</span>; analyst dense <span class="tag analyst">Analyst</span>; every per-PE and per-cycle cell <span class="tag derived">Derived</span>; 850 MHz <span class="tag sdk">SDK 2.10.1</span>; 1.1 GHz and 30 mW peak per core are WSE-2 figures <span class="tag vendor">Vendor (HC22)</span>.</p>
 </div>
 
-<p>Read across a row and the marketing totals become one small machine repeated 900,000 times: about 48 KB of memory that can serve about 7 words a cycle, roughly 9 words a cycle of mesh links, and an 8-wide FP16 unit. The rows agree with each other within the rounding of the vendor figures. Memory bandwidth stays under the 32 B/cycle ceiling of 8 single-cycle 32-bit banks (Chapter 3), and fabric bandwidth sits between 4 links × 2 directions × 4 B = 32 B/cycle and 40 B/cycle with the ramp added. Power agrees too: HC22 gives 30 mW peak per WSE-2 core <span class="tag vendor">Vendor</span>, and 850k × 30 mW ≈ 25 kW is the same order as the 15–20 kW system figures <span class="tag derived">Derived</span>. That agreement is the best evidence we have that the totals are real.</p>
+<p>Read across a row and the marketing totals become one small machine repeated 900,000 times: about 48 KB of memory that can serve about 7 words a cycle, roughly 9 words a cycle of mesh links, and an 8-wide FP16 unit. The rows agree with each other within the rounding of the vendor figures. Memory bandwidth stays under the roughly 32 B/cycle ceiling of 8 banks (Chapter 3 compares the two published bank models; the bank width is not public), and fabric bandwidth sits between 4 links × 2 directions × 4 B = 32 B/cycle and 40 B/cycle with the ramp added. Power agrees too: HC22 gives 30 mW peak per WSE-2 core <span class="tag vendor">Vendor</span>, and 850k × 30 mW ≈ 25 kW is the same order as the 15–20 kW system figures <span class="tag derived">Derived</span>. That agreement is the best evidence we have that the totals are real.</p>
 
 <div class="callout ok">
 <strong>What a real kernel gets</strong>
@@ -350,7 +350,7 @@
     const rows = [
       [`${fmt(g.area)} mm²`, `${(g.area / N).toFixed(3)} mm²`, "—", "≈ the ~0.05 mm² core: the square is nearly all tiles", false],
       [`${g.sram / 1e9} GB SRAM`, `${(g.sram / N / 1e3).toFixed(1)} KB`, "—", "the 48 KB per PE of Chapter 3 (decimal GB)", false],
-      [`${g.mem / 1e15} PB/s memory`, `${(g.mem / N / 1e9).toFixed(1)} GB/s`, `${memB.toFixed(1)} B = ${(memB / 4).toFixed(1)} words`, "under 8 banks × 4 B = 32 B/cycle", true],
+      [`${g.mem / 1e15} PB/s memory`, `${(g.mem / N / 1e9).toFixed(1)} GB/s`, `${memB.toFixed(1)} B = ${(memB / 4).toFixed(1)} words`, "under ~32 B/cycle (8 banks; see Ch. 3)", true],
       [`${g.fab / 1e15} Pb/s fabric`, `${(g.fab / N / 1e9).toFixed(0)} Gb/s`, `${fabB.toFixed(1)} B = ${(fabB / 4).toFixed(1)} words`, "≈ 4 links × 2 dir × 4 B (+ ramp), Chapter 4", true],
       [`dense FP16 peak`, `${g.simd * 2} FLOP/cycle`, `${peak.toFixed(1)} PF total`, `${g.simd}-wide FP16 SIMD; analyst says ~${g.dense} PF`, true],
       [`${g.pw[0] === g.pw[1] ? "~23" : "15–20"} kW system`, pw, "—", gi === 0 ? "system figure; HC22: 30 mW peak per core" : "system figure, so an upper bound per PE", false]
