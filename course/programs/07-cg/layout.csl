@@ -1,0 +1,74 @@
+// Lab 5: conjugate gradient (CG) on a 7-point stencil, width x height PEs.
+// Adapted from Cerebras SDK 2.10.1 benchmarks/conjugate-gradient (src/layout.csl, src/layout_cg.csl).
+//
+// Three modules share every PE: memcpy (host I/O), a 7-point stencil (y = A*x) and an
+// allreduce (dot products). The top level owns all hardware IDs and hands each module its share.
+//
+// Budget on every PE                          stencil    allreduce   memcpy       this program
+//   routable colors                           0-7        8           (21-30)*     -
+//   local task IDs                            14-16      17-20       -            12 (state machine)
+//   input/output queues (pe_program.csl)      in 4-7     2           0, 1         -
+//                                             out 4-7 (WSE-3) / 3 (WSE-2)
+//   microthread for its sends (WSE-3)         3          2           -            -
+//   explicit DSRs (dest / src0 / src1)        2,3/2/2,3  1/1/1       -            compiler's choice
+// * memcpy's own colors are chosen by cslc --memcpy; a program must not use them.
+
+param width: i16;      // PEs per row (x)
+param height: i16;     // PEs per column (y)
+param MAX_ZDIM: i16;   // capacity of each PE's z-column
+param MAX_ITE: i16;    // capacity of the residual / timestamp history
+param BLOCK_SIZE: i16; // wavelets per stencil message
+param PROFILE: i16;    // 1: per-phase TSC profile, 0: compiled out
+
+const stencil = @import_module("lib/stencil_3d_7pts/layout.csl", .{
+  .colors = [8]color{ @get_color(0), @get_color(1), @get_color(2), @get_color(3),
+                      @get_color(4), @get_color(5), @get_color(6), @get_color(7) },
+  .entrypoints = [3]local_task_id{ @get_local_task_id(14), @get_local_task_id(15),
+                                   @get_local_task_id(16) },
+  .width = width, .height = height,
+});
+
+const reduce = @import_module("lib/allreduce/layout.csl", .{
+  .colors = [1]color{ @get_color(8) },
+  .entrypoints = [4]local_task_id{ @get_local_task_id(17), @get_local_task_id(18),
+                                   @get_local_task_id(19), @get_local_task_id(20) },
+  .width = width, .height = height,
+});
+
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = width, .height = height });
+
+layout {
+  @set_rectangle(width, height);
+  var py: i16 = 0;
+  while (py < height) : (py += 1) {
+    var px: i16 = 0;
+    while (px < width) : (px += 1) {
+      @set_tile_code(px, py, "pe_program.csl", .{
+        .memcpyParams = memcpy.get_params(px),
+        .stencilParams = stencil.get_params(px, py),   // which of colors 0-7 this PE sends/receives on
+        .reduceParams = reduce.get_params(px, py),     // is it first/last in its row and column?
+        .MAX_ZDIM = MAX_ZDIM, .MAX_ITE = MAX_ITE, .BLOCK_SIZE = BLOCK_SIZE, .PROFILE = PROFILE,
+        .STATE = @get_local_task_id(12),
+      });
+    }
+  }
+
+  @export_name("b", [*]f32, true);
+  @export_name("x", [*]f32, true);
+  @export_name("coeff", [*]f32, true);
+  @export_name("rho", [*]f32, true);
+  @export_name("rho_hist", [*]f32, true);
+  @export_name("t_hist", [*]u32, true);
+  @export_name("prof", [*]u32, true);
+
+  // host-driven loop: one RPC per phase
+  @export_name("f_init", fn(i16)void);
+  @export_name("f_spmv_Ax", fn()void);
+  @export_name("f_residual", fn()void);
+  @export_name("f_update_p", fn()void);
+  @export_name("f_spmv_Ap", fn()void);
+  @export_name("f_eta", fn()void);
+  @export_name("f_update_x_r_rho", fn()void);
+  // device-driven loop: one RPC for the whole solve
+  @export_name("f_cg", fn(i16, f32, i16)void);
+}

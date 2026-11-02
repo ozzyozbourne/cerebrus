@@ -1,0 +1,137 @@
+// 06-summa PE program (see layout.csl for the algorithm and the resource map).
+param memcpy_params;
+param c2d_params;
+param Mt: i16;
+param Kt: i16;
+param Nt: i16;
+param kernel: u16;         // 0 = column @fmacs (as in the SDK), 1 = outer product
+
+const P = @get_rectangle().width;
+
+const EXIT:       local_task_id = @get_local_task_id(12);
+const COMPUTE:    local_task_id = @get_local_task_id(13);
+const X_DONE:     local_task_id = @get_local_task_id(14);
+const Y_DONE:     local_task_id = @get_local_task_id(15);
+
+// One library instance per axis. Each owns two colors, two queues, two task IDs
+// and one set of DSD registers. x and y must not share any of them.
+const row = @import_module("<collectives_2d/pe>", .{
+  .dim_params = c2d_params.x, .queues = [2]u16{2, 4},
+  .dest_dsr_ids = [1]u16{1}, .src0_dsr_ids = [1]u16{1}, .src1_dsr_ids = [1]u16{1} });
+const col = @import_module("<collectives_2d/pe>", .{
+  .dim_params = c2d_params.y, .queues = [2]u16{3, 5},
+  .dest_dsr_ids = [1]u16{2}, .src0_dsr_ids = [1]u16{2}, .src1_dsr_ids = [1]u16{2} });
+
+const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
+
+// Home tiles (filled by the host) and receive buffers, all column-major.
+var A_tile = @zeros([Mt * Kt]f32);
+var B_tile = @zeros([Kt * Nt]f32);
+var C_tile = @zeros([Mt * Nt]f32);
+var A_buf  = @zeros([Mt * Kt]f32);
+var T_tile = @zeros([if (kernel == 1) Mt * Nt else 1]f32);   // kernel 1 only
+var B_buf  = @zeros([Kt * Nt]f32);
+var A_ptr: [*]f32 = &A_tile;
+var B_ptr: [*]f32 = &B_tile;
+var C_ptr: [*]f32 = &C_tile;
+
+// Kernel timing on this PE's own TSC: stamp[0] at main(), then per step s
+// stamp[1+3s] = broadcasts issued, [2+3s] = compute starts, [3+3s] = compute
+// ends, and stamp[3P+1] just before the host is released. Only compare stamps
+// from the same PE (each counter starts when the launch reaches that PE).
+const timestamp = @import_module("<time>");
+var stamp = @zeros([3 * (3 * P + 2)]u16);
+var tsc_ptr: [*]u16 = &stamp;
+fn stamp_now(k: u16) void {
+  timestamp.get_timestamp(@ptrcast(*[3]u16, &stamp[3 * k]));
+}
+
+var px: u16 = 0;
+var py: u16 = 0;
+var step: u16 = 0;
+
+// main() is the host's RPC. It returns at once; the step chain continues in tasks.
+fn main() void {
+  timestamp.enable_tsc();
+  stamp_now(0);
+  row.init();
+  col.init();
+  px = row.pe_id;          // my column index (x coordinate)
+  py = col.pe_id;          // my row index (y coordinate)
+  start_step();
+}
+
+fn start_step() void {
+  stamp_now(1 + 3 * step);
+  // Root of the row broadcast is the PE in column `step`; it sends its home
+  // tile, everyone else receives into A_buf. Same for B down the columns.
+  const Ap = if (px == step) &A_tile else &A_buf;
+  const Bp = if (py == step) &B_tile else &B_buf;
+  row.broadcast(step, @ptrcast([*]u32, Ap), @as(u16, Mt * Kt), X_DONE);
+  col.broadcast(step, @ptrcast([*]u32, Bp), @as(u16, Kt * Nt), Y_DONE);
+}
+
+// The join: COMPUTE starts blocked. y_done unblocks it, x_done activates it;
+// it runs only when both have happened, in either order (Chapter 5).
+task x_done() void { @activate(COMPUTE); }
+task y_done() void { @unblock(COMPUTE); }
+
+task compute() void {
+  stamp_now(2 + 3 * step);
+  const Ap = if (px == step) &A_tile else &A_buf;
+  const Bp = if (py == step) &B_tile else &B_buf;
+
+  if (kernel == 0) {
+    // C[:, j] += A[:, k] * B[k, j]: one @fmacs of length Mt per (k, j) pair,
+    // Kt * Nt instructions per step. The scalar B[k, j] is read from memory.
+    var A_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{Mt} -> A_tile[i] });
+    A_dsd = @set_dsd_base_addr(A_dsd, Ap);
+    for (@range(i16, Kt)) |k| {
+      var C_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{Mt} -> C_tile[i] });
+      for (@range(i16, Nt)) |j| {
+        @fmacs(C_dsd, C_dsd, A_dsd, Bp.*[j * Kt + k]);
+        C_dsd = @increment_dsd_offset(C_dsd, Mt, f32);
+      }
+      A_dsd = @increment_dsd_offset(A_dsd, Mt, f32);
+    }
+  } else {
+    // C += A[:, k] (outer) B[k, :]: two instructions of length Mt * Nt per k,
+    // Kt * 2 instructions per step. 2-D DSDs with a zero stride repeat column
+    // k of A across j and row k of B across i; T_tile holds the product.
+    var A2 = @get_dsd(mem4d_dsd, .{ .tensor_access = |j, i|{Nt, Mt} -> A_tile[i] });
+    var B2 = @get_dsd(mem4d_dsd, .{ .tensor_access = |j, i|{Nt, Mt} -> B_tile[j * Kt] });
+    const T2 = @get_dsd(mem4d_dsd, .{ .tensor_access = |j, i|{Nt, Mt} -> T_tile[j * Mt + i] });
+    const C2 = @get_dsd(mem4d_dsd, .{ .tensor_access = |j, i|{Nt, Mt} -> C_tile[j * Mt + i] });
+    A2 = @set_dsd_base_addr(A2, Ap);
+    B2 = @set_dsd_base_addr(B2, Bp);
+    for (@range(i16, Kt)) |k| {
+      @fmuls(T2, A2, B2);
+      @fadds(C2, C2, T2);
+      A2 = @increment_dsd_offset(A2, Mt, f32);
+      B2 = @increment_dsd_offset(B2, 1, f32);
+    }
+  }
+  stamp_now(3 + 3 * step);
+
+  step += 1;
+  @block(COMPUTE);                     // re-arm the join for the next step
+  if (step < P) start_step() else @activate(EXIT);
+}
+
+task exit() void {
+  stamp_now(3 * P + 1);
+  sys_mod.unblock_cmd_stream();        // only now does the host's launch() return
+}
+
+comptime {
+  @bind_local_task(exit, EXIT);
+  @bind_local_task(compute, COMPUTE);
+  @bind_local_task(x_done, X_DONE);
+  @bind_local_task(y_done, Y_DONE);
+  @block(COMPUTE);
+  @export_symbol(A_ptr, "A");
+  @export_symbol(B_ptr, "B");
+  @export_symbol(C_ptr, "C");
+  @export_symbol(tsc_ptr, "tsc");
+  @export_symbol(main);
+}

@@ -26,7 +26,7 @@
 </ul>
 </div>
 
-<h2>The problem</h2>
+<h2 id="problem">The problem</h2>
 <p>Explicit finite differences for the 1-D heat equation: every timestep, each cell moves toward the average of its neighbours,</p>
 <pre><code>u'[i] = u[i] + α · (u[i-1] − 2·u[i] + u[i+1])        α = 0.25, ends held at 1.0 and 0.0</code></pre>
 <p>The rod has P × n cells. PE <em>k</em> owns cells <em>k·n … k·n+n−1</em> and stores them in <code>u[1..n]</code>, with ghost cells <code>u[0]</code> and <code>u[n+1]</code> holding copies of its neighbours' edge cells. Each step, every PE sends its first cell west and its last cell east, receives the neighbours' edge cells into its ghosts, then updates.</p>
@@ -369,7 +369,7 @@ SUCCESS!
 </div>
 
 <h2>Measuring a timestep</h2>
-<h3>Time it inside the kernel</h3>
+<h3 id="tsc">Time it inside the kernel</h3>
 <p>The SDK's own stencil benchmarks time kernels with each tile's timestamp counter (TSC), and so does this program. <code>run()</code> calls <code>timestamp.enable_tsc()</code> and <code>get_timestamp(&amp;t0)</code>; <code>finish()</code> calls <code>get_timestamp(&amp;t1)</code> just before it unblocks the host. A timestamp is 48 bits in three <code>u16</code> words. A separate RPC, <code>pack()</code>, copies the six words into an exported array, and the host reads them with a 16-bit memcpy (each <code>u16</code> arrives in the low half of a 32-bit word, Chapter 3) and reassembles <code>w0 | w1&lt;&lt;16 | w2&lt;&lt;32</code>.</p>
 <p>Two rules. First, <em>only subtract readings from the same PE</em>: each PE's counter starts when the launch reaches it, so counters on different PEs are not aligned. The program reports PE 1, an interior PE. Second, one run's <code>t1 − t0</code> divided by the step count includes a few dozen cycles of start-up (entering <code>run()</code>, the first issue, the final timestamp), which is why the output above shows 131.0 rather than 130.2. For the exact per-step cost, run two step counts and take the slope:</p>
 <pre><code>source /home/user/cerebras-sdk/env.sh
@@ -389,7 +389,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <p>CSL inlines helper functions into every task that calls them. <code>finish()</code> is called from <code>update()</code>, which is called from <code>op_done()</code>, which sits inside all four completion tasks. So code that runs <em>once</em>, at the last step, still makes every task bigger and every step slower. Copying the six timestamp words inside <code>finish()</code> instead of in a separate RPC raised the cost from 130.2 to 167.0 cycles per step <span class="tag measured">Measured</span>; each completion task grew from 176 to 212 bytes in the ELF (<code>readelf -sW out/bin/out_3_0.elf</code>). Moving the copy into <code>pack()</code>, the SDK's own pattern, restored 130. Keep instrumentation and epilogue code out of the hot tasks.</p>
 </div>
 
-<h3>The measurements</h3>
+<h3 id="measurements">The measurements</h3>
 <p>All numbers are TSC cycles on PE 1 (PE 0 at P = 2), slope between 10 and 100 steps <span class="tag measured">Measured</span>, SDK 2.10.1 simulator:</p>
 <div class="table-wrap"><table id="mtab">
 <tr><th>Configuration</th><th>10 steps</th><th>100 steps</th><th>Cycles per step</th></tr>
@@ -410,7 +410,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <figcaption><b>Measured cycles per step.</b> Left: against cells per PE, with the fitted lines. Right: configurations at n = 16. Hover a point or bar to highlight its table row. <span class="tag measured">Measured</span> TSC, slope between 10 and 100 steps.</figcaption>
 </figure>
 
-<h3>What the numbers say</h3>
+<h3 id="numbers-say">What the numbers say</h3>
 <ul>
 <li><strong>About 90 cycles per step, plus 2.5 per cell.</strong> On WSE-3 the three points fit <code>cycles/step = 90.2 + 2.5·n</code> exactly (100.2, 130.2, 250.2). The 2.5 per cell is the three vector instructions streaming at their measured rates (the same 0.5 + 1 + 1 split as in <a href="06-dsds.html">Chapter 6</a>): <code>@fadds</code> moves 2 f32 elements per cycle on WSE-3 (0.5 cycles per cell), and each <code>@fmacs</code> moves 1 per cycle (1 + 1). Keeping only the <code>@fadds</code> leaves a slope of exactly 0.5 cycles per cell, and keeping only one <code>@fmacs</code> leaves exactly 1.0 <span class="tag measured">Measured</span>, on both chips.</li>
 <li><strong>Weak scaling is flat.</strong> 8 PEs and 16 PEs cost the same per step (130.2 vs 130.8; across the interior PEs of the 16-PE row the slope ranges 130.2–130.8). Every PE talks only to its neighbours, so adding PEs adds no work to anyone. This is the property that lets a stencil scale to the whole wafer, hundreds of thousands of PEs.</li>
@@ -423,7 +423,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <p><a href="06-dsds.html">Chapter 6</a> found that <code>@fmacs</code> runs at half speed when its two source streams start at addresses equal mod 4 words. Both <code>@fmacs</code> here read <code>u[1]</code> and <code>lap[0]</code>. With <code>lap</code> placed right after <code>u</code>, those are n + 1 words apart, so the clash should hit whenever n + 1 is a multiple of 4. It does: at n = 15 a step costs <strong>158.2</strong> cycles on WSE-3 instead of the model's 127.7 (both <code>@fmacs</code> at half speed: 0.5 + 2 + 2 per cell), and 162.1 on WSE-2; n = 16 and n = 17 follow the model <span class="tag measured">Measured</span>. Padding <code>lap</code> by one word (<code>var lap: [n + 1]f32</code>, with <code>lap_dsd</code> starting at <code>lap[i + 1]</code>) brings n = 15 back to 128.2 on WSE-3 and 132.1 on WSE-2 <span class="tag measured">Measured</span>. The exact rule is empirical and the array placement is the compiler's choice, so: pad and measure. The table's n = 4, 16 and 64 are not affected.</p>
 </div>
 
-<h3>Where the 90 cycles go</h3>
+<h3 id="fixed-cost">Where the 90 cycles go</h3>
 <p>Removing pieces of the program one at a time takes the fixed part apart <span class="tag measured">Measured</span> → <span class="tag derived">Derived</span>, WSE-3, n = 16:</p>
 <ul>
 <li>With the three vector instructions removed, a step costs <strong>71.2</strong>: four transfers, four completion tasks, and the step bookkeeping.</li>

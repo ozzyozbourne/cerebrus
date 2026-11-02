@@ -105,7 +105,7 @@
 </ul>
 </div>
 
-<h2>Three files, three places</h2>
+<h2 id="three-files">Three files, three places</h2>
 <p>"A complete program consists of a host program … and at least two CSL code files, one of which defines the layout of the program on a set of PEs, and one or more of which define the programs running on the individual PEs" <span class="tag sdk">SDK 2.10.1, gemv-01</span>. Grid coordinates are always (x = column, y = row), and sizes are width × height.</p>
 <div class="files3">
 <div class="f-l"><h3>layout.csl</h3><p class="when">runs at <b>compile time</b></p><ul><li>size of the PE rectangle</li><li>which code file and params each PE gets</li><li>routes for every color (<code>@set_color_config</code>)</li><li>names the host may use</li></ul></div>
@@ -171,7 +171,7 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 </div>
 <p>Two measured facts from this run change the usual story. First, <code>rt.launch(..., nonblock=False)</code> returned to Python even when the RPC never unblocked; the failure surfaced at the <em>next</em> memcpy call <span class="tag measured">Measured</span>. Second, the <code>@fmacs</code> itself executed from cycle 3,124 to 3,250 of a 7,740-cycle run (about 127 cycles for 64 f32, read from the instruction trace described under Debugging) <span class="tag measured">Measured</span>. Nearly all of <code>cycle_count</code> is host I/O.</p>
 
-<h2>The language in one screen</h2>
+<h2 id="language">The language in one screen</h2>
 <div class="grid2">
 <div>
 <h3>Ordinary parts</h3>
@@ -185,7 +185,7 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 </ul>
 </div>
 <div>
-<h3>Hardware parts</h3>
+<h3 id="hardware-parts">Hardware parts</h3>
 <ul>
 <li><code>param</code>: compile-time constants from the layout or <code>--params</code>. PEs with different params become different PE programs.</li>
 <li><code>comptime { }</code>: bindings (<code>@bind_data_task</code>, <code>@initialize_queue</code>…) and exports, evaluated by the compiler.</li>
@@ -235,7 +235,7 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 <code>cslc --help</code>: "a mapping is a <code>name:value</code> pair where name is a string and value is an unsigned integer" <span class="tag sdk">SDK 2.10.1</span>. Floats and negative numbers reach the device at run time instead: as an RPC argument (SAXPY's <code>a</code>) or through memcpy. Note too that <code>out.json</code> stores the value as a string (<code>{"params":{"N":"64"}}</code>), which is why run.py wraps it in <code>int()</code> <span class="tag measured">Measured</span>.
 </div>
 
-<h3>Writing for both chips</h3>
+<h3 id="both-chips">Writing for both chips</h3>
 <p>All course programs build for WSE-2 and WSE-3 from one source. Three idioms do it (the full portability table is in <a href="05-tasks.html">Chapter 5</a>); <code>&lt;memcpy/memcpy&gt;</code> itself switches to its <code>wse2/</code> or <code>wse3/</code> implementation the same way <span class="tag sdk">SDK 2.10.1</span>.</p>
 <pre><code><span class="c">// 1. queues exist only as bindable objects on WSE-3 (sdklayout-02)</span>
 <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse3"</span>)) { <span class="b">@initialize_queue</span>(out_q, .{ .color = <span class="b">@get_color</span>(c) }); }
@@ -257,7 +257,7 @@ Every bug we hit while writing this course's programs was about a resource, not 
 The scalar language is the easy part.
 </div>
 
-<h2>Where did my 48 KB go?</h2>
+<h2 id="memory">Where did my 48 KB go?</h2>
 <p>Every byte a PE uses (code, the memcpy runtime and its buffers, your arrays) sits in its own 48 KB SRAM <span class="tag vendor">Vendor</span>. <code>cs_readelf -m out/bin/out_0_0.elf</code> prints exactly how much ("Display main memory used per PE"). For SAXPY, with two f32 arrays of N each <span class="tag measured">Measured, cs_readelf -m</span>:</p>
 <div class="table-wrap"><table>
 <tr><th>Build</th><th>Memory used on the PE</th></tr>
@@ -279,7 +279,7 @@ The scalar language is the easy part.
 </div>
 <p>So even an empty program uses about 4.2 KB on WSE-3 for code and the memcpy runtime, and overflow is a <strong>link</strong> error, not a run-time one. To find your own limit, bisect: <code>for N in 5000 5600 5620; do cslc … --params=N:$N -o b$N; cs_readelf -m b$N/bin/out_0_0.elf; done</code>.</p>
 
-<h2>The standard library map</h2>
+<h2 id="stdlib">The standard library map</h2>
 <p>Modules are imported with <code>@import_module("&lt;name&gt;", .{params})</code>. They are plain CSL you can read inside the SIF (<code>csl-libs/</code>). For example, this is the whole of <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> <span class="tag sdk">SDK 2.10.1, csl-libs/layout.csl</span>:</p>
 <pre><code><span class="k">fn</span> get_x_coord() <span class="n">u16</span> {
   <span class="k">return</span> tile_config.get_fabric_coord(tile_config.fabric_coord.X) - <span class="b">@get_rectangle</span>().offsets.width;
@@ -299,7 +299,7 @@ The scalar language is the easy part.
 </table></div>
 <p class="legend">Function names read from <code>csl-libs/*.csl</code> in the SDK image <span class="tag sdk">SDK 2.10.1</span>.</p>
 
-<h2>From source to simulation</h2>
+<h2 id="source-to-sim">From source to simulation</h2>
 <div class="filename">course/programs/01-saxpy/commands.sh</div>
 <pre><code>cslc --arch=wse3 ./layout.csl --fabric-dims=8,3 --fabric-offsets=4,1 \
      --params=N:64 -o out --memcpy --channels 1
@@ -330,7 +330,7 @@ cs_python run.py --name out</code></pre>
 <p class="legend"><span class="who c">cslc</span> written by the compiler · <span class="who r">run</span> written when the runtime loads · <span class="who s">sim</span> written by the simulator. All entries <span class="tag measured">Measured</span>.</p>
 </div>
 
-<h3>The fabric-size rule</h3>
+<h3 id="fabric-size">The fabric-size rule</h3>
 <p>With <code>--memcpy</code>, your rectangle sits inside the memcpy frame (<a href="07-host-io.html">Chapter 7</a>): 1 halo + 3 memcpy columns on the west, which is why your (0,0) is fabric (4,1), and 2 memcpy + 1 halo on the east, plus one halo row above and below. The wrapper's own check (<code>_generate_memcpy</code> in <code>cslc</code>) is <span class="tag sdk">SDK 2.10.1</span>:</p>
 <ul>
 <li><code>offset_x ≥ 4 + width_west_buf</code> and <code>offset_y ≥ 1</code>;</li>
@@ -356,7 +356,7 @@ cs_python run.py --name out</code></pre>
 <div class="readout cb-out" id="cb-out" aria-live="polite"></div>
 </div>
 
-<h3>Flags</h3>
+<h3 id="flags">Flags</h3>
 <p><code>cslc</code> is a Python wrapper: "Frontend for cslc-driver. Creates a directory and then calls cslc-driver"; options it does not know are passed on to <code>cslc-driver</code> <span class="tag sdk">SDK 2.10.1, cslc --help</span>.</p>
 <div class="table-wrap"><table>
 <tr><th>Flag</th><th>Meaning</th></tr>
@@ -377,7 +377,7 @@ cs_python run.py --name out</code></pre>
 <p><code>--single-pe</code>, <code>--output-json</code>, <code>--warnings-as-errors</code>, <code>--g0</code>, <code>--max-parallelism=N</code>, <code>--disable-auto-microthread-id</code>, <code>--dump-dsr-alloc-graph</code>, <code>--lomem-reservation-end</code>, <code>--link-section-start-address-bytes</code>, and <code>--separate-compilation</code> ("Experimental and unsupported") <span class="tag sdk">SDK 2.10.1, cslc-driver --help</span>. Run <code>singularity exec &lt;sif&gt; cslc-driver --help</code> for the full list.</p>
 </details>
 
-<h2>What cslc actually builds</h2>
+<h2 id="builds">What cslc actually builds</h2>
 <ol>
 <li><b>Wrapper checks and the frame.</b> The Python wrapper checks the fabric and offsets against memcpy's needs and generates the west and east frame programs (<code>out/west/</code>, <code>out/east/</code>). Errors here are Python <code>RuntimeError</code> tracebacks.</li>
 <li><b>Evaluate the layout.</b> <code>cslc-driver</code> runs <code>layout {}</code> at compile time; every <code>@set_tile_code</code> and <code>@set_color_config</code> becomes a concrete value. Errors: "failed to evaluate layout block".</li>
@@ -419,7 +419,7 @@ cs_python run.py --name out</code></pre>
 |          | 22    | W         | R,E       |       |</code></pre>
 <p>Your color 3 sits next to memcpy's colors on every PE. Commands (22) and H2D data (23) enter from the west and are passed both to the PE (R) and east along the row; D2H data (21) leaves eastward, with a switch position that lets each PE inject its own results. PE coordinates in this table are rectangle coordinates.</p>
 
-<h2>Simulator outputs</h2>
+<h2 id="sim-outputs">Simulator outputs</h2>
 <p>The simulator writes <code>sim.log</code>, <code>sim_stats.json</code>, <code>simconfig.json</code> and <code>simfab_traces/</code> into the directory you ran <code>cs_python</code> from; the host's <code>print</code> output goes to your terminal. A real <code>sim_stats.json</code> from program 01 (WSE-3, a quiet rerun) <span class="tag measured">Measured</span>:</p>
 <pre class="output"><code>"cycle_count": 7740,          <span class="c"># whole run: load, every memcpy, your kernel, idle tail</span>
 "fabric_x": 8, "fabric_y": 3,  <span class="c"># --fabric-dims</span>
@@ -436,8 +436,8 @@ cs_python run.py --name out</code></pre>
 <li>A fatal stop writes no <code>sim_stats.json</code> at all <span class="tag measured">Measured</span>. <code>sim.log</code> names the chip internally: FYN = WSE-2, SDR = WSE-3.</li>
 </ul>
 
-<h2>Debugging</h2>
-<h3>Error decoder</h3>
+<h2 id="debugging">Debugging</h2>
+<h3 id="errors">Error decoder</h3>
 <p>Each row is a one-line change to program 01, compiled or run on WSE-3 <span class="tag measured">Measured</span>. Note the three that compile cleanly.</p>
 <div class="table-wrap"><table>
 <tr><th>Mistake</th><th>When</th><th>What you see</th><th>Fix</th></tr>
@@ -453,7 +453,7 @@ cs_python run.py --name out</code></pre>
 </table></div>
 <p class="legend">"256 bytes" is the D2H copy of 64 f32 that never arrived. Under heavy host load a correct program can also abort with "could be a kernel stall": 5 of 32 parallel runs did in the Chapter 11 review <span class="tag measured">Measured</span>. Rerun it alone before you hunt.</p>
 
-<h3>When it hangs: a four-step procedure</h3>
+<h3 id="hangs">When it hangs: a four-step procedure</h3>
 <ol>
 <li><b>Read the run.py traceback.</b> "received length … kernel stall" means some RPC never unblocked, or a task you waited for never ran.</li>
 <li><b>Print from the device.</b> Add a <code>&lt;simprint&gt;</code> line at the entry and exit of each task, rerun, and look at the last line each PE printed: <code>grep 'PE(' sim.log</code>.</li>
@@ -487,7 +487,7 @@ d.read_trace(4 + x, 1 + y, <span class="s">'trace'</span>)  <span class="c"># fa
 <p><b>Instruction trace.</b> Setting <code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace</code> before <code>cs_python</code> makes the simulator log every instruction. For SAXPY this grew <code>sim.log</code> to about 6 MB (86,000 lines) and showed lines such as <code>@3124 P4.1: … [EX OP] … FMACS Dest:3f24aefe Src0:3ea86eb5 Src1:3e00bf6c Src2:40200000</code>, where <code>P4.1</code> is fabric (4,1), <code>T01</code> the task ID and <code>40200000</code> is 2.5 in hex <span class="tag measured">Measured</span>. It shows which task each PE runs, cycle by cycle, and is the quickest way to see where a PE stopped. Use it on small runs only. (<code>sdk_debug_shell instr-trace</code> does not read the simulator's default CTF traces; it says to use csdb <span class="tag sdk">SDK 2.10.1</span>.)</p>
 <p>A cheap trick we used for the streaming race in program 02: export an extra array, have the data task record each running sum into it, read it back, and compare with <code>numpy.cumsum</code>. On a deterministic simulator, recording state is often faster than stepping a debugger.</p>
 
-<h2>The other way to lay out: SdkLayout</h2>
+<h2 id="sdklayout">The other way to lay out: SdkLayout</h2>
 <p>The SDK has a second, newer way to build programs, with five tutorials (sdklayout-01 to -05) <span class="tag sdk">SDK 2.10.1</span>. Instead of <code>layout.csl</code> and <code>cslc</code>, a Python script under <code>cs_python</code> creates <em>code regions</em>, "paints" routes with symbolic colors, places regions anywhere on the fabric, and calls <code>layout.compile()</code> itself. "The SdkLayout engine will automatically find optimal routes" between ports you connect. memcpy is not used (<code>memcpy_required=False</code>), so there is no frame: running sdklayout-02 gave <code>fabric_x: 2, fabric_y: 1, iotile_count: 0</code> and <code>cycle_count: 81</code>, against 8 × 3 and 7,740 for SAXPY with memcpy <span class="tag measured">Measured</span>.</p>
 <div class="grid2">
 <div>
@@ -532,7 +532,7 @@ rt.read_symbol(1, 0, <span class="s">'buffer'</span>, dtype=<span class="s">'uin
 "For now, it is only possible to create input/output streams to/from single-PE ports. If a port consists of more than one PE then an adaptor layer must be created explicitly" <span class="tag sdk">SDK 2.10.1, sdklayout-04</span>. sdklayout-05 builds such demux/mux regions in Python for a GEMV. This course's labs use layout.csl + memcpy, which is what most SDK examples use; reach for SdkLayout when you compose several kernels or want the compiler to route between them.
 </div>
 
-<h2>Setting up the SDK</h2>
+<h2 id="setup">Setting up the SDK</h2>
 <ol>
 <li><b>Get the SDK.</b> Cerebras distributes the SDK 2.10.1 tarball (it is not in a package manager). Unpack it into a directory such as <code>~/cerebras-sdk</code>. It contains the wrapper scripts <code>cslc</code>, <code>cs_python</code>, <code>csdb</code>, <code>cs_readelf</code>, <code>sdk_debug_shell</code> and a 3.5 GB Singularity image (<code>sdk-cbcore-2.10.1-….sif</code>) with the compiler, runtime and simulator <span class="tag measured">Measured</span>. Unpack <code>csl-extras-*.tar.gz</code> inside it to get the tutorials and benchmarks.</li>
 <li><b>Install a container runtime.</b> The wrappers call <code>singularity</code>. On Ubuntu, <code>apt-get install singularity-container</code> (SingularityCE 4.1.1) works <span class="tag measured">Measured</span>.</li>

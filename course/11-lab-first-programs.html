@@ -57,7 +57,7 @@ python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"
 <p>Do the same in <code>~/lab1/02-wavelet-tasks</code>, and do every exercise in these copies. <code>course/programs/run_all.sh</code> runs the pristine versions of all programs and prints PASS/FAIL with cycle counts. A run takes 10–30 s of wall time. If something fails, see <a href="#trouble">If it fails</a>.</p>
 </div>
 
-<h2>Program 01 · SAXPY: y ← a·x + y</h2>
+<h2 id="saxpy">Program 01 · SAXPY: y ← a·x + y</h2>
 <p>The layout places one PE, exports two arrays and one function. Because the function takes an argument, its exported type is <code>fn(f32)void</code>. Chapter 10 walks through these three files line by line; here we build them, run them and look inside.</p>
 <p>First the build-and-run script. The flags were explained in Chapter 10: an 8 × 3 fabric leaves room for memcpy's columns west and east of your code, and your 1 × 1 rectangle sits at offset (4,1), so your PE appears as <code>P4.1</code> in traces. <code>--params=N:64</code> sets the compile-time vector length; <code>--memcpy --channels 1</code> adds the host-transfer framework (Chapter 7).</p>
 <div class="filename">course/programs/01-saxpy/commands.sh</div>
@@ -241,7 +241,7 @@ SUCCESS!
 <p><code>cycle_count</code> includes time the device spent waiting for the host, so it depends on how busy your machine is. Program 01 reran at 7,738–7,740 on an idle machine, but gave 16,940 once while other simulations were running; program 02 varies by a few hundred cycles even when idle (7,021–7,543) <span class="tag measured">Measured</span>. On a heavily loaded machine a correct program can even abort with "could be a kernel stall"; we saw this in 3 of 28 runs made two or three at a time. Run one simulation at a time when you compare totals, rerun alone before debugging a stall, and time device code with the timestamp counter instead: its numbers did not change between runs.</p>
 </div>
 
-<h3>Measure the kernel itself: f32 vs f16, WSE-2 vs WSE-3</h3>
+<h3 id="kernel-time">Measure the kernel itself: f32 vs f16, WSE-2 vs WSE-3</h3>
 <p>The standard SDK idiom (topic-02, bandwidth-test) reads the PE's 48-bit timestamp counter just before and after the code you care about. The SDK explains why this beats host-side timing: "the runtime may not send the command right after the user issues it" <span class="tag sdk">SDK 2.10.1, bandwidth-test README</span>. The variant in <code>01-saxpy/timed/</code> does this around the single DSD op, and can switch to f16 (<code>@fmach</code>) and insert padding between x and y:</p>
 <div class="filename">course/programs/01-saxpy/timed/pe_program.csl</div>
 <pre><code><span class="k">param</span> memcpy_params;
@@ -368,7 +368,7 @@ runs = []                                   <span class="c"># [task, first, last
 </ol>
 </div>
 
-<h2>Program 02 · A task per wavelet</h2>
+<h2 id="wavelet-tasks">Program 02 · A task per wavelet</h2>
 <p>Now the host does not write into an array. It <em>streams</em>: each of the N values becomes one 32-bit wavelet sent on a memcpy color. On the PE, that color is bound to input queue 2 and the queue is bound to a data task, so <strong>each arriving value runs <code>on_value()</code> once</strong>, with the value as its argument.</p>
 <p>The script has one extra parameter: <code>--params=MEMCPYH2D_DATA_1_ID:0</code> picks color 0 for the stream. <code>run.py</code> reads the same value back from <code>out/out.json</code>, so host and device agree.</p>
 <div class="filename">course/programs/02-wavelet-tasks/commands.sh</div>

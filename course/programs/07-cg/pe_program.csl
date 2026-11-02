@@ -1,0 +1,241 @@
+// Lab 5: one PE's part of a conjugate-gradient solve of A x = b, A = 7-point stencil.
+// Adapted from Cerebras SDK 2.10.1 benchmarks/conjugate-gradient (src/kernel.csl, the
+// host-driven loop, and src/kernel_cg.csl, the device-driven state machine). Changes for the
+// course: both loops in one program, a per-phase TSC profile, and a residual/time history.
+//
+// Each PE owns one z-column ("pencil") of MAX_ZDIM cells of every vector.
+// One CG iteration is five phases; two of them end in an allreduce that every PE waits for:
+//   update_p        p = r + beta p                       (axpy)
+//   spmv_Ap         w = A p                              (stencil library)
+//   eta             eta = <p, w>                         (local dot, then allreduce)
+//   update_x_r_rho  x += alpha p; r -= alpha w; rho = <r, r>   (2 axpy, local dot, allreduce)
+//   (check)         stop when rho <= tol^2 or k = max_ite
+
+param memcpyParams;
+param stencilParams;
+param reduceParams;
+param MAX_ZDIM: i16;
+param MAX_ITE: i16;
+param BLOCK_SIZE: i16;
+param PROFILE: i16;
+param STATE: local_task_id;          // the device loop's state-machine task
+
+const timestamp = @import_module("<time>");
+const sys_mod = @import_module("<memcpy/memcpy>", memcpyParams);   // queues 0 and 1
+
+// Both libraries call phase_done() when they finish: that one callback is how a library hands
+// control back, to the host (host loop) or to the state machine (device loop).
+const reduce_mod = @import_module("lib/allreduce/pe.csl", .{
+  .reduce_params = reduceParams,
+  .f_callback = phase_done,
+  .queues = [1]u16{2},
+  .dest_dsr_ids = [1]u16{1}, .src0_dsr_ids = [1]u16{1}, .src1_dsr_ids = [1]u16{1},
+});
+const stencil_mod = @import_module("lib/stencil_3d_7pts/pe.csl", .{
+  .stencil_params = stencilParams,
+  .f_callback = phase_done,
+  .input_queues = [4]u16{4, 5, 6, 7},
+  .output_queues = if (@is_arch("wse3")) [4]u16{4, 5, 6, 7} else [1]u16{3},
+  .output_ut_id = 3,                  // WSE-3: all sends on microthread 3, one after another
+  .BLOCK_SIZE = BLOCK_SIZE,
+  .dest_dsr_ids = [2]u16{2, 3}, .src0_dsr_ids = [1]u16{2}, .src1_dsr_ids = [2]u16{2, 3},
+});
+
+var b = @zeros([MAX_ZDIM]f32);       // right-hand side
+var x = @zeros([MAX_ZDIM]f32);       // solution estimate
+var p = @zeros([MAX_ZDIM]f32);       // search direction
+var w = @zeros([MAX_ZDIM]f32);       // w = A p
+var r = @zeros([MAX_ZDIM]f32);       // residual
+var coeff = @zeros([7]f32);          // stencil: west, east, south, north, bottom, top, centre
+var rho = @zeros([1]f32);            // <r, r>, identical on every PE after the allreduce
+var rho_old: f32 = 0.0;
+var eta = @zeros([1]f32);            // <p, A p>
+
+var n: i16 = 0;                      // cells in use per PE
+var k: i16 = 0;                      // iteration counter
+var tol: f32 = 0.0;
+var max_ite: i16 = 0;
+var device_loop: bool = false;       // who starts the next phase: the host, or task STATE?
+
+var dsd_b = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{MAX_ZDIM} -> b[i] });
+var dsd_x = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{MAX_ZDIM} -> x[i] });
+var dsd_p = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{MAX_ZDIM} -> p[i] });
+var dsd_w = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{MAX_ZDIM} -> w[i] });
+var dsd_r = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{MAX_ZDIM} -> r[i] });
+
+// ---------------- instrumentation (TSC, read on this PE only) ----------------
+const B_AXPY: u16 = 0;  const B_SPMV: u16 = 1;  const B_DOT: u16 = 2;
+const B_ALLREDUCE: u16 = 3;  const B_CONTROL: u16 = 4;
+var prof = @zeros([5]u32);           // cycles per bucket, summed over iterations 1..k
+var bucket: u16 = B_CONTROL;
+var t_last: u32 = 0;
+var rho_hist = @zeros([MAX_ITE + 1]f32);   // rho after iteration 0..k
+var t_hist = @zeros([MAX_ITE + 1]u32);     // TSC (low 32 bits) at the same moments
+var tsc = @zeros([timestamp.tsc_size_words]u16);
+
+fn now() u32 {
+  timestamp.get_timestamp(&tsc);
+  return @as(u32, tsc[0]) | (@as(u32, tsc[1]) << 16);
+}
+
+// Close the running bucket and open the next one. Compiled out when PROFILE = 0.
+fn mark(next: u16) void {
+  if (PROFILE != 0) {
+    const t = now();
+    prof[bucket] += t - t_last;
+    t_last = t;
+    bucket = next;
+  }
+}
+
+// rho has just been allreduced: log it, with the time, for the convergence plot.
+fn record() void {
+  rho_hist[k] = rho[0];
+  t_hist[k] = now();
+  if (k == 0) {                      // profile iterations only, not the set-up
+    for (@range(u16, 5)) |i| { prof[i] = 0; }
+    t_last = t_hist[0];
+    bucket = B_CONTROL;
+  }
+}
+
+// ---------------- the phases ----------------
+const PH_INIT: i16 = 0;      const PH_SPMV_AX: i16 = 1;  const PH_RESIDUAL: i16 = 2;
+const PH_UPDATE_P: i16 = 3;  const PH_SPMV_AP: i16 = 4;  const PH_ETA: i16 = 5;
+const PH_UPDATE_XR: i16 = 6;
+var phase: i16 = PH_INIT;            // the phase that is running or has just finished
+
+// Every phase ends here, directly or as a library's callback.
+fn phase_done() void {
+  if (phase == PH_RESIDUAL or phase == PH_UPDATE_XR) { record(); }
+  mark(B_CONTROL);
+  if (device_loop) {
+    @activate(STATE);                // the state machine starts the next phase
+  } else {
+    sys_mod.unblock_cmd_stream();    // the host's launch() returns; it starts the next phase
+  }
+}
+
+fn local_dot(u: *[MAX_ZDIM]f32, v: *[MAX_ZDIM]f32) f32 {   // as in the SDK's blas.csl
+  var s: f32 = 0.0;
+  @map(dot_step, @set_dsd_base_addr(dsd_x, u), @set_dsd_base_addr(dsd_x, v), &s, &s);
+  return s;
+}
+fn dot_step(ui: f32, vi: f32, s: *f32) f32 { return s.* + ui * vi; }
+
+fn init(size: i16) void {
+  phase = PH_INIT;
+  n = size;
+  k = 0;
+  const len = @bitcast(u16, n);
+  dsd_b = @set_dsd_length(dsd_b, len);  dsd_x = @set_dsd_length(dsd_x, len);
+  dsd_p = @set_dsd_length(dsd_p, len);  dsd_w = @set_dsd_length(dsd_w, len);
+  dsd_r = @set_dsd_length(dsd_r, len);
+  for (@range(i16, MAX_ITE + 1)) |i| { rho_hist[i] = 0.0; t_hist[i] = 0; }
+  timestamp.enable_tsc();
+  phase_done();
+}
+
+fn spmv_Ax() void {                  // w = A x0
+  phase = PH_SPMV_AX;
+  stencil_mod.spmv(n, &coeff, &x, &w);
+}
+
+fn residual() void {                 // r = b - w; rho = <r, r>
+  phase = PH_RESIDUAL;
+  @fsubs(dsd_r, dsd_b, dsd_w);
+  rho[0] = local_dot(&r, &r);
+  reduce_mod.allreduce(1, &rho, reduce_mod.TYPE_BINARY_OP.ADD);
+}
+
+fn update_p() void {                 // p = r (first iteration) or p = r + beta p
+  phase = PH_UPDATE_P;
+  mark(B_AXPY);
+  k += 1;
+  if (k == 1) {
+    @fmovs(dsd_p, dsd_r);
+  } else {
+    @fmacs(dsd_p, dsd_r, dsd_p, rho[0] / rho_old);
+  }
+  phase_done();
+}
+
+fn spmv_Ap() void {                  // w = A p
+  phase = PH_SPMV_AP;
+  mark(B_SPMV);
+  stencil_mod.spmv(n, &coeff, &p, &w);
+}
+
+fn eta_dot() void {                  // eta = <p, w>, summed over all PEs
+  phase = PH_ETA;
+  mark(B_DOT);
+  eta[0] = local_dot(&p, &w);
+  mark(B_ALLREDUCE);
+  reduce_mod.allreduce(1, &eta, reduce_mod.TYPE_BINARY_OP.ADD);
+}
+
+fn update_x_r_rho() void {
+  phase = PH_UPDATE_XR;
+  mark(B_AXPY);
+  const alpha = rho[0] / eta[0];
+  @fmacs(dsd_x, dsd_x, dsd_p, alpha);
+  @fmacs(dsd_r, dsd_r, dsd_w, -alpha);
+  rho_old = rho[0];
+  mark(B_DOT);
+  rho[0] = local_dot(&r, &r);
+  mark(B_ALLREDUCE);
+  reduce_mod.allreduce(1, &rho, reduce_mod.TYPE_BINARY_OP.ADD);
+}
+
+// ---------------- host-driven loop: the host calls each phase ----------------
+fn f_init(size: i16) void { device_loop = false; init(size); }
+fn f_spmv_Ax() void { spmv_Ax(); }
+fn f_residual() void { residual(); }
+fn f_update_p() void { update_p(); }
+fn f_spmv_Ap() void { spmv_Ap(); }
+fn f_eta() void { eta_dot(); }
+fn f_update_x_r_rho() void { update_x_r_rho(); }
+
+// ---------------- device-driven loop: one RPC, a task picks each next phase ----------------
+fn f_cg(size: i16, tol_val: f32, max_ite_val: i16) void {
+  tol = tol_val;
+  max_ite = max_ite_val;
+  device_loop = true;
+  init(size);                        // ends in phase_done(), which activates STATE
+}
+
+task next_phase() void {
+  if (phase == PH_INIT) {
+    spmv_Ax();
+  } else if (phase == PH_SPMV_AX) {
+    residual();
+  } else if (phase == PH_RESIDUAL or phase == PH_UPDATE_XR) {
+    if (rho[0] > tol * tol and k < max_ite) {   // every PE sees the same rho: same decision
+      update_p();
+    } else {
+      device_loop = false;
+      sys_mod.unblock_cmd_stream();  // solve finished: the host's launch() returns
+    }
+  } else if (phase == PH_UPDATE_P) {
+    spmv_Ap();
+  } else if (phase == PH_SPMV_AP) {
+    eta_dot();
+  } else {                           // PH_ETA
+    update_x_r_rho();
+  }
+}
+
+// host-visible symbols
+var b_ptr: [*]f32 = &b;  var x_ptr: [*]f32 = &x;  var coeff_ptr: [*]f32 = &coeff;
+var rho_ptr: [*]f32 = &rho;  var rho_hist_ptr: [*]f32 = &rho_hist;
+var t_hist_ptr: [*]u32 = &t_hist;  var prof_ptr: [*]u32 = &prof;
+
+comptime {
+  @bind_local_task(next_phase, STATE);
+  @export_symbol(b_ptr, "b");  @export_symbol(x_ptr, "x");  @export_symbol(coeff_ptr, "coeff");
+  @export_symbol(rho_ptr, "rho");  @export_symbol(rho_hist_ptr, "rho_hist");
+  @export_symbol(t_hist_ptr, "t_hist");  @export_symbol(prof_ptr, "prof");
+  @export_symbol(f_init);  @export_symbol(f_spmv_Ax);  @export_symbol(f_residual);
+  @export_symbol(f_update_p);  @export_symbol(f_spmv_Ap);  @export_symbol(f_eta);
+  @export_symbol(f_update_x_r_rho);  @export_symbol(f_cg);
+}

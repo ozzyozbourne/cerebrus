@@ -37,7 +37,7 @@
 </ul>
 </div>
 
-<h2>The narrow door</h2>
+<h2 id="door">The narrow door</h2>
 <div class="stat-row">
   <div class="stat"><div class="v">100 GbE</div><div class="l">host ↔ system links <span class="tag sdk">SDK 2.10.1</span></div></div>
   <div class="stat"><div class="v">~7 Gb/s</div><div class="l">per I/O channel <span class="tag sdk">SDK 2.10.1</span></div></div>
@@ -73,7 +73,7 @@
 The cycle-level simulator has no Ethernet or TCP, so none of the labs can measure the 7 Gb/s or the 200 µs. In simulation, memcpy still costs device cycles. Lab 3 (Chapter 13) separates them from the kernel by running 0 and 100 timesteps and subtracting; the experiment box below measures them directly.
 </div>
 
-<h2>The memcpy frame: what <code>--memcpy</code> adds</h2>
+<h2 id="frame">The memcpy frame: what <code>--memcpy</code> adds</h2>
 <p>When you compile with <code>--memcpy</code>, <code>cslc</code> places extra PE programs in columns around your rectangle. We call them the <strong>memcpy frame</strong>. (Do not confuse it with the <em>halo exchange</em> of Chapter 13, where stencil neighbours swap edge cells; the SDK's own layout comments also call the outermost ring "halo".) The roles come from the library's layout files <span class="tag sdk">SDK 2.10.1</span> (<code>runtime/layout_west_demux_cmdfan_multi.csl</code>, <code>layout_east_mux_multi.csl</code>):</p>
 <ul>
 <li><strong>West</strong>, outside in: one <em>halo</em> column, then a <em>demux adaptor</em> (where the I/O link enters and which reconfigures the demux for each command), a <em>demux</em> (splits one host stream into per-row streams), and a <em>command fan</em> (forwards commands and data east into each row).</li>
@@ -109,7 +109,7 @@ The cycle-level simulator has no Ethernet or TCP, so none of the labs can measur
 <li><strong>Buffer columns.</strong> <code>--width-west-buf</code> and <code>--width-east-buf</code> insert FIFO columns so the link keeps flowing while your PEs are busy. Each buffer PE holds about 46 KB, and a copy needs about pe_length × width × 4 ÷ 46 KB columns <span class="tag sdk">SDK 2.10.1</span>. For example, 1000 f32 per PE across 100 PEs is 400 KB, about 9 columns <span class="tag derived">Derived</span>. Buffers shift your offset east by the same amount.</li>
 </ul>
 
-<h3>What memcpy reserves on every PE</h3>
+<h3 id="reserves">What memcpy reserves on every PE</h3>
 <p>The frame is not the only cost. memcpy also runs code <em>on your PEs</em>, so it claims resources there <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span>:</p>
 <div class="table-wrap"><table>
 <tr><th>Resource</th><th>Reserved by memcpy</th><th>Consequence for you</th></tr>
@@ -120,7 +120,7 @@ The cycle-level simulator has no Ethernet or TCP, so none of the labs can measur
 </table></div>
 <p class="legend">Context switch, teardown and NOP are internal memcpy mechanisms; you only need to avoid their IDs. The WSE-3 queue bindings are from <code>memcpy/wse3/memcpy.csl</code> ("cmd color (C22) needs to bind an input queue 1 for wse3") <span class="tag sdk">SDK 2.10.1</span>. Some header comments in that file list the colors in a different order; <code>sys_params.csl</code>, which defines them, is the authority.</p>
 
-<h2>How a copy reaches its PE</h2>
+<h2 id="copy-path">How a copy reaches its PE</h2>
 <p>A copy-mode <code>memcpy_h2d</code> to a w × h rectangle travels in two stages <span class="tag sdk">SDK 2.10.1</span> (<code>runtime/demux.csl</code>, <code>memcpy/wse3/memcpyh2d.csl</code>):</p>
 <ol>
 <li><strong>Down the column.</strong> The link's stream enters the demux adaptor and is broadcast north to south through the demux column. Each demux PE has a <em>counter filter</em>: a hardware counter that ticks on every wavelet and lets one through only when it reads 0. With h receiving rows, row y keeps wavelets y, y + h, y + 2h, … and turns them east into its row.</li>
@@ -147,7 +147,7 @@ The cycle-level simulator has no Ethernet or TCP, so none of the labs can measur
 
 <p>Two consequences. First, <strong>the whole row takes part</strong>. If any PE in a row is in the copy region, every PE in that row sets its filter and forwards the data, so even a 1-PE copy occupies its row. Rows with no active PE skip the command at once <span class="tag sdk">SDK 2.10.1</span> (<code>memcpy/wse3/memcpy.csl</code>). Second, <strong>a copy completes on each PE only when its data is in memory</strong>. An active PE frees the command stream only after its write into your array finishes; a forwarding PE waits for the teardown wavelet that marks the end of the data <span class="tag sdk">SDK 2.10.1</span>. That is why copy mode cannot race, as we will see.</p>
 
-<h2>The host side in eight lines</h2>
+<h2 id="host-side">The host side in eight lines</h2>
 <div class="filename">course/programs/01-saxpy/run.py (excerpt, comments added)</div>
 <pre><code><span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder
 
@@ -173,7 +173,7 @@ rt.stop()</code></pre>
 </table></div>
 <p>The keyword arguments are the command stream's knobs. <code>order</code> picks the host layout above. <code>MEMCPY_32BIT</code> moves 32-bit words. <code>MEMCPY_16BIT</code> exists too, but the host array is still 32-bit per element and the SDK tutorials strip the upper half afterwards with <code>sdk_utils.memcpy_view</code> <span class="tag sdk">SDK 2.10.1, topic-01</span>. Every wavelet is 32 bits, so 16-bit data does not halve transfer time <span class="tag derived">Derived</span>. <code>nonblock=True</code> makes the call return a <code>Task</code> at once (wait with <code>rt.task_wait(t)</code> or poll <code>rt.is_task_done(t)</code>) <span class="tag sdk">SDK 2.10.1, SdkRuntime</span>. That lets the runtime batch commands to save TCP overhead, but it never reorders them: they still run one at a time on the device. Other calls exist, among them <code>call(name, u32_array)</code> (an RPC with raw arguments, used by bandwidth-test), <code>memcpy_h2d_rowbcast</code>/<code>colbcast</code> and <code>memcpy_h2d_stride</code>.</p>
 
-<h2>The command stream</h2>
+<h2 id="command-stream">The command stream</h2>
 <p>Every host call becomes a short command on color 22. The command fan broadcasts it into each row, and memcpy's control tasks on every PE decode it. A copy command carries the color or symbol, the region (px, py, w, h), the address, the elements per PE, a 16-bit flag and a copy type (dense, row broadcast, column broadcast, strided) <span class="tag sdk">SDK 2.10.1, sys_params.csl</span>. An RPC carries a word count, the arguments and the function ID, all as 32-bit words <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>.</p>
 <p>Commands are <strong>serialized per PE</strong>: a PE blocks color 22 while it handles a command and decodes the next one only after it is unblocked. For copies memcpy unblocks itself. For an RPC, your function must call <code>sys_mod.unblock_cmd_stream()</code>, directly or from a completion task: "The user must call unblock_cmd_stream() at the end of a RPC" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. If even one PE forgets, <code>launch()</code> still returns, but the next command never completes there. In the simulator the next <code>memcpy</code> then fails after about 4 s with "the received length (0 bytes) is not expected … could be a kernel stall", and no <code>sim_stats.json</code> is written, rather than hanging forever <span class="tag measured">Measured (Chapter 10 and 11 reviews)</span>.</p>
 
@@ -190,7 +190,7 @@ rt.stop()</code></pre>
 <div class="readout" id="rpc-out" aria-live="polite"></div>
 </div>
 
-<h2>Copy mode vs streaming mode</h2>
+<h2 id="modes">Copy mode vs streaming mode</h2>
 <div class="grid2">
 <div class="callout">
 <strong>Copy mode (<code>streaming=False</code>)</strong>
@@ -256,7 +256,7 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
 </table></div>
 <p class="legend">Queue depths from the comments in <code>memcpy/wse3/memcpy.csl</code> <span class="tag sdk">SDK 2.10.1</span>. These small buffers are why back-pressure (Chapter 5) reaches the host link so quickly.</p>
 
-<h3>Ordering matters too</h3>
+<h3 id="ordering">Ordering matters too</h3>
 <p>Because commands are serialized, streams must be sent in the order the device consumes them. The SDK's gemv-09 tutorial warns: "If the b values were streamed in before x, the program would hang" <span class="tag sdk">SDK 2.10.1</span>. The mechanism is back-pressure plus serialization <span class="tag derived">Derived</span>. The device's tasks wait for all of x before they consume b, so b's wavelets are not consumed. They fill the few-wavelet queues and back up through the frame to the link (Chapter 5's back-pressure). The b command therefore never completes, and because commands are serialized, the x command is never sent. Each side waits for the other. The program-02 race and this hang are one model: a streaming copy finishes when the device has <em>accepted</em> the last wavelet, not before the device has room and not after your task has run.</p>
 <p>For inputs that every PE in a row or column needs, <code>memcpy_h2d_rowbcast</code> and <code>colbcast</code> let the host send one column (or row) of data instead of a replicated tensor. In the SDK's example a column of 4 values goes to a 3 × 4 region as 4 elements instead of 12, saving host bandwidth 3× (host-to-device only) <span class="tag sdk">SDK 2.10.1, row-col-broadcast</span>. The command carries the broadcast type, and memcpy on the device does the rest.</p>
 

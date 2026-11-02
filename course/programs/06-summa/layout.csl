@@ -1,0 +1,52 @@
+// 06-summa: C = A·B on a P x P grid of PEs with the SUMMA algorithm.
+// Adapted from Cerebras SDK 2.10.1 benchmarks/gemm-collectives_2d (layout.csl,
+// pe.csl, run.py), rewritten in the course's style, with per-step TSC stamps.
+//
+// Each PE (px, py) owns one tile of each matrix: A is Mt x Kt, B is Kt x Nt,
+// C is Mt x Nt, all column-major. In step s, the PEs of column s broadcast
+// their A tile along their row, and the PEs of row s broadcast their B tile
+// down their column; then every PE does C_tile += A_s · B_s.
+// Teaches: a 2-D decomposition, <collectives_2d> (routes rewritten at run
+// time, teardown), a task that waits on two networks, the compute-bound regime.
+//
+// Resource map (every PE)
+//   colors        0, 1  row (x) broadcast         2, 3  column (y) broadcast
+//                 (20-23 belong to memcpy and the runtime, Chapter 4)
+//   local tasks   8, 9  x library (FSM, lock)     10, 11  y library (FSM, lock)
+//                 12 exit   13 compute   14 x_done   15 y_done
+//                 (the teardown handler, task 29, is installed by the library)
+//   queues        0, 1  memcpy    2, 4  x library    3, 5  y library
+//   microthreads  = queue IDs: a broadcast uses 2 (x) and 3 (y) at the same time
+param P: u16;              // grid is P x P PEs
+param Mt: u16;             // tile sizes on one PE
+param Kt: u16;
+param Nt: u16;
+param kernel: u16 = 0;     // 0 = column @fmacs (SDK), 1 = outer product (pe_program.csl)
+
+const memcpy = @import_module("<memcpy/get_params>", .{ .width = P, .height = P });
+const c2d = @import_module("<collectives_2d/params>");
+
+layout {
+  @set_rectangle(P, P);
+  for (@range(u16, P)) |px| {
+    const memcpy_params = memcpy.get_params(px);
+    for (@range(u16, P)) |py| {
+      // get_params only records which end of its row/column a PE sits at;
+      // the PE reads its own coordinates at run time (fewer distinct ELFs).
+      const c2d_params = c2d.get_params(px, py, .{
+        .x_colors      = .{ @get_color(0),          @get_color(1) },
+        .x_entrypoints = .{ @get_local_task_id(8),  @get_local_task_id(9) },
+        .y_colors      = .{ @get_color(2),          @get_color(3) },
+        .y_entrypoints = .{ @get_local_task_id(10), @get_local_task_id(11) },
+      });
+      @set_tile_code(px, py, "pe_program.csl", .{
+        .memcpy_params = memcpy_params, .c2d_params = c2d_params,
+        .Mt = Mt, .Kt = Kt, .Nt = Nt, .kernel = kernel });
+    }
+  }
+  @export_name("A", [*]f32, true);
+  @export_name("B", [*]f32, true);
+  @export_name("C", [*]f32, true);
+  @export_name("tsc", [*]u16, true);   // 3P + 2 timestamps of 3 x u16 per PE
+  @export_name("main", fn()void);
+}

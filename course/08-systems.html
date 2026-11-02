@@ -37,7 +37,7 @@
 </ul>
 </div>
 
-<h2>The system around the wafer</h2>
+<h2 id="system">The system around the wafer</h2>
 <p>A <strong>CS-<i>n</i></strong> is the system (power, cooling, I/O) built around one <strong>WSE-<i>n</i></strong> wafer. CS-4 breaks the pattern: it is a rack holding three WSE-3T wafers, the higher-clocked WSE-3 variant from Chapter 2. Three execution modes run on these systems. Each one is a different answer to the 44 GB limit.</p>
 
 <figure>
@@ -57,7 +57,7 @@
 </table></div>
 <p class="note">All figures <span class="tag vendor">Vendor</span>. "EF" and "PF" are exa- and petaflops, and these are <em>sparse</em> figures, the inflated vendor metric explained in Chapter 2. RoCE v2 is RDMA over ordinary Ethernet. The MemoryX ranges are configurations, not a regression: the 4 TB – 2.4 PB design range is from the weight-streaming white paper, and the shipped unit sizes are from the CS-3 launch blog. The current status of the Condor Galaxy clusters was not verified.</p>
 
-<h2>Training: weight streaming</h2>
+<h2 id="weight-streaming">Training: weight streaming</h2>
 <p>From 2021, Cerebras trains large models by <strong>weight streaming</strong>. The activations stay on the wafer. The weights live off the wafer in <strong>MemoryX</strong>, a DRAM-plus-flash service that also performs the weight update. The whole wafer computes one layer at a time. <strong>SwarmX</strong> "handles the broadcast of weights from MemoryX to the entire cluster and effectively reduces (sums) gradients in the opposite direction" <span class="tag vendor">Vendor</span>. The training docs put it in one line: "The compiler maps one kernel (layer) at a time onto the entire WSE, first for the forward pass and then for the backward pass" <span class="tag vendor">Vendor</span>.</p>
 
 <div class="widget" id="ws">
@@ -114,14 +114,14 @@
 <div class="readout" id="tpw-out" aria-live="polite"></div>
 </div>
 
-<h3>A layer on the wafer</h3>
+<h3 id="layer">A layer on the wafer</h3>
 <p>What does "the whole wafer computes one layer" mean at the level of the PEs from Chapters 3–6? Hot Chips 2022 and the white paper describe it <span class="tag vendor">Vendor</span>. The activation tensor [B][S][H] is spread over the whole wafer, each core holding a tile: features H across the x axis, batch and sequence positions down y. Weights never get a home on the wafer: "No memory used for weights, not even stored temporarily." Instead each weight travels as a 32-bit fabric packet, "weight (16b) + index (16b)". It is multicast down the column of cores that holds the matching features, and its arrival triggers an FMAC against each core's local activations. That is one AXPY per weight, and exactly the data-triggered task of Chapter 5 and the DSD FMAC of Chapter 6. Then a PSUM command makes each row of cores ring-reduce its partial sums, and an FSUM command sends the final sum to the column that owns that output feature. Reductions overlap with the next weights. Zero weights are simply never sent, which is where Cerebras's "native unstructured sparsity" comes from.</p>
 <figure>
 <svg id="lw" viewBox="0 0 760 300" width="760" role="img" aria-label="One weight-streamed layer on the PE grid: weights multicast down columns, partial sums reduced along rows"></svg>
 <figcaption><b>Weights are messages, not data at rest.</b> A row of non-zero weights enters at the wafer edge; each packet is multicast down one column (blue) and triggers an FMAC on every core it passes. Partial sums then ring-reduce along each row (orange) and land in the owning column (green). An 8 × 6 patch stands in for ~900,000 cores. Mechanism from Hot Chips 2022 <span class="tag vendor">Vendor</span>; the drawing is schematic.</figcaption>
 </figure>
 
-<h3>MemoryX: what it stores, and what it computes</h3>
+<h3 id="memoryx">MemoryX: what it stores, and what it computes</h3>
 <div class="table-wrap"><table>
 <tr><th>Stored per parameter (white paper)</th><th>Bytes</th></tr>
 <tr><td>FP32 master weight</td><td>4</td></tr>
@@ -133,13 +133,13 @@
 <p class="note">Table <span class="tag vendor">Vendor</span>. GPT-3 at 175B × 20 B = 3.5 TB, which is why the white paper sets a 4 TB minimum, and 120T × 20 B = 2.4 PB, the top of its range <span class="tag derived">Derived</span>. The CS-3 blog's 1,200 TB for "24 trillion parameters" implies 50 B per parameter, so the assumptions changed between eras <span class="tag derived">Derived</span>.</p>
 <p>MemoryX uses "DRAM and flash storage in a hybrid fashion", and its storage and I/O "match or exceed the I/O bandwidth of a CS-2". It runs any optimizer, with a FLOP/s rate "three orders of magnitude greater than its I/O bandwidth" <span class="tag vendor">Vendor</span>. Its compute never becomes the bottleneck, because the update costs O(P) work for P parameters, while the wafer's work grows as O(B·S·P) with batch and sequence. For the same reason one MemoryX can serve a cluster of any size <span class="tag vendor">Vendor</span>.</p>
 
-<h3>SwarmX: a broadcast–reduce tree</h3>
+<h3 id="swarmx">SwarmX: a broadcast–reduce tree</h3>
 <p>SwarmX is built from <strong>broadcast–reduce nodes</strong>, each "containing a set of 100Gb/s network interfaces" and able to do one 1:4 or two 1:2 broadcast–reduce operations, with "enough compute to perform the floating-point gradient reductions at line-rate" <span class="tag vendor">Vendor</span>. The nodes form a bidirectional tree. Node count grows linearly with the number of systems N, and latency grows as log N. Because gradients are summed on the way up, one copy of the gradient tensor crosses each link, the same as the weights going down. The white paper's summary: "From the perspective of the MemoryX service, the SwarmX fabric looks just like a single CS-2 and from the perspective of the CS-2, the SwarmX looks just like the MemoryX service" <span class="tag vendor">Vendor</span>. So "the same mapping is used for every layer across all systems", and adding systems is pure data parallelism. No system ever holds <em>part</em> of the model, because only one layer has to fit at a time and any layer fits on any wafer. Cerebras chose this deliberately: mixing streaming with tensor or pipeline parallelism adds activation traffic, so it sets both to 1. It calls the result "linear scaling". The published evidence is Andromeda: 16 CS-2s gave 15.87× one CS-2's throughput on a GPT-3 XL genomics workload <span class="tag vendor">Vendor</span>. That is one vendor workload at 16 systems, not a general proof.</p>
 
-<h3>Before weight streaming: layer-pipelined mode</h3>
+<h3 id="layer-pipelined">Before weight streaming: layer-pipelined mode</h3>
 <p>CS-1 and the original CS-2 installation used <strong>layer-pipelined</strong> execution, for models "below 1 billion parameters, which can fit entirely in the on-chip memory" <span class="tag vendor">Vendor</span>. All the layers are loaded onto the wafer at once. The compiler "maps each kernel/layer of the network onto a region (a rectangle)", connects the regions with on-wafer data paths, and sizes and places them "to optimize the throughput". Activations flow forward from region to region, and activation gradients flow back. Weights stay in their region and are updated on the wafer at the end of each backward step. After an initial fill latency, "all the layers of the network enter a steady state of active execution" <span class="tag vendor">Vendor</span>. Keep this picture in mind: 2024 inference brings back the same spatial idea.</p>
 
-<h2>Inference: pin the weights, pass the tokens</h2>
+<h2 id="inference">Inference: pin the weights, pass the tokens</h2>
 <p>Inference flips the trade. Decode is bandwidth-bound (Chapter 1), so the winning move is to keep every weight in SRAM and never fetch it: "we don't need to access external memory to load parameters because they're already there" <span class="tag vendor">Vendor</span>. The cost is capacity. Besides the weights, decode keeps a <strong>KV cache</strong> (Chapter 1): the attention keys and values of every earlier token, one copy per sequence, growing with context length. On a GPU it lives in HBM. On Cerebras it must fit in whatever SRAM the weights leave free. Llama 3.1-70B needs about 140 GB at 16-bit <span class="tag derived">Derived</span>, so at launch in August 2024 its 80 layers were spread across <strong>four CS-3 systems</strong>, each holding a contiguous block of 20 layers, with only activations passing between wafers <span class="tag vendor">Vendor</span> (Hot Chips 2024).</p>
 
 <h3>Inside the pipeline</h3>
@@ -177,7 +177,7 @@
 </ul>
 </div>
 
-<h3>KV-cache arithmetic: what limits users and context</h3>
+<h3 id="kv-cache">KV-cache arithmetic: what limits users and context</h3>
 <p>For Llama-3-70B (80 layers, 8 KV heads of width 128 <span class="tag vendor">Vendor</span>, Meta config), the KV cache per token is 80 × 8 × 128 × 2 (K and V) × 2 B = <b>327,680 B ≈ 0.33 MB</b> <span class="tag derived">Derived</span>, the same figure as Chapter 1. Four wafers hold 176 GB; minus 140 GB of weights leaves ~36 GB. Even if all of it held KV and none held activations, that is about <b>110,000 tokens of context in total across all users</b>: roughly 13 users at 8K context, or less than one user at 128K <span class="tag derived">Derived</span>. On the GPU side the same KV cache sits in HBM next to the weights. This is why Hot Chips 2024 lists "KV cache optimizations" among the next techniques <span class="tag vendor">Vendor</span>, and why long-context deployments such as Llama 3.1-405B at 128K need many wafers. The widget below makes the trade concrete.</p>
 
 <div class="widget" id="cap">
@@ -230,7 +230,7 @@
 Pinning weights makes each user's decode fast. But a wafer serves relatively few concurrent sequences compared with a GPU running large batches <span class="tag analyst">Analyst</span>, because each one's KV cache must fit in the SRAM the weights leave free. Analysts put batched H100 serving at ~$0.10–0.25 per million tokens <span class="tag analyst">Analyst</span>, against Cerebras's launch list price of $0.60 for Llama 3.1-70B <span class="tag vendor">Vendor</span>. Fast decode also does not shorten prefill. Chapter 18 returns to this.
 </div>
 
-<h2>CS-4 and the roadmap</h2>
+<h2 id="cs4">CS-4 and the roadmap</h2>
 <p>CS-4 keeps the WSE-3 silicon but rebuilds everything around it. The mechanism behind its "2× faster" claim is mostly power: conversion moved next to the wafer allows "twice as much power to the WSE-3 Turbo, enabling higher operating frequencies and faster token generation" <span class="tag vendor">Vendor</span>.</p>
 <div class="table-wrap"><table>
 <tr><th>CS-4 / Nexus</th><th>Detail <span class="tag vendor">Vendor</span></th></tr>

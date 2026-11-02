@@ -40,7 +40,7 @@
 </ul>
 </div>
 
-<h2>One instruction, a whole loop</h2>
+<h2 id="one-instruction">One instruction, a whole loop</h2>
 <p>In C you would write <code>for (i = 0; i &lt; N; i++) y[i] += x[i] * a;</code>. In CSL you describe <code>x</code> and <code>y</code> once and issue one instruction (Lab 1, program 01, run in Chapter 11):</p>
 <div class="filename">course/programs/01-saxpy/pe_program.csl</div>
 <pre><code><span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> x[i] });
@@ -67,7 +67,7 @@
 <p class="note">The scalar instruction mix is illustrative, not the CE's real ISA, which is not public <span class="tag derived">Derived</span>. The DSD cycle estimate uses the measured <code>@fmacs</code> rate below (about 17 + N cycles) <span class="tag measured">Measured, simulator</span>.</p>
 </div>
 
-<h2>Two spellings, and moving a DSD</h2>
+<h2 id="moving-dsd">Two spellings, and moving a DSD</h2>
 <p>Every 1-D memory DSD is base address + extent + stride. <code>tensor_access</code> is a readable way to write the same thing; the SDK's gemv-02 tutorial shows both side by side <span class="tag sdk">SDK 2.10.1, gemv-02-memory-dsds</span>. A DSD is also an ordinary run-time value: you can change it between instructions. That is how a 2-D algorithm is built from 1-D instructions. The scalar loop runs over columns, and the loop over the M elements of each column stays in hardware:</p>
 <div class="filename">SDK tutorials/gemv-02-memory-dsds/pe_program.csl (condensed)</div>
 <pre><code><span class="k">var</span> A: [M*N]<span class="n">f32</span>;                       <span class="c">// row-major M x N</span>
@@ -131,7 +131,7 @@
 <p class="note">Negative strides compile (<code>.stride = -1</code> was accepted by cslc 2.10.1) <span class="tag measured">Measured, cslc 2.10.1</span>; in the stencil preset the inputs show the mid DSD and are locked.</p>
 </div>
 
-<h3>More than one dimension: <code>mem4d_dsd</code></h3>
+<h3 id="mem4d">More than one dimension: <code>mem4d_dsd</code></h3>
 <p>A DSD can nest several induction variables. Leaving an index out of one operand's access expression makes that operand repeat, which turns a nested loop with a reduction into one instruction. The 25-point stencil sums the data received from four directions this way <span class="tag sdk">SDK 2.10.1, benchmarks/25-pt-stencil/task.csl</span>:</p>
 <pre><code><span class="k">var</span> buffer = <span class="b">@zeros</span>([directionCount, pattern, chunkSize]<span class="n">f32</span>);
 <span class="k">const</span> bufferDsd = <span class="b">@get_dsd</span>(<span class="n">mem4d_dsd</span>, .{
@@ -142,7 +142,7 @@
 <span class="b">@fadds</span>(dstDsd, dstDsd, bufferDsd);   <span class="c">// accumulator[k] += buffer[i, j, k] for every i, j, k</span></code></pre>
 <p>The destination walks <code>accumulator[0..chunkSize)</code> once for every (i, j), so every direction and pattern slice is folded onto the same few words. The same shape (a 3-D buffer reduced onto <code>acc[k]</code>) compiled for WSE-3 in our test <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
 
-<h2>Builtins: the vector instruction set</h2>
+<h2 id="builtins">Builtins: the vector instruction set</h2>
 <p>The four builtins the course's programs use:</p>
 <div class="table-wrap"><table class="small">
 <tr><th>Builtin</th><th>Meaning (f32)</th><th>Used in</th></tr>
@@ -170,7 +170,7 @@
 <p>Naming pattern: <code>f</code> = float, trailing <code>s</code> = single (f32), <code>h</code> = half (f16), <code>hs</code> = f16 inputs with an f32 result; <code>16/32</code> = integer width <span class="tag sdk">SDK 2.10.1, csl-libs/dsd_ops.csl</span>. The library does not say how <code>scale</code> differs from <code>mul</code>, or what <code>norm</code> computes; check the SDK's builtin reference before using them <span class="tag unv">Unverified</span>. You can also import the library and write type-generic code: <code>const ops = @import_module("&lt;dsd_ops&gt;"); ops.fmac(f32, f32, dst, a, b, s, .{});</code> compiled for WSE-3 <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
 <p>Depending on the builtin, a source operand can be a memory DSD, a fabric DSD, a FIFO or a scalar (for example the multiplier of <code>@fmacs</code>), and the destination a memory DSD, a fabric DSD or a FIFO. On WSE-3 at most one source may be a fabric DSD (see below). Each op's allowed operand types are listed in the SDK's builtin reference <span class="tag sdk">SDK 2.10.1, gemv-02 README</span>.</p>
 
-<h2>How fast is one instruction?</h2>
+<h2 id="op-speed">How fast is one instruction?</h2>
 <p>We timed single DSD instructions in the simulator: one op over 1,024 elements, memory to memory, on a 1 × 1 rectangle, bracketed by the PE's timestamp counter (the SDK's <code>single-tile-matvec</code> harness and its <code>&lt;time&gt;</code> module), with the three operands 1,025 words apart. Each figure includes the two timestamp reads.</p>
 <div class="table-wrap"><table class="small">
 <tr><th>Op, 1,024 elements</th><th>WSE-2 cycles</th><th>WSE-3 cycles</th><th>Elements / cycle (W2 / W3)</th></tr>
@@ -209,7 +209,7 @@ Each stencil step runs one <code>@fadds</code> and two <code>@fmacs</code> over 
 The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE in 4,214 cycles on WSE-3 <span class="tag measured">Measured</span>. It counts 2N² − N = 8,128 FLOPs, and actual SRAM traffic of 4·(3N² + N) = 49,408 bytes, because each column's FMAC re-reads and re-writes all of y <span class="tag sdk">SDK 2.10.1, single-tile-matvec/run.py</span>. That is 12 bytes per FMAC (read y, read A, write y), or about 11.7 bytes, three 32-bit accesses, per cycle. At the 850 MHz the SDK benchmarks assume, 4,214 cycles is 4.96 µs: about 10 GB/s of SRAM traffic and 1.6 GFLOP/s per PE, or about 9 PB/s and 1.5 PFLOP/s f32 if all 900,000 WSE-3 PEs did the same <span class="tag derived">Derived</span>. (850 MHz is the SDK's assumption; no WSE-3 clock is published.)
 </div>
 
-<h2>Layout matters: operand collisions in SRAM</h2>
+<h2 id="collisions">Layout matters: operand collisions in SRAM</h2>
 <p>A PE's 48 KB is 8 single-ported banks of 6 KB, interleaved by 32-bit word <span class="tag vendor">Vendor</span>. An FMAC needs two source words and writes one word every cycle, so if its streams keep landing on the same hardware, it slows down. The SDK's matvec benchmark shifts A by one word (<code>A_array[i+1]</code>) and pads each column to a multiple of 4 words, "to avoid bank conflicts" <span class="tag sdk">SDK 2.10.1, single-tile-matvec</span>. We measured what that buys:</p>
 <ul>
 <li>Matvec without the +1 shift: 2,134 instead of 1,110 cycles (N = 32), 8,310 instead of 4,214 (N = 64), almost exactly 2× <span class="tag measured">Measured, WSE-3</span>.</li>
@@ -228,7 +228,7 @@ The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE
 <div class="readout" id="bk-out" aria-live="polite"></div>
 </div>
 
-<h3>Where the descriptor lives: DSRs, <code>@load_to_dsr</code> and <code>@map</code></h3>
+<h3 id="dsrs">Where the descriptor lives: DSRs, <code>@load_to_dsr</code> and <code>@map</code></h3>
 <p>Normally the compiler loads each DSD into a DSR before the instruction that uses it, and a DSD that is not known at compile time costs DSRs (<code>cslc --dump-dsr-alloc-graph</code> shows the allocation) <span class="tag sdk">SDK 2.10.1, topic-15; Chapter 10</span>. DSRs come in three roles, destination, source 0 and source 1, and you can load them yourself. With <code>.save_address = true</code> the register keeps its end address after an op, so the next op continues where the last one stopped. The SDK matvec uses this so that the whole outer loop becomes one <code>@map</code> over x:</p>
 <div class="filename">SDK benchmarks/single-tile-matvec/src/pe_matvec.csl (condensed)</div>
 <pre><code><span class="k">const</span> y_dest_dsr = <span class="b">@get_dsr</span>(dsr_dest, 0);
@@ -248,7 +248,7 @@ The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE
 </table></div>
 <p class="note">Cycles <span class="tag measured">Measured, simulator, SDK 2.10.1, TSC around compute()</span>. The <code>@map</code> version costs about N + 2 cycles per column; the scalar loop costs about N + 35 for N = 32–64 <span class="tag derived">Derived from the table</span>. At N = 8 half of the loop version's time is loop overhead: for short vectors the scalar code around the instruction costs more than the instruction.</p>
 
-<h2>Fabric DSDs: communication is an operand</h2>
+<h2 id="fabric-dsds">Fabric DSDs: communication is an operand</h2>
 <p>A <code>fabin_dsd</code> describes "the next <em>extent</em> wavelets arriving on this input queue"; a <code>fabout_dsd</code> describes "send <em>extent</em> wavelets out of this output queue". Plug them into the same builtins and data is moved and computed on in one step. Here is how Lab 2's row reduction (program 03, Chapter 12) declares them:</p>
 <div class="filename">course/programs/03-row-reduce/pe_program.csl</div>
 <pre><code><span class="k">const</span> oq: <span class="n">output_queue</span> = <span class="b">@get_output_queue</span>(2);
@@ -297,7 +297,7 @@ If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD 
 "WSE3 does not allow multiple fabric inputs per DSD operation" <span class="tag sdk">SDK 2.10.1, sdklayout-03</span>. To add two incoming streams, first drain one into a FIFO (explained below), then operate on FIFO + fabric. Lab 2's reduction only ever has one fabric input, so the same source runs on both chips (only the fabout DSD fields differ, via <code>@is_arch</code>) <span class="tag measured">Measured, simulator, WSE-2 and WSE-3</span>.
 </div>
 
-<h3>Data picks the address: <code>wavelet_index_offset</code></h3>
+<h3 id="index-offset">Data picks the address: <code>wavelet_index_offset</code></h3>
 <p>A wavelet can carry an index as well as a value (Chapter 5's 16-bit value + 16-bit index payload <span class="tag sdk">SDK 2.10.1, topic-04</span>). A memory DSD declared with <code>.wavelet_index_offset = true</code> accepts a per-call <code>.index</code> that shifts where it starts, so the arriving data chooses which column to work on:</p>
 <div class="filename">SDK benchmarks/gemv-checkerboard-pattern/pe.csl (condensed)</div>
 <pre><code><span class="k">var</span> A = <span class="b">@zeros</span>([A_local_dim_x, A_local_dim_y]<span class="n">f16</span>);   <span class="c">// row-major</span>
@@ -308,7 +308,7 @@ If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD 
   ...</code></pre>
 <p>The f32 version in the sdklayout-05-gemv tutorial passes <code>.index = 2 * idx</code> to reach column <code>idx</code>, so the offset appears to count 16-bit units <span class="tag derived">Derived from the two SDK uses</span>. This is how dataflow sparsity works at the instruction level: a sender that skips zero x<sub>j</sub> never sends them, and the receiver's DSD jumps straight to the right column for the ones that do arrive.</p>
 
-<h2>Async operations and completion tasks</h2>
+<h2 id="async">Async operations and completion tasks</h2>
 <p>Add <code>.async = true</code> and the operation runs on a <strong>microthread</strong> while the CE moves on. Two optional fields say what to do when it finishes: <code>.activate = id</code> (mark that local task ready) or <code>.unblock = id</code> (clear its blocked bit). Chapter 5 explains those two bits; here is what they look like in real code. Program 04 (Lab 3) uses both kinds of op:</p>
 <div class="filename">course/programs/04-heat-stencil/pe_program.csl</div>
 <pre><code><span class="c">// synchronous: the CE executes this to completion before the next line</span>
@@ -349,7 +349,7 @@ If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD 
 </table></div>
 <p class="note">Both rows <span class="tag sdk">SDK 2.10.1, topic-15-wse3-microthreads</span>. Lab 3's first version broke this rule: input and output queues 2/3 collided, and the simulator reported a fatal microthread error on both chips (Chapter 13) <span class="tag measured">Measured</span>.</p>
 
-<h3>FIFOs extend the tiny hardware queues</h3>
+<h3 id="fifos">FIFOs extend the tiny hardware queues</h3>
 <p>Hardware queues hold only a handful of wavelets. In SDK pipeline-01, where a single PE loops memcpy input straight back out, the program "stalls when size exceeds 14", and the capacity is architecture-dependent <span class="tag sdk">SDK 2.10.1, pipeline-01/02</span>. That 14 is the capacity of that I/O path, not a published depth for one queue.</p>
 <p><code>@allocate_fifo(buffer)</code> turns an SRAM array into a FIFO. One async op pushes into it and another pops from it; each runs on its own microthread, so the producer never waits for the consumer as long as the buffer has room. "The FIFO requires two microthreads and a scratch buffer" <span class="tag sdk">SDK 2.10.1, pipeline-02</span>. The ops can compute on the way through:</p>
 <div class="filename">SDK tutorials/topic-09-fifos/buffer.csl</div>
@@ -371,7 +371,7 @@ If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD 
 <tr><td>FIFO as the WSE-3 two-input workaround</td><td>as above</td><td>sdklayout-03 <code>@mov16(fifo, input2, …); @add16(output, input1, fifo, …)</code></td></tr>
 </table></div>
 
-<h2>Lab 3's whole update, in three instructions</h2>
+<h2 id="lab3-update">Lab 3's whole update, in three instructions</h2>
 <p>The stencil keeps ghost cells at both ends of its array so that three overlapping DSDs see the left neighbour, the cell itself, and the right neighbour of every cell (program 04, Chapter 13):</p>
 <div class="filename">course/programs/04-heat-stencil/pe_program.csl</div>
 <pre><code><span class="k">const</span> left  = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i] });

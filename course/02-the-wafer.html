@@ -39,7 +39,7 @@
 </ul>
 </div>
 
-<h2>From reticle to wafer</h2>
+<h2 id="reticle">From reticle to wafer</h2>
 <p>Lithography exposes a wafer one <em>reticle</em> field at a time, and a field is at most about 26 × 33 mm <span class="tag indep">Industry standard</span>. That is why the largest conventional GPU dies stop near 800 mm², and why NVIDIA's B200 joins two such dies with a 10 TB/s die-to-die link <span class="tag vendor">Vendor</span>. Cerebras prints an ordinary grid of reticle-sized fields, then adds wires <em>across the scribe lines</em> (the narrow strips between fields where a saw would normally cut). The on-chip network therefore continues from one field to the next as if the boundary were not there. Cerebras calls that network the <em>fabric</em>: a 2-D mesh linking every core to its four neighbours (Chapter 4). Each core is a <em>processing element</em> (PE); the course uses the two words interchangeably.</p>
 <p>The result is a square about 215 mm on a side (√46,225 = 215) <span class="tag derived">Derived</span>, the largest that fits on the wafer. A full 215 mm square has a 304 mm diagonal, slightly more than the 300 mm wafer, so either the corners are trimmed or 46,225 mm² is rounded; the sources do not say <span class="tag derived">Derived</span>. The drawing below is to scale and shows that clipping honestly.</p>
 
@@ -95,7 +95,7 @@
 
 <p>The wafer is also big in <em>time</em>. A wavelet moves about one hop per cycle <span class="tag indep">Indep</span> (arXiv:2209.15040). At the WSE-2's 1.1 GHz <span class="tag vendor">Vendor (HC22)</span>, crossing the 750-column width of a CS-2 takes about 0.7 µs, and going corner to corner (750 + 994 = 1,744 hops) takes about 1.6 µs; at the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span>, about 0.9 and 2 µs <span class="tag derived">Derived</span>. That is short for a whole machine, but about a thousand times longer than one hop to a neighbour, which is why the algorithms in later chapters favour locality. The rest of this chapter is the price of the bet.</p>
 
-<h2>The numbers, generation by generation</h2>
+<h2 id="generations">The numbers, generation by generation</h2>
 <p>Every generation is the same 46,225 mm² square. Gains come from process shrinks, wider SIMD, and in 2026 (per press analysis) a higher clock.</p>
 <div class="table-wrap"><table>
 <tr><th>Spec</th><th>WSE-1 (CS-1, 2019)</th><th>WSE-2 (CS-2, 2021)</th><th>WSE-3 (CS-3, 2024)</th><th>WSE-3T (CS-4, 2026)</th></tr>
@@ -127,7 +127,7 @@
 <p>A first-principles check: cores × SIMD width × 2 FLOPs × clock. WSE-2 is the one generation with an official clock, 1.1 GHz <span class="tag vendor">Vendor (HC22)</span>: 850k × 4 × 2 × 1.1 GHz ≈ 7.5 PF, exactly the analyst figure <span class="tag derived">Derived</span>. No WSE-3 clock is published. If it also ran at 1.1 GHz, 900k × 8 × 2 × 1.1 GHz ≈ 15.8 PF, close to the analyst ~15.6 PF; at the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span>, ≈ 12.2 PF <span class="tag derived">Derived</span> (WSE-3 clock unconfirmed). The WSE-2 → WSE-3 jump is mostly SIMD width (4 → 8) plus 6% more cores <span class="tag derived">Derived</span>.</p>
 </div>
 
-<h2>One wafer, 900,000 small machines</h2>
+<h2 id="small-machines">One wafer, 900,000 small machines</h2>
 <p>A wafer total is easier to trust once you divide it by the PE count and by the clock. Every later chapter works at that scale: one PE, 48 KB, 32-bit links, a few words per cycle. Pick a generation and drag the clock. The cells in orange depend on the clock. Only WSE-2's is published (1.1 GHz <span class="tag vendor">Vendor (HC22)</span>); the SDK benchmarks convert cycles to time at 850 MHz, and nobody has published a WSE-3 clock.</p>
 
 <div class="widget" id="pe">
@@ -151,7 +151,7 @@
 <p>Two lessons. A fp32 FMA stream uses about 3 words per cycle, roughly 40% of the ~7 the vendor total implies, because the vendor peak assumes the full 16-bit SIMD path. And the per-PE rate does not change with N, because there is no cache to miss (Chapter 3). N = 100 is close to the largest square fp32 matrix that fits in 48 KB (40 KB of A).</p>
 </div>
 
-<h2>Surviving defects</h2>
+<h2 id="defects">Surviving defects</h2>
 <p>Every wafer has defects. Cerebras's own model assumes about 46 on the wafer-scale square <span class="tag vendor">Vendor modelling</span>; real defect densities are not published. On a GPU wafer a defect landing in a die usually kills or downgrades that die, and the bigger the die, the more silicon goes with it. GPUs already soften this with spares: an H100 SXM enables 132 SMs <span class="tag vendor">Vendor</span> out of the 144 in the full GH100 design <span class="tag indep">Industry figure</span> (not re-verified), so a defect in one SM costs that SM, not the die. An SM (streaming multiprocessor) is the GPU's core unit.</p>
 <p>A wafer-scale chip cannot throw itself away, so Cerebras pushes the same idea about 100× finer. A WSE-3 core is about 0.05 mm², roughly 1/100th of an H100 SM <span class="tag vendor">Vendor (yield blog)</span>; the HC22 deck gives the WSE-2 core as 228 × 170 µm = 0.039 mm² <span class="tag vendor">Vendor (HC22)</span>. Either way it is tiny. (0.05 mm² × 900k = 45,000 mm², 97% of the square; 0.039 mm² × 850k = 33,000 mm², 71%. The two may count different things, such as the core with or without its router, or simply differ by generation <span class="tag derived">Derived</span>.) Spare cores and spare fabric links are built in, and the fabric is reconfigured to route around bad cores <span class="tag vendor">Vendor</span>. When and how that configuration is done is not public.</p>
 

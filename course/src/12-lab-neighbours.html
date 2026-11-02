@@ -34,7 +34,7 @@
 <p><code>commands.sh</code> sizes the fabric to your rectangle plus memcpy's frame: <code>--fabric-dims=$((P+7)),3</code> with offsets <code>4,1</code> (Chapter 7). <code>run.py</code> prints the kernel cycles measured on the PEs. The whole-run simulated cycle count is in <code>sim_stats.json</code>: <code style="word-break: break-all">python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"</code>.</p>
 </div>
 
-<h2>Program 03 · Row reduction</h2>
+<h2 id="row-reduce">Program 03 · Row reduction</h2>
 <p>P PEs in a row each hold a vector <code>v[M]</code>. PE 0 sends its vector east. Each middle PE receives the running sum from the west, adds its own vector <em>while the data passes through</em>, and sends the result east. The last PE adds into memory. Each PE runs one instruction.</p>
 
 <figure>
@@ -74,7 +74,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 <li><code>launch</code> returns on the host only after every PE has unblocked. <code>memcpy_d2h</code> then reads <code>v</code> from PE P−1 alone, plus the two 48-bit timestamps from every PE.</li>
 </ol>
 
-<h3>Why two colors? Step through the routers</h3>
+<h3 id="two-colors">Why two colors? Step through the routers</h3>
 <div class="widget" id="rtw">
 <h4>Router stepper: checkerboard vs one color</h4>
 <p class="hint">Four PEs. Each router has one route per color: every input in <code>rx</code> goes to every output in <code>tx</code>. Step through to watch the running sum travel. Then switch to one color: a middle router would need <code>rx {WEST, RAMP} → tx {RAMP, EAST}</code>, and the sum breaks.</p>
@@ -87,7 +87,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 <div class="readout" id="rt-out"></div>
 </div>
 
-<h3>Why it is fast: streaming, not store-and-forward</h3>
+<h3 id="streaming">Why it is fast: streaming, not store-and-forward</h3>
 <p>A middle PE does not wait for the whole vector before forwarding. <code>@fadds(out_dsd, in_dsd, v_dsd)</code> processes element <em>i</em> as soon as wavelet <em>i</em> arrives and emits it immediately. The vector moves through the row as a wavefront. The reduction takes about <strong>M + c·(P − 1)</strong> cycles, plus a fixed few tens, not <strong>P × M</strong>. Here c is the cost of one CE-forwarded hop: the router hop, ramp up, the CE's <code>@fadds</code> pipeline and ramp down. It is measured below at ≈ 9 cycles on WSE-3 and ≈ 6 on WSE-2 <span class="tag measured">Measured</span>. Throughput stays one wavelet per cycle per link, so c only shifts the wavefront.</p>
 <p>The SDK's gemv-06/07/08 tutorials do <code>@fadds(y, in, y)</code> into memory and send in a separate step. That is store-and-forward per PE, a fine choice when the PE has other work to do on the data. For a pure chain, the measured cost differs a lot.</p>
 
@@ -107,7 +107,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 <svg id="w-plot" viewBox="0 0 680 230" width="680" role="img" aria-label="Kernel cycles versus number of PEs"></svg>
 </div>
 
-<h3>Measuring the kernel, not the host</h3>
+<h3 id="measuring">Measuring the kernel, not the host</h3>
 <p>The simulator's <code>cycle_count</code> counts the whole run: loading, every host copy, every launch. For this program that total says almost nothing about the reduction. A copy of program 03 whose <code>reduce()</code> does nothing gives <em>identical</em> totals <span class="tag measured">Measured</span>. So program 03 times itself. The <code>&lt;time&gt;</code> library reads the PE's 48-bit timestamp counter (the pattern from the SDK's <code>tutorials/topic-02-libraries</code> <span class="tag sdk">SDK 2.10.1</span>). <code>run.py</code> subtracts the start stamp from the end stamp <em>on the same PE</em>.</p>
 
 <figure>
@@ -129,7 +129,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 <p>So the per-PE list in the output (50, 58, 65, 73, …) is not a wavefront measured on one clock. Its step of ~7.2 cycles per PE (5.0 on WSE-2) is the hop cost <em>minus</em> however much later each PE's clock started. To get the hop cost itself, time a round trip on one PE.</p>
 </div>
 
-<h3>The hop cost, on one clock: a round trip</h3>
+<h3 id="hop-cost">The hop cost, on one clock: a round trip</h3>
 <p>A variant of program 03 (in <code>tmp/fix-ch11/rt</code>) makes the last PE send its sum back west on a third color. That path is pure router hops. PE 0 then times "send v → receive the sum back" on its own counter. A second variant with no CE work in the middle PEs (the middle routers just pass c0 through) measures the router-only round trip. The slope of each against P gives the per-hop costs <span class="tag measured">Measured</span>:</p>
 <div class="table-wrap"><table>
 <tr><th>Round trip on PE 0 (M = 32)</th><th>P = 2</th><th>8</th><th>16</th><th>24</th><th>32</th><th>slope per PE</th></tr>
@@ -140,10 +140,10 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 </table></div>
 <p>A pure router hop therefore costs <b>2.0 cycles on WSE-3 and 1.0 on WSE-2</b>, the same as Chapter 4's router-hop measurement. A <b>CE-forwarded hop</b> (route up to the CE, <code>@fadds</code>, route back out) costs 11.1 − 2.0 ≈ <b>9.2 cycles on WSE-3</b> and 7.0 − 1.0 = <b>6.0 on WSE-2</b> <span class="tag derived">Derived</span>. That is the c in the model. The per-PE "own clock" step (7.2 / 5.0) is exactly one router hop less than this, which fits each PE's clock starting one hop later than its west neighbour's <span class="tag derived">Derived</span>. At small P the WSE-2 round trips have a ~90-cycle floor that hides the slope, so fit it only from P ≥ 12. With c ≈ 9, the P term equals the M term once P ≈ M / 9: around 30 PEs at M = 256. Past that point a tree or 2-D decomposition starts to beat one long chain.</p>
 
-<h3>When a PE is late: back-pressure</h3>
+<h3 id="late-pe">When a PE is late: back-pressure</h3>
 <p>The depth review delayed only the last PE (a busy loop before its <code>@fadds</code>), at P = 8. A delay shorter than the wavefront's arrival time (about 50 cycles there) changes nothing. With M = 128 and a ~590-cycle delay, PE 0 still finished on schedule: the 7 hops between it and the stalled PE held all 128 wavelets. With M = 512 every PE waited, and as the chain drained, adjacent PEs finished about 16 cycles apart. Each hop (output queue + router + input queue) holds roughly 16 wavelets <span class="tag measured">Measured</span> (from per-PE own-clock readings, so ±2 cycles per hop). Rule of thumb: a chain of P PEs buffers ≈ 16·(P − 1) wavelets. If M fits, upstream PEs finish even while the consumer is stalled. If not, everyone waits for the slowest PE.</p>
 
-<h2>Program 05 · Column broadcast by multicast</h2>
+<h2 id="broadcast">Program 05 · Column broadcast by multicast</h2>
 <p>The root PE of a column sends its vector once. Every middle router delivers each wavelet to its own CE <em>and</em> forwards it south in the same hop: <code>.tx = .{RAMP, SOUTH}</code>. The bottom router only delivers (<code>.tx = .{RAMP}</code>). Forwarding SOUTH there would push wavelets out of your rectangle into memcpy's frame. No PE runs relay code: the router does the copying, at router-hop cost.</p>
 
 <figure>
@@ -200,7 +200,7 @@ for (@range(i16, C)) |x| { for (@range(i16, R)) |y| {   // was: x fixed at 0
 </table></div>
 <p>All columns broadcast fully in parallel: the time after the roots start does not change with C <span class="tag measured">Measured</span> (the subtraction is <span class="tag derived">Derived</span>). What grows is host I/O, and with it the skew, because the root row's <code>x</code> copy is C times larger.</p>
 
-<h3>The library version: <code>&lt;collectives_2d&gt;</code></h3>
+<h3 id="collectives">The library version: <code>&lt;collectives_2d&gt;</code></h3>
 <p>The SDK packages both shapes as a library, used in <code>tutorials/topic-11</code> and <code>benchmarks/gemv-collectives_2d</code> <span class="tag sdk">SDK 2.10.1</span>. Its <code>broadcast</code> and <code>reduce_fadds</code> are programs 05 and 03 in library form. Each dimension gets 2 colors and 2 entrypoints, and the reduce network is the same alternating C0/C1 checkerboard as program 03. Unlike our static routes, it rewrites routes at runtime (switches, filters, <code>reset_routes</code>), sends teardown wavelets after every op, and lets the root sit anywhere. At the root it receives into memory and then adds its own copy, a second M-length pass.</p>
 <pre><code>// layout: per PE
 const c2d = @import_module("&lt;collectives_2d/params&gt;");
@@ -230,7 +230,7 @@ fn reduce() void { mpi_x.reduce_fadds(W - 1, &amp;v, &amp;r, M, cb_id); }  // ro
 </ul>
 </div>
 
-<h2>Composing the two: a distributed GEMV</h2>
+<h2 id="composing">Composing the two: a distributed GEMV</h2>
 <p>Put program 05 and program 03 together and you have the SDK's gemv-08 pattern: multicast the <code>x</code> slices down the columns, let each PE multiply its block of <code>A</code>, then reduce the partial results along the rows with alternating colors. The SDK tutorials gemv-06 to gemv-08 build up to exactly this <span class="tag sdk">SDK 2.10.1</span>. gemv-08 is the full pattern, with 3 colors. It consumes <code>x</code> with a wavelet-triggered task rather than a bulk copy, and its per-PE reduction step stores into memory before sending, which is store-and-forward.</p>
 <figure>
 <svg viewBox="110 0 600 270" width="600" role="img" aria-label="GEMV composed from broadcast and reduction">

@@ -39,7 +39,7 @@
 </ul>
 </div>
 
-<h2>The product line</h2>
+<h2 id="product-line">The product line</h2>
 <div class="table-wrap"><table>
 <tr><th></th><th>Grayskull e150</th><th>Wormhole n300</th><th class="p150">Blackhole p150</th><th>Galaxy Blackhole</th></tr>
 <tr><td>Status</td><td>legacy</td><td>older</td><td class="p150">current · <b>used in the rest of this chapter</b></td><td>current</td></tr>
@@ -68,7 +68,7 @@
 <p>The Wormhole and Grayskull marketing peaks do not fit this formula cleanly. For example, 128 × 4,096 × 1 GHz = 524 TF, not 466 TF. We leave them as published.</p>
 </div>
 
-<h2>The chip: a grid on two tori</h2>
+<h2 id="noc-grid">The chip: a grid on two tori</h2>
 <p>A Blackhole die is a 17 × 12 grid of <em>tiles</em> (grid locations). There are 140 Tensix tiles, 24 DRAM tiles (each group of three shares one 4 GiB GDDR6 channel), 14 Ethernet tiles, 2 PCIe tiles, 4 L2CPU tiles (each a cluster of four 64-bit SiFive x280 cores that can run Linux), and one ARC and one security tile <span class="tag vendor">ISA docs, BlackholeA0</span> <span class="tag vendor">tt-metal SoC descriptor</span>. Every tile has a router on each of two <strong>networks-on-chip (NoCs)</strong>. Each NoC is a 2-D <em>torus</em>: the left and right edges, and the top and bottom edges, are wired together. NoC 0 only flows right and down. NoC 1 connects the same tiles but only flows left and up <span class="tag vendor">ISA docs, RoutingPaths</span>.</p>
 <ul>
 <li><strong>Routing is fixed by the addresses.</strong> On NoC 0 a packet travels right, turns at most once, then travels down. On NoC 1 it travels up first, then left. Routers are cut-through ("wormhole switching"). Two packets only contend if they need the same link; crossing inside a router is free <span class="tag vendor">ISA docs</span>.</li>
@@ -96,7 +96,7 @@
 <p><strong>"Tile" means two things.</strong> Tenstorrent documents use it both for a 32 × 32 block of data and for a grid location on the chip (Tensix tile, DRAM tile). From here on, this chapter says <em>core</em> or <em>grid tile</em> for the location and <em>tile</em> for the data block.</p>
 </div>
 
-<h2>Inside a Tensix core</h2>
+<h2 id="tensix">Inside a Tensix core</h2>
 <figure>
 <svg viewBox="0 0 780 480" width="780" role="img" aria-label="Tensix core anatomy with data and control paths">
   <defs>
@@ -157,7 +157,7 @@
 </dl>
 </div>
 
-<h2>One tile through the core</h2>
+<h2 id="tile-pipeline">One tile through the core</h2>
 <p>Here is element-wise <code>C = A + B</code>, one tile at a time. Step through it to see which of the five cores is active and which API call it is running. The calls are the ones in the next section's code.</p>
 <div class="widget" id="pipe">
 <h4>Follow tile i of A from DRAM back to DRAM</h4>
@@ -172,7 +172,7 @@
 <div class="readout" id="pipe-out"></div>
 </div>
 
-<h2>Programming: reader, compute, writer</h2>
+<h2 id="programming">Programming: reader, compute, writer</h2>
 <p>TT-Metalium is an open-source C++ host API in the style of OpenCL. A typical operation runs three kernels per core:</p>
 <ul>
 <li>a <strong>reader</strong> on BRISC that pulls tiles from DRAM or from other cores into circular buffers;</li>
@@ -284,7 +284,7 @@ CreateKernel(program, <span class="s">"writer.cpp"</span>,  all_cores, DataMovem
 <div class="readout" id="cb-out"></div>
 </div>
 
-<h2>Moving tiles between cores: multicast and semaphores</h2>
+<h2 id="multicast">Moving tiles between cores: multicast and semaphores</h2>
 <p>A NoC transfer is asynchronous. A receiving core cannot tell that data has arrived unless it is told, and Tenstorrent has no data-triggered tasks to do that. Kernels synchronise through <strong>semaphores</strong>, which are words in L1 updated by NoC atomics. The multicast matmul reader in tt-metal shows the full pattern, simplified here to one operand <span class="tag vendor">tt-metal reader_bmm_tile_layout_in0_sender/receiver</span>:</p>
 <div class="grid2">
 <div><div class="filename">sender (left-column core)</div>
@@ -318,7 +318,7 @@ cb_push_back(cb_in0, block_tiles);
 </div>
 <p>The Blackhole-only <code>noc_async_writes_flushed()</code> is there because Blackhole puts the two multicasts in separate command FIFOs, so they could otherwise leave out of order and the flag could arrive before the data <span class="tag vendor">tt-metal source comment</span>. Compare this with Cerebras: a wavelet's color decides its route at compile time, and its arrival <em>is</em> the signal that starts a task (Chapters 4 and 5). On Tenstorrent each packet carries its destination address, and "the data is here" is a separate flag that you write yourself.</p>
 
-<h2>Anatomy of a matmul</h2>
+<h2 id="matmul">Anatomy of a matmul</h2>
 <p>The general-purpose TT-NN matmul ("matmul 2D", <code>MatmulMultiCoreReuseMultiCastProgramConfig</code>) maps the output C = A·B onto a <code>cores_x × cores_y</code> grid <span class="tag vendor">tt-metal LLM report §4.3.2</span>:</p>
 <ul>
 <li>M is split over <code>cores_y</code> and N over <code>cores_x</code>. Each core owns <code>per_core_M = ⌈M/32/cores_y⌉</code> × <code>per_core_N = ⌈N/32/cores_x⌉</code> output tiles.</li>
@@ -344,7 +344,7 @@ cb_push_back(cb_in0, block_tiles);
 </div>
 <p>On tuned matmuls Tenstorrent measured about 190 TFLOPS on Wormhole n150 and about 580 TFLOPS on Blackhole p150. Peak utilisation was 93% on Wormhole and 96% on Blackhole, and BFP8 at HiFi2 ran 1.5–1.8× faster than BF16 at HiFi4 <span class="tag vendor">vendor-measured, GEMM_FLOPS</span>.</p>
 
-<h2>Where tensors live: interleaved and sharded</h2>
+<h2 id="sharding">Where tensors live: interleaved and sharded</h2>
 <p>A TT-NN tensor is a 2-D buffer of <em>pages</em>. A page is one row (row-major layout) or one 32 × 32 tile (tiled layout). It lives in DRAM or in L1, and its pages are either <strong>interleaved</strong> or <strong>sharded</strong> <span class="tag vendor">tensor_layouts report</span>.</p>
 <ul>
 <li><strong>Interleaved.</strong> Pages are dealt round-robin over all banks, and every allocation starts at bank 0. In DRAM there are 12 banks on Wormhole and 8 on Blackhole. In L1 there is one bank per core.</li>
@@ -367,7 +367,7 @@ cb_push_back(cb_in0, block_tiles);
 </div>
 <p><strong>Why decode keeps its weights DRAM-sharded.</strong> In decode, a batch of up to 32 users each contributes one token, so the activations are a single 32-row tile height. The matmuls are bound by how fast they can read weights <span class="tag vendor">LLM report</span>. With interleaved weights, every core reads from every bank and the routes cross the whole NoC and collide. The DRAM-sharded matmul instead splits the weights by width across the banks. It places one reader core next to each bank, so each response travels one hop, and gives readers in the same row different virtual channels. On Wormhole this reached 267 of 288 GB/s (92%) in a microbenchmark and 239–260 GB/s (82–90%) in Llama-3-70B and Mixtral decode matmuls <span class="tag vendor">vendor-measured, Saturating_DRAM_bandwidth</span>. Try the two presets in the floorplan widget to see the same effect on Blackhole. The decode recipe is: activations width-sharded in L1, weights width-sharded in DRAM, weights in BFP8 or BFP4 <span class="tag vendor">LLM report</span>.</p>
 
-<h2>Scaling out: from NoC to fabric</h2>
+<h2 id="scale-out">Scaling out: from NoC to fabric</h2>
 <p>Off the chip, Tenstorrent uses standard Ethernet, and the chips themselves act as the switches. <strong>TT-Fabric</strong> is firmware running on the Ethernet grid tiles' RISC-V cores. It turns NoC reads and writes into packets that are carried to another chip and executed there, so a remote write looks like a NoC write with a longer address (mesh ID, device ID, NoC x/y, offset) <span class="tag vendor">TT-Fabric report</span>.</p>
 <ul>
 <li><strong>Reliability.</strong> The link layer adds a header with sequence numbers and resends lost frames (Go-Back-N), so the layers above never see CRC errors.</li>
@@ -378,7 +378,7 @@ cb_push_back(cb_in0, block_tiles);
 </ul>
 <p>Link line rate is 12.5 GB/s per direction on Wormhole (100 GbE) and 50 GB/s on Blackhole (400 GbE). The measured per-hop latency is 711 ns on Wormhole and 515 ns on Blackhole for the 1-D fabric <span class="tag vendor">vendor-measured, CCL bandwidth report</span>. These links are about 7× slower than one on-chip NoC link and about 10× slower than a chip's DRAM <span class="tag derived">Derived</span>, so how you split a model across chips matters a great deal.</p>
 
-<h2>70B on 32 chips</h2>
+<h2 id="70b">70B on 32 chips</h2>
 <p>A Wormhole Galaxy ("TG") is an 8 × 4 mesh of 32 chips, with four Ethernet links between neighbouring chips <span class="tag vendor">Programming Mesh of Devices report</span>. Collectives can use 4 links along mesh axis 0 and 3 along axis 1 <span class="tag vendor">LLM report §3.3.1</span>. On TG, all five Llama matmuls (QKV, dense-out, FF1, FF2, FF3) use <strong>2-D weight fracturing</strong>. For FF1 and FF3, each chip holds a [K/4, N/8] block of the weight, and the partial sums are all-reduced across the 4 chips of axis 1. FF2 is the transpose: [K/8, N/4], all-reduced along axis 0 <span class="tag vendor">LLM report §2.5.5, §3.3.10</span>. The Llama 3.3 70B Galaxy demo runs in BFP8 <span class="tag vendor">llama3_70b_galaxy README</span>. On a torus-cabled Galaxy, its collectives use rings by default. On Blackhole Galaxy, the related demos select a 2-D torus fabric and address the box as the same "TG" mesh <span class="tag vendor">llama3_70b_galaxy README</span>.</p>
 <div class="widget" id="gal">
 <h4>Llama-3 70B weights on an 8 × 4 Galaxy</h4>
@@ -409,7 +409,7 @@ cb_push_back(cb_in0, block_tiles);
 <p>This is the memory wall from Chapter 1 again: "decode is bound by time to read model weights from DRAM" <span class="tag vendor">LLM report</span>.</p>
 </div>
 
-<h2>Tensix vs the Cerebras PE</h2>
+<h2 id="vs-pe">Tensix vs the Cerebras PE</h2>
 <p>Both designs reject the GPU recipe of caches and massive multithreading in favour of explicit, software-scheduled data movement. Tenstorrent's guide compares its design to IBM's CELL. The difference is grain. A Cerebras PE handles a few kilobytes and communicates word by word over routes fixed at compile time. A Tensix core handles about a megabyte and a half, communicates in 2 KiB tiles over addressed packets, and has DRAM behind it. The widget runs one decode-style GEMV, y = W·x with BF16 weights, on both machines.</p>
 <div class="widget" id="vs">
 <h4>Same GEMV, two grains</h4>
@@ -433,7 +433,7 @@ cb_push_back(cb_in0, block_tiles);
 <tr><td>Openness</td><td>public SDK, closed compiler</td><td>open-source stack, public ISA docs</td></tr>
 </table></div>
 
-<h3>CSL ↔ Metalium, concept by concept</h3>
+<h3 id="csl-metalium">CSL ↔ Metalium, concept by concept</h3>
 <div class="table-wrap"><table>
 <tr><th>In CSL (Chapters 4–13)</th><th>In TT-Metalium</th></tr>
 <tr><td>color + route set in <code>layout.csl</code> (static path)</td><td>destination NoC x/y in each packet; the path follows from NoC 0/1 routing</td></tr>
@@ -446,7 +446,7 @@ cb_push_back(cb_in0, block_tiles);
 <tr><td>cycle-level fabric simulator</td><td>ttsim ISA simulator</td></tr>
 </table></div>
 
-<h2>Performance and caveats</h2>
+<h2 id="performance">Performance and caveats</h2>
 <ul>
 <li>Wormhole Galaxy, Llama 3.3-70B (TP = 32, 128-token input): 72.5 tok/s per user and 2,269 tok/s total at batch 32, against a target of 80 <span class="tag vendor">tt-metal README table</span>.</li>
 <li>Galaxy Blackhole, DeepSeek-R1 671B: ~350 tok/s per user (~308 at launch) <span class="tag vendor">Vendor, via press extracts</span>.</li>

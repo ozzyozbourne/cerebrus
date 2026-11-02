@@ -44,7 +44,7 @@
 </ul>
 </div>
 
-<h2>The anatomy</h2>
+<h2 id="anatomy">The anatomy</h2>
 <figure>
 <svg id="anat" viewBox="0 0 760 456" width="760" role="img" aria-label="Exploded view of a processing element: compute engine with SRAM banks, cache, registers, SIMD datapath, task picker and microthreads, plus a router with five bidirectional ports">
   <defs>
@@ -124,7 +124,7 @@
 <figcaption><b>A 48 KB computer with a router attached.</b> 48 KB, the 512 B cache, 16 GPRs, 48 DSRs and the SIMD widths are WSE-3 figures <span class="tag vendor">Vendor, Hot Chips 2024</span>. The 8 single-ported banks, single-cycle access, the 256 B WSE-2 cache, the WSE-2 core size and the ½ : ½ logic/SRAM split come from the WSE-2 talk <span class="tag vendor">Vendor, Hot Chips 2022</span>; the WSE-3 size from a Cerebras blog <span class="tag vendor">Vendor</span>, and the sources differ (Chapter 2). The 6 KB bank size comes from academic papers <span class="tag indep">Independent</span>. The 24 colors, the task picker rule and the microthread rules come from the SDK <span class="tag sdk">SDK 2.10.1</span>; "eight microthreads" is a WSE-2 vendor statement <span class="tag vendor">Vendor</span>. The f32 rate is measured in this chapter <span class="tag measured">Measured</span>. All five router links, the RAMP included, carry traffic in both directions. WSE-2 register counts were not found. Hover a block for a one-line description.</figcaption>
 </figure>
 
-<h3>Wavelets, colors and the router, in one paragraph</h3>
+<h3 id="wavelets">Wavelets, colors and the router, in one paragraph</h3>
 <p>PEs share no memory. They exchange <strong>wavelets</strong>: 32-bit messages that hop one router per cycle <span class="tag indep">Indep</span>. Each wavelet carries a <strong>color</strong>, one of 24 tags <span class="tag sdk">SDK 2.10.1</span>; at every router the color selects a pre-configured route, and at the receiver it selects what to do with the data. The router has five ports: N, E, S, W to the neighbours, and the <strong>RAMP</strong> down to its own CE. Chapter 4 covers routing in full. For now the key fact is that a wavelet coming down the RAMP is what wakes the CE.</p>
 
 <div class="widget" id="journey">
@@ -146,10 +146,10 @@
 <p class="hint" style="margin:0">Every later chapter zooms into one of these steps: routing (Chapter 4), tasks (Chapter 5), DSDs (Chapter 6).</p>
 </div>
 
-<h2>Memory: 48 KB, one cycle, nothing else</h2>
+<h2 id="memory">Memory: 48 KB, one cycle, nothing else</h2>
 <p>The SRAM is 8 single-ported banks with single-cycle access <span class="tag vendor">Vendor, HC22</span>, each 6 KB <span class="tag indep">Academic papers</span>. This 48 KB holds <em>everything</em> the PE knows: its code, its stack, its data, its task table and the buffers the runtime needs. Internally the PE addresses memory in 16-bit units: the CSL target library defines <code>word_size = 2</code> and its registers as <code>u16</code> <span class="tag sdk">SDK 2.10.1, csl-libs/target</span>, so 48 KB is 24,576 words and an f32 is two of them.</p>
 
-<h3>Which bank does an address land in? Two sources disagree</h3>
+<h3 id="bank-model">Which bank does an address land in? Two sources disagree</h3>
 <p>The research behind this course gives the bank layout as "successive 32-bit words in successive banks", from academic papers (arXiv:2605.07954, read through a search extract) <span class="tag indep">Independent</span>. The SDK says something different. The manual page of its <code>cs_readelf</code> tool states: "The bank a memory access lies in is determined by bits [3:1] of the address. So, for example, a 16-bit read of 0x1234 lies in bank 2. A 32-bit read of the same address is broken into two 16-bit reads, one from bank 2 and one from bank 3. Bank conflicts where concurrent reads and writes target the same bank or the same bank modulo 4 may result in cycle delays." <span class="tag sdk">SDK 2.10.1, cs_readelf(1)</span>. Its <code>--sym</code> output prints a "Banks" column for every variable, and in our builds it follows that rule: 2-byte variables at 0xe64, 0xe68, 0xe6c, 0xe70 sit in banks 2, 4, 6, 0 <span class="tag measured">Measured, cslc 2.10.1 ELFs, WSE-2 and WSE-3</span>.</p>
 <p><strong>What you can observe in the SDK is the second model</strong>: bank = (byte address ÷ 2) mod 8, a 16-byte stripe, so one f32 spans two banks and four consecutive f32s cover all eight. The SDK's matvec benchmark pads rows to 16 bytes "to avoid bank conflicts", and the WSE-3 library sets <code>FIFO_MIN_ALIGNMENT = 16</code> (WSE-2: 8) <span class="tag sdk">SDK 2.10.1</span>, both consistent with a 16-byte stripe. The two descriptions could be views of different things (address numbering versus physical bank width), but no source says so. One hint that 16-bit numbering is not the whole story: a contiguous f32 add moves at least 19 bytes per cycle (below), more than 8 banks × 16 bits per cycle could supply <span class="tag derived">Derived</span>. The physical bank width is not published.</p>
 
@@ -174,7 +174,7 @@
 </table></div>
 <p>Contiguous access is where WSE-3 gains: its stride-1 add is 1.8× faster than WSE-2's. At stride 4 or more the two generations are equal at roughly 2–3 cycles per element <span class="tag derived">Derived</span>. The bank rule explains the direction (stride 4 in f32 puts every element in banks 0 and 1) but not the exact numbers, since strides 4 and 8 touch the same banks and still differ. So lay arrays out to be walked contiguously, and pad rows to 16 bytes as the SDK does. (The WSE-3 stride 1 and 2 to 8 rows were rerun for this chapter; the others come from the depth review's runs.)</p>
 
-<h3>Is memory fast enough to feed the math?</h3>
+<h3 id="feed">Is memory fast enough to feed the math?</h3>
 <p>This is the per-PE version of Chapter 1's roofline. Start from the vendor total and divide:</p>
 <div class="chain">
 <div><b>21 PB/s</b>WSE-3 memory bandwidth <span class="tag vendor">Vendor</span></div>
@@ -186,7 +186,7 @@
 
 <p>There is also a tiny <strong>software-managed cache</strong>, 256 B on WSE-2 <span class="tag vendor">Vendor, HC22</span> and 512 B on WSE-3 <span class="tag vendor">Vendor, HC2024</span>, for hot values such as accumulators. "Software-managed" means nothing is cached automatically by hardware. The public sources do not say how CSL exposes it, and the CSL standard library never mentions it; nothing in this course controls it.</p>
 
-<h3>Where the 48 KB goes: a real memory map</h3>
+<h3 id="memory-map">Where the 48 KB goes: a real memory map</h3>
 <p>Here is the section layout of a compiled PE program, the SDK's single-tile matvec benchmark at N = 8 with the memcpy runtime, read with <code>llvm-readelf -S</code> and <code>cs_readelf -m</code> <span class="tag measured">Measured, cslc 2.10.1</span>. Its own arrays (A, x, y) are only 324 bytes, yet it uses 4,960 bytes on WSE-3 and 3,458 on WSE-2. The rest is fixed overhead: code (yours plus the memcpy runtime), runtime variables and, on WSE-3, a 1 KB task table.</p>
 <div class="widget" id="mapw">
 <h4>PE memory map</h4>
@@ -210,7 +210,7 @@
 </div>
 
 <h2>Compute</h2>
-<h3>SIMD lanes driven by descriptors</h3>
+<h3 id="simd">SIMD lanes driven by descriptors</h3>
 <p>The WSE-3 datapath is <strong>8-way SIMD for FP16/BF16 and 16-way for INT8</strong> <span class="tag vendor">Vendor, HC2024</span>, reportedly up from 4-wide FP16 on WSE-1/2 <span class="tag indep">Secondary source</span>. No f32 width is published. You almost never write per-element loops: the CE executes a whole vector operation from one instruction. The CE has 16 general-purpose registers (GPRs) for scalars and addresses, and 48 data-structure registers (DSRs) that each hold one <em>data structure descriptor</em> (DSD): base address, length, stride (Chapter 6) <span class="tag vendor">Vendor, HC2024</span>.</p>
 <p>DSRs are real, named registers that a program can load directly. The SDK's matvec benchmark loads A's descriptor once and lets it advance by itself (<code>.save_address = true</code>), so each <code>@fmacs</code> continues where the previous one stopped and A streams column by column <span class="tag sdk">SDK 2.10.1, single-tile-matvec</span>:</p>
 <pre><code><span class="k">const</span> y_dest_dsr = <span class="b">@get_dsr</span>(dsr_dest, 0);   <span class="c">// three roles: destination,</span>
@@ -219,7 +219,7 @@
 <span class="b">@load_to_dsr</span>(A_src1_dsr, local_A_dsd, .{ .save_address = <span class="k">true</span> });
 <span class="b">@map</span>(gemv_static_step_A, x_dsd);  <span class="c">// calls @fmacs(y_dest_dsr, y_src0_dsr, A_src1_dsr, curX)</span></code></pre>
 
-<h3>How fast is one PE?</h3>
+<h3 id="pe-speed">How fast is one PE?</h3>
 <p>The vendor widths are lane counts, not delivered rates. We timed the SDK's matvec benchmark (y = A·x on one PE, inner loop only, cycles from the PE's timestamp counter, host I/O excluded) and an f16 copy of it using <code>@fmach</code> <span class="tag measured">Measured, simulator, SDK 2.10.1</span>:</p>
 <div class="table-wrap"><table>
 <tr><th>N × N</th><th>multiply-adds</th><th>f32 WSE-3</th><th>f32 WSE-2</th><th>f16 WSE-3</th><th>f16 WSE-2</th></tr>
@@ -235,7 +235,7 @@
 </ul>
 <p>The 64 × 64 and 128 × 128 cells were rerun for this chapter and matched the depth review's numbers exactly; the rest come from its runs. These are simulator counts, not hardware.</p>
 
-<h3>Microthreads: overlap, not more FLOPs</h3>
+<h3 id="microthreads">Microthreads: overlap, not more FLOPs</h3>
 <p>A <strong>microthread</strong> is a hardware context that holds one in-flight vector operation: its DSD operands, its progress, and what to activate or unblock when it finishes. A PE has eight of them <span class="tag vendor">Vendor (WSE-2 blog)</span>, so up to eight vector operations can be <em>in flight</em> at once: for example receiving from the west, sending east and adding locally. They share the single datapath, and the hardware interleaves them according to which one has operands ready <span class="tag indep">Secondary source</span>. The main thread (the running task's own instructions) competes too: the SDK lets you set its priority from <code>MEDIUM_LOW</code> to <code>HIGH</code> relative to microthread priorities <span class="tag sdk">SDK 2.10.1, tile_config</span>. The gain is overlap: waiting for wavelets no longer stalls the datapath. It is not 8× the FLOPs, since the measured f32 rate above is already the datapath's. Microthreads are not software threads either: there is no scheduler, stack or OS behind them.</p>
 <p>You get a microthread by adding <code>.async = true</code> to an operation (Chapters 5 and 6). The compiler insists that such an operation has a fabric or DSR operand: an async <code>@fadds</code> on plain memory DSDs is rejected with "'async' requires at least one fabric or DSR operand" <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
 
@@ -260,10 +260,10 @@
 </table></div>
 <p class="hint">Queue counts from <code>csl-libs/target/wse2.csl</code> and <code>wse3.csl</code>; the rest from topic-15 and Chapter 5 <span class="tag sdk">SDK 2.10.1</span>.</p>
 
-<h3>Control: tasks, not a program counter marching through main</h3>
+<h3 id="control">Control: tasks, not a program counter marching through main</h3>
 <p>There is no operating system and no long-running main loop. Code is a set of <strong>tasks</strong>, and a hardware picker runs whichever task is activated and not blocked. Arriving data activates data tasks; other tasks are activated by code or by a finishing vector operation <span class="tag sdk">SDK 2.10.1</span>. Chapter 5 is devoted to this.</p>
 
-<h2>Why no caches?</h2>
+<h2 id="no-caches">Why no caches?</h2>
 <p>A cache exists to hide the distance between compute and a large, slow memory. On the WSE there is no large slow memory on the wafer: the "main memory" is the 48 KB beside the core, and it is already single-cycle. A hardware cache would add area and power to fix a problem the PE does not have. The cost moves to the programmer: whatever data a PE needs must already be in its 48 KB, or must arrive over the fabric.</p>
 <p>The SDK's single-tile matvec benchmark makes this concrete by counting memory traffic two ways <span class="tag sdk">SDK 2.10.1</span>. <strong>"Relative"</strong> is the minimum traffic on a traditional cached machine: read A and x once, keep the running y in registers or cache, write y once: 4(N² + 2N) bytes. <strong>"Absolute"</strong> is what the WSE kernel really does: it walks A column by column and reads and writes all of y for every column: 4(3N² + N) bytes. The difference is about <em>y</em>, not x; x is read once in both counts. Step through it:</p>
 <div class="widget" id="mvw">
@@ -280,7 +280,7 @@
 </div>
 <p>For N = 64 the benchmark reports 16,896 relative bytes against 49,408 absolute, 2.9× more, and still runs at about one multiply-add per cycle (4,214 cycles) <span class="tag measured">Measured, simulator, WSE-3</span>. Nothing absorbs the accumulator's reuse; the design bets that private single-cycle SRAM can serve the extra traffic, and here it does, at 11.7 bytes per cycle. The benchmark is written for CS-2 and converts cycles to seconds at 850 MHz <span class="tag sdk">SDK 2.10.1</span>.</p>
 
-<h2>Sparsity: skipping zeros with dataflow</h2>
+<h2 id="sparsity">Sparsity: skipping zeros with dataflow</h2>
 <p>Because computation is triggered by arriving data, a zero that is never sent never triggers work. Senders filter zeros and receivers only compute on what arrives <span class="tag vendor">Vendor, HC22 / MICRO-54</span>. This dataflow zero-skipping is a hardware feature, and it is what Cerebras's sparse-FLOPS headline numbers rely on. Those peaks count the skipped multiplies as if they were done, at an assumed sparsity ratio (Chapter 2). The SDK shows a software convention on top: a wavelet is 32 bits, so a sparse value can travel as 16 bits of data plus a 16-bit index in the upper half, and the receiving data task gets both halves as two arguments <span class="tag sdk">SDK 2.10.1, topic-04</span>.</p>
 
 <div class="widget" id="spw">
@@ -303,7 +303,7 @@
 </ul>
 <p>Skipping zeros pays off when sparsity is high and unstructured enough that a dense SIMD op would mostly multiply zeros.</p>
 
-<h2>What changed per PE, WSE-2 → WSE-3</h2>
+<h2 id="wse2-wse3">What changed per PE, WSE-2 → WSE-3</h2>
 <div class="table-wrap"><table>
 <tr><th>Resource</th><th>WSE-2</th><th>WSE-3</th><th>Source</th></tr>
 <tr><td>SRAM</td><td>48 KB, 8 banks</td><td>48 KB, 8 banks</td><td><span class="tag vendor">Vendor</span></td></tr>
