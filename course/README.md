@@ -21,7 +21,7 @@ Open `course/index.html` in a browser. It is plain static HTML with no build ste
 | 03-row-reduce | colors, routes, checkerboard, fabric-to-fabric DSD op | 6,860 |
 | 04-heat-stencil | halo exchange on 4 colors, completion tasks, iteration | 11,665 |
 | 05-column-broadcast | multicast routes | 7,620 |
-| 06-summa | 2-D SUMMA GEMM with <code>&lt;collectives_2d&gt;</code>, TSC broadcast/compute split (adapted from SDK) | 36,971 |
+| 06-summa | 2-D SUMMA GEMM with `<collectives_2d>`, TSC broadcast/compute split (adapted from SDK) | 36,971 |
 | 07-cg | conjugate-gradient solver: stencil + allreduce modules, host vs device loop (adapted from SDK) | 145,003 |
 
 All seven pass on both `--arch=wse3` and `--arch=wse2` with the Cerebras SDK 2.10.1 simulator.
