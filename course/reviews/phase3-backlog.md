@@ -1,6 +1,6 @@
 # Phase 3: review backlog and new-chapter decision
 
-Inputs: the 15 depth reviews' "Out of scope" sections, other out-of-scope or glossary notes in the accuracy, pedagogy and visuals reviews, the "Left for later / Open issues" sections of all 15 fix logs, and CROSS_CHAPTER_NOTES.md (24 notes). Coverage was checked by grepping the built chapter HTML. "Sources" counts independent review or fixlog files; CCN means a cross-chapter note.
+Inputs: the out-of-scope sections of the 15 depth reviews, notes in the other reviews, the open sections of the 15 fix logs, and CROSS_CHAPTER_NOTES.md (CCN). Coverage was checked by grepping the built HTML. "Sources" counts independent files.
 
 ## 1. Cluster table
 
@@ -51,7 +51,7 @@ Widget: a chain/tree/2-D reduce cost model with measured points on it. All progr
 - **A. Measuring and observing.** sim_stats vs TSC vs inst_trace: what each includes, the 50-cycle idle tail, host-load noise (CCN 17), cross-PE TSC skew (CCN 19), launch/no-stats behaviour (CCN 21), the reusable `<time>`/`make_u48` snippet, and cycles→µs at 850 MHz vs 1.1 GHz (CCN 2). Add one table on "how to see inside" each machine: Nsight Compute, Tracy/device profiler, simulator traces and csdb (marked unverified).
 - **B. Glossary and number formats.** Course-wide terms (PE, CE, wavelet, color, DSD, microthread, SM, warp, Tensix, CB, NoC, TP/PP/DP, …) with the chapter that introduces each. Add a single format table (BF16, FP8 E4M3/E5M2, MXFP4/NVFP4, CB16, BlockFP8 with a block size of 16), plus an optional quantisation-error widget. ch13's glossary moves here and ch13 links to it.
 - **C. Roofline cheat sheet.** GEMM/GEMV intensity, KV-cache bytes per token, Little's law, the tok/s ≤ BW ÷ weight-bytes bound, each with one worked number taken from ch01, ch14 or ch15.
-- **D. CSL and SDK reference.** A tutorial map (gemv-00…09, pipeline, topic-xx, sdklayout-01…05, each mapped to a chapter), the task-ID budget (CCN 12), the memory budget (CCN 13), measured DSD op rates (CCN 14/16/22/23), PE config registers (`@get_config`, TASK_PRIORITY 0x7e08, TIMESTAMP_COUNTER…), cslc flags, the SdkRuntime surface, and a WSE-2 vs WSE-3 differences table.
+- **D. CSL and SDK reference.** A tutorial map (gemv-00…09, pipeline, topic-xx, sdklayout-01…05, each mapped to a chapter), task-ID and memory budgets (CCN 12/13), DSD op rates (CCN 14/16/22/23), PE config registers (`@get_config`, 0x7e08…), cslc flags, the SdkRuntime surface, and WSE-2 vs WSE-3 differences.
 - **E. Sources and provenance.** What each tag means, the primary documents (HC22, HC24, the WP, the SDK 2.10.1 docs, tt-isa-documentation, …), the ch15 claim checklist as a general method, and a live list of every Unverified figure (section 5).
 
 ## 5. Open issues that need follow-up regardless
@@ -70,7 +70,6 @@ Widget: a chain/tree/2-D reduce cost model with measured points on it. All progr
 9. NVIDIA: H100 shared-memory/RF bandwidth (ch01). H100 die ~814 mm², 144 SMs, ~700 W, NVLink 0.9 TB/s (ch02). INT32/FP64 lanes, 128 B/clk smem, L1/HBM cycle counts, cluster sizes, TMEM, ping-pong register counts, NVL72 tray (ch14: 9 `.tag.unv`). These need re-checking against docs.nvidia.com.
 10. Cerebras: CS-3 12×100 GbE (forum post only). WSE-3 user-visible fabric size (unpublished). Kimi K2.6 config (press only). $8–12M capex. CS-4 power (n/a).
 11. Tenstorrent: Grayskull figures, p150 300 W, the 1–2% derating, DeepSeek-R1 tok/s, The Register quote, Galaxy mesh shape (inferred), Wormhole Galaxy power (borrowed), which 20 cores are disabled.
-12. ch15: MLPerf absence and the GPU max-TDP figures come from a reviewer web search, not the research notes.
+12. ch15: MLPerf absence and the GPU max-TDP figures (from a reviewer web search only).
 
-**Consistency checks (verified as fixed in the HTML; keep them on a regression list)**
-- ch15 uses the 1,536 KiB / 64 B Blackhole values. B200 BF16 is Derived in ch14 and ch15. The "Microthread hang" text (cycle 1,894) and "88 + 2.5·n" are gone. "At least 7 columns" is in place. ch15's Lab 3 numbers (90 + 2.5·n, 5 hits) match ch12. If ch12 changes again, re-sync ch15 (ch15-fixlog).
+**Checked as fixed** (keep on a regression list): the Blackhole values in ch15, the B200 tags, the 1,894/88 + 2.5·n text, "at least 7 columns", and ch15 matching ch12's Lab 3 numbers.
