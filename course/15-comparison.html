@@ -92,7 +92,7 @@ ol.decoder li { margin: 4px 0; }
 <p>The single most useful picture is capacity against bandwidth. Each point is one memory tier. The diagonals mark how long it takes to read that whole memory once, which is also the lower bound on the time per token if the weights fill it.</p>
 <div class="widget" id="map">
 <h4>The trade-off map: capacity vs bandwidth</h4>
-<p class="hint">Log–log. Right = more capacity, up = more bandwidth. Vertical dashed lines are model sizes. Tap or focus a point for its value and tag.</p>
+<p class="hint">Log–log. Right = more capacity, up = more bandwidth. Vertical dotted lines are model sizes. Orange diagonals: time to read the whole memory once (1 µs to 100 ms). Tap or focus a point for its value and tag.</p>
 <div class="controls"><span class="seg" id="map-mode"><button type="button" class="btn secondary on" data-m="dev">Per device</button><button type="button" class="btn secondary" data-m="rack">Per rack</button></span></div>
 <div class="chart" id="map-c" data-label="Memory capacity against bandwidth for each memory tier"></div>
 <div class="rd" id="map-out" aria-live="polite"></div>
@@ -300,7 +300,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 <li><strong>The hard part is resources and ordering, not arithmetic.</strong> The runtime bugs we hit were a race between the host's next copy and the last few data tasks (program 02: the sum after 95 of 100 values; <a href="07-host-io.html">Ch. 7</a>, <a href="10-lab-first-programs.html">Ch. 10</a>) and two async fabric operations sharing a microthread (Lab 3: the simulator stops with "trying to term ut_instr[3], but it's not ours" at cycle 2,123 on WSE-3 and 2,125 on WSE-2, and the host then waits forever; <a href="12-lab-stencil.html">Ch. 12</a>). At compile time we met an export declared with the wrong mutability (<a href="09-csl-toolchain.html">Ch. 9</a>) and CSL's brace rules for <code>if/else</code> (<a href="11-lab-neighbours.html">Ch. 11</a>). The arithmetic was never wrong.</li>
 <li><strong>Communication is cheap but not free.</strong> A Lab 3 step costs about 90 + 2.5·n cycles for n cells per PE. The 2.5 is three vector instructions streaming: 0.5 (@fadds, 2 f32 per cycle on WSE-3) + 1 + 1 (two @fmacs). The ≈ 90 is four one-word transfers, their completion tasks, bookkeeping and instruction start-up. Compute overtakes it only past 90 ÷ 2.5 = 36 cells per PE <span class="tag derived">Derived</span>. In Lab 2 a pure router hop costs 2.0 cycles on WSE-3 and 1.0 on WSE-2, but a hop that goes through a PE's compute (receive, @fadds, send) costs about 9.2 and 6.0 (<a href="11-lab-neighbours.html">Ch. 11</a>). Streaming the partial sums beat store-and-forward 101 to 348 cycles at P = 8.</li>
 <li><strong>Peak rates hide traps.</strong> @fmacs runs at half speed when its two source streams start at addresses equal mod 4 words (a bank clash, <a href="06-dsds.html">Ch. 6</a>). The rule is empirical and differs by chip: pad and measure.</li>
-<li><strong>Weak scaling is flat; capacity is not.</strong> Weak scaling means the problem grows with the PEs (n cells each); strong scaling means a fixed problem split over more PEs. Once every interior PE has two neighbours, per-step cost is flat: about 130 cycles at 8 PEs and ~130.6 at 16. At P = 2 both PEs are ends with one neighbour, so a step does two transfers instead of four and costs 101. But each WSE-3 PE leaves only about 44.5 KB for arrays (Lab 3 fits about 5,450 cells), and data enters through a ~7 Gb/s-per-channel door <span class="tag sdk">SDK</span>.</li>
+<li><strong>Weak scaling is flat; capacity is not.</strong> Weak scaling means the problem grows with the PEs (n cells each); strong scaling means a fixed problem split over more PEs. Once every interior PE has two neighbours, per-step cost is flat: about 130 cycles at 8 PEs and ~130.8 at 16. At P = 2 both PEs are ends with one neighbour, so a step does two transfers instead of four and costs 101. But each WSE-3 PE leaves only about 44.5 KB for arrays (Lab 3 fits about 5,450 cells), and data enters through a ~7 Gb/s-per-channel door <span class="tag sdk">SDK</span>.</li>
 <li><strong>The host dominates small runs.</strong> In Lab 2 the kernel is 1–3% of the whole-run cycle count; the rest is host I/O. Its TSC kernel times are 58 / 73 / 101 / 158 cycles for P = 2 / 4 / 8 / 16, about M + 7P for M = 32. Lab 1's @fmacs took ≈ 130 of 7,740 cycles.</li>
 <li><strong>The simulator is a real asset, with limits.</strong> In-kernel timestamp (TSC) readings are stable from run to run, so they pin a per-step cost to within a cycle. Whole-run totals in <code>sim_stats.json</code> are not: they vary by +1–4% with host load, sometimes more, and a loaded run can even abort with "could be a kernel stall". TSC values on different PEs are not comparable, because each counter starts when the launch reaches its PE; time on one PE or use a round trip. A GPU profiler measures real hardware, with run-to-run variance from clocks and scheduling. The simulator trades speed and scale (we simulated at most 16 PEs) for repeatable cycle counts and a per-instruction trace.</li>
 </ul>
@@ -430,7 +430,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
       { n: "WSE-3 · SRAM", c: "acc", R: 15.6e15 / 21e15, bpw: 2, f: "FP16 15.6 PF (Analyst) ÷ 21 PB/s (Vendor)" },
       { n: "p150 · GDDR6", c: "grn", R: 664e12 / 512e9, bpw: 2, odd: 1, f: "BlockFP8 664 TF ÷ 512 GB/s (Vendor); no 16-bit peak compiled, so this ridge is not like-for-like" },
       { n: "H100 · HBM3", c: "blu", R: 989e12 / 3.35e12, bpw: 2, f: "BF16 989 TF ÷ 3.35 TB/s (Vendor)" },
-      { n: "B200 · HBM3e", c: "pur", R: 2.25e15 / 8e12, bpw: 2, f: "BF16 ~2.25 PF (Vendor via secondary) ÷ 8 TB/s" }],
+      { n: "B200 · HBM3e", c: "pur", R: 2.25e15 / 8e12, bpw: 2, f: "BF16 ~2.25 PF (Derived from 9 PF FP4) ÷ 8 TB/s" }],
     "low": [
       { n: "WSE-3 · SRAM", c: "acc", R: 15.6e15 / 21e15, bpw: 2, f: "FP16 only (no lower format published)" },
       { n: "p150 · GDDR6", c: "grn", R: 664e12 / 512e9, bpw: 1088 / 1024, f: "BlockFP8: 1,088 B per 1,024 values" },
@@ -467,7 +467,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     const b = Math.pow(2, +rfB.value); $("#rf-bv").textContent = b;
     const li = RF[rfF.value].map(r => {
       const I = b * 2 / r.bpw, fr = Math.min(1, I / r.R);
-      let s = `<li><span class="sw ${r.c}"></span><b>${r.n}</b>: decode ≈ ${I < 10 ? +I.toPrecision(2) : Math.round(I)} FLOP/B, ridge ≈ ${r.R < 10 ? r.R.toFixed(2) : Math.round(r.R).toLocaleString("en-US")} (${r.f}). `;
+      let s = `<li><span class="sw ${r.c}"></span><b>${r.n}</b>: decode ≈ ${I < 10 ? +I.toPrecision(2) : Math.round(I).toLocaleString("en-US")} FLOP/B, ridge ≈ ${r.R < 10 ? r.R.toFixed(2) : Math.round(r.R).toLocaleString("en-US")} (${r.f}). `;
       s += I < r.R ? `Bandwidth-bound: at most ${(fr * 100).toPrecision(2)}% of peak.` : "Above the ridge: compute-bound on paper.";
       if (r.c === "acc") s += " Measured decode is still far below both ceilings: pipeline latency, not bandwidth (see the decode section).";
       return s + "</li>";
@@ -498,7 +498,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
       rack: [{ v: 132e9, l: "132 GB", d: "3 × 44 GB", t: D }, { v: 6.2e9, l: "6.2 GB", d: "6.2 GB", t: V }, NA(), NA()] },
     p16: { name: "Peak dense compute at ~16 bits", u: "FLOP/s",
       why: "Like-for-like where possible. Cerebras publishes only 125 PF sparse; 15.6 PF dense is an analyst estimate. The p150 has no 16-bit figure here, so its BlockFP8 peak is hollow.",
-      dev: [{ v: 15.6e15, l: "15.6 PF FP16", d: "~15.6 PF FP16 dense", t: A }, { v: 664e12, l: "664 TF BlockFP8", d: "664 TF BlockFP8 (not 16-bit)", t: V, odd: 1 }, { v: 989e12, l: "989 TF BF16", d: "989 TF BF16 dense", t: V }, { v: 2.25e15, l: "2.25 PF BF16", d: "~2.25 PF BF16 dense (FP4 dense is 9 PF)", t: VS }],
+      dev: [{ v: 15.6e15, l: "15.6 PF FP16", d: "~15.6 PF FP16 dense", t: A }, { v: 664e12, l: "664 TF BlockFP8", d: "664 TF BlockFP8 (not 16-bit)", t: V, odd: 1 }, { v: 989e12, l: "989 TF BF16", d: "989 TF BF16 dense", t: V }, { v: 2.25e15, l: "2.25 PF BF16", d: "~2.25 PF BF16 dense, derived from 9 PF FP4 (2× per halving of bits)", t: D }],
       rack: [{ v: 75e15, l: "~75 PF FP16", d: "3 × ~25 PF, from a disputed analyst estimate for WSE-3T", t: D }, { v: 23e15, l: "23 PF BlockFP8", d: "23 PF BlockFP8 (not 16-bit)", t: V, odd: 1 }, { v: 162e15, l: "~162 PF BF16", d: "72 × ~2.25 PF", t: D }, NA("only NVFP4 figures published")] },
     plow: { name: "Peak at each device's lowest precision (formats differ)", u: "FLOP/s",
       why: "Every dot is hollow: most of the spread is number format, not hardware. Read the label before the dot.",
@@ -595,7 +595,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     const xs = Math.max(1, Math.ceil(7 / Math.floor((x1 - x0) / 48)));
     for (let k = xl; k <= xh; k++) {
       el("line", { x1: X(10 ** k), x2: X(10 ** k), y1, y2: y0, class: "line", "stroke-dasharray": "3 3" }, svg);
-      if ((k - xl) % xs === 0) T(svg, X(10 ** k), y0 + 14, si(10 ** k) + "B", { "text-anchor": "middle", "font-size": 10.5, class: "muted" });
+      if ((k - xl) % xs === 0) T(svg, X(10 ** k), y0 + 14, si(10 ** k) + "B", { "text-anchor": k === xh ? "end" : k === xl ? "start" : "middle", "font-size": 10.5, class: "muted" });
     }
     for (let k = yl; k <= yh; k++) {
       el("line", { x1: x0, x2: x1, y1: Y(10 ** k), y2: Y(10 ** k), class: "line", "stroke-dasharray": "3 3" }, svg);
@@ -607,10 +607,9 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     const g = el("g", { "clip-path": `url(#${clipId})` }, svg);
     [[1e-6, "1 µs"], [1e-3, "1 ms"], [1e-2, "10 ms"], [1e-1, "100 ms"]].forEach(([t, s]) => {
       el("line", { x1: X(1e7), y1: Y(1e7 / t), x2: X(1e14), y2: Y(1e14 / t), class: "s-amb", "stroke-width": 1, "stroke-dasharray": "6 4", opacity: 0.8 }, g);
-      // label where the line leaves the top edge or the right edge
-      let C = Math.min(1e14, t * 1e17); C = C / 3.2;
-      const lx = X(C), ly = Y(C / t);
-      if (lx > x0 + 4 && ly > y1 + 8 && ly < y0 - 4) T(svg, lx + 3, ly - 3, "read once: " + s, { "font-size": 10, class: "f-amb" });
+      // label just inside where the line enters (left or bottom edge)
+      const C = Math.max(1e7, t * 1e11) * 1.6, lx = X(C) + 4, ly = Y(C / t) - 4;
+      T(svg, lx, Math.min(ly, y0 - 4), s, { "font-size": 10.5, "font-weight": 600, class: "f-amb" });
     });
     // model sizes
     [[16e9, "8B FP16"], [140e9, "70B FP16"], [1e12, "1T FP8"]].forEach(([c, s], i) => {
@@ -840,7 +839,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     const X = v => x0 + L10(v) / 4 * (x1 - x0), Y = v => y0 - (L10(v) - 1) / 4 * (y0 - y1); // y 10..1e5
     for (let k = 0; k <= 4; k++) { el("line", { x1: X(10 ** k), x2: X(10 ** k), y1, y2: y0, class: "line", "stroke-dasharray": "3 3" }, svg); T(svg, X(10 ** k), y0 + 14, String(10 ** k).replace("10000", "10k").replace("1000", "1k"), { "text-anchor": "middle", "font-size": 10.5, class: "muted" }); }
     for (let k = 1; k <= 5; k++) { el("line", { x1: x0, x2: x1, y1: Y(10 ** k), y2: Y(10 ** k), class: "line", "stroke-dasharray": "3 3" }, svg); T(svg, x0 - 6, Y(10 ** k) + 4, k >= 3 ? 10 ** (k - 3) + "k" : String(10 ** k), { "text-anchor": "end", "font-size": 10.5, class: "muted" }); }
-    T(svg, 12, y1 + 4, "cycles", { "font-size": 10.5, class: "muted" });
+    T(svg, x0 + 4, y1 + 12, "cycles per step", { "font-size": 10.5, class: "muted" });
     T(svg, x1, y0 + 28, "cells per PE (n) →", { "text-anchor": "end", "font-size": 10.5, class: "muted" });
     // fixed asymptote and compute line
     el("line", { x1: X(1), x2: X(1e4), y1: Y(90), y2: Y(90), class: "s-amb", "stroke-dasharray": "6 4", "stroke-width": 1.4 }, svg);
