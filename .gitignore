@@ -6,3 +6,4 @@ simconfig.json
 simfab_traces/
 wio_flows_tmpdir.*/
 run.log
+__pycache__/
