@@ -235,9 +235,38 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <details><summary>Hints</summary><p>Add <code>print(np.abs(device - (1 - np.arange(1, L+1)/(L+1))).max())</code> to <code>run.py</code>. Heat spreads about √(2αt) cells in t steps, so a rod of L cells needs roughly L²/(π²α) steps to settle.</p></details>
 <details><summary>Expected result</summary><p>At L = 16 the maximum deviation after 1,000 steps is about 3e-4. At the default L = 128 it is still 0.48 after 1,000 steps, 0.16 after 5,000, 0.07 after 10,000 and 0.017 after 20,000 (same f32 recurrence) <span class="tag derived">Derived</span>. The rod widget's speed control reaches those step counts.</p></details></li>
 <li><p><strong>Half precision.</strong> Change <code>u</code>, <code>lap</code> and <code>alpha</code> to <code>f16</code> and the builtins to <code>@faddh</code>/<code>@fmach</code> (Chapter 6 naming). Compare WSE-2 and WSE-3.</p>
-<details><summary>Hints</summary><p>memcpy moves 32-bit words, so use <code>MemcpyDataType.MEMCPY_16BIT</code> and pass the host data as <code>np.float16</code> values in the low 16 bits of <code>uint32</code> (Chapter 3). Loosen <code>rtol</code> to about 1e-2 and expect tiny values to flush to zero. Compare the <em>slope</em> (cycles per cell between n = 16 and n = 64), not the total per step: the 90-cycle fixed part hides any SIMD gain at small n. Chapter 6 measured f16 at about 3.2 elements per cycle on WSE-3 and 2.0 on WSE-2.</p></details></li>
+<details><summary>Hints</summary><p>memcpy moves 32-bit words, so use <code>MemcpyDataType.MEMCPY_16BIT</code> and pass the host data as <code>np.float16</code> values in the low 16 bits of <code>uint32</code> (Chapter 3). Loosen <code>rtol</code> to about 1e-2 and expect tiny values to flush to zero. Compare the <em>slope</em> (cycles per cell between n = 16 and n = 64), not the total per step: the 90-cycle fixed part hides any SIMD gain at small n. Chapter 6 measured f16 at about 3.2 elements per cycle on WSE-3 and 2.0 on WSE-2.</p></details>
+<details><summary>Answer (measured)</summary>
+<p>The halo moves become <code>@fmovh</code>, and <code>run()</code> keeps its <code>f32</code> argument and converts it with <code>@as(f16, a)</code>. With P = 8 and 48 steps, timed with the TSC on PE 1 <span class="tag measured">Measured, SDK 2.10.1 simulator</span>:</p>
+<div class="table-wrap"><table>
+<tr><th></th><th>n = 16</th><th>n = 64</th><th>slope (cycles per cell)</th><th>f32 slope</th></tr>
+<tr><td>WSE-3, f16</td><td>105.0</td><td>145.0</td><td>0.83</td><td>2.5</td></tr>
+<tr><td>WSE-2, f16</td><td>119.3</td><td>190.8</td><td>1.49</td><td>2.5</td></tr>
+</table></div>
+<p>The fixed part stays near 90 cycles, but the per-cell cost drops 3× on WSE-3 and 1.7× on WSE-2, close to Chapter 6's f16 rates. So half precision only pays once n is large: at n = 16 a step is 20% cheaper on WSE-3 and 11% on WSE-2. The device matched an f16 NumPy reference to 6 × 10<sup>-8</sup>. Against the f32 answer, the largest error is 1.5 × 10<sup>-3</sup> on values up to 1.58, and 47 of 128 cells flush to zero instead of 14, because f16 cannot hold the tiny values far from the heat sources.</p></details></li>
 <li><p><strong>Fewer messages.</strong> Send k ghost cells per direction every k steps (a k-wide halo) and do k sub-steps locally in between. Predict how the per-step cost changes for k = 2 and 4 from the constants above (≈14.6 per message, ≈1 per extra word).</p>
-<details><summary>Hints</summary><p>The ghost region becomes <code>u[0..k-1]</code> and <code>u[n+k..n+2k-1]</code>, and each sub-step updates a region that shrinks by one cell at each end. The extra compute on overlapping cells is the price for fewer messages.</p></details></li>
+<details><summary>Hints</summary><p>The ghost region becomes <code>u[0..k-1]</code> and <code>u[n+k..n+2k-1]</code>, and each sub-step updates a region that shrinks by one cell at each end. The extra compute on overlapping cells is the price for fewer messages.</p></details>
+<details><summary>Answer (measured)</summary>
+<p><b>Prediction.</b> A round of k steps still sends 4 messages, so the ≈14.6-cycle cost of each is shared by k steps: about 29 cycles saved per step at k = 2 and 44 at k = 4. Against that, each message carries k − 1 extra words (about +2 and +3 cycles per step), and the shrinking sub-step regions recompute on average k − 1 extra cells per step at 2.5 cycles each (+2.5 and +7.5). Net prediction: about 25 cycles per step saved at k = 2 and 33 at k = 4 <span class="tag derived">Derived</span>.</p>
+<p><b>Implementation.</b> Make every sub-step's DSDs compile-time constants with a <code>comptime</code> parameter. A first version that moved one DSD at run time with <code>@increment_dsd_offset</code> and <code>@set_dsd_length</code> cost about 80 extra cycles per sub-step, which wiped out the gain (214 cycles per step at k = 1 against 131) <span class="tag measured">Measured</span>.</p>
+<pre><code>fn substep(comptime j: i16) void {          // j = 1..k
+  const s: i16 = if (has_w) j else k;           // region [s, e) shrinks by one per side
+  const e: i16 = if (has_e) n + 2 * k - j else n + k;
+  const l  = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{e - s} -> u[s - 1 + i] });
+  const m  = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{e - s} -> u[s + i] });
+  const r  = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{e - s} -> u[s + 1 + i] });
+  const lp = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{e - s} -> lap[i] });
+  @fadds(lp, l, r);  @fmacs(lp, lp, m, -2.0);  @fmacs(m, m, lp, alpha);
+}</code></pre>
+<p><b>Result.</b> P = 8, 48 steps, cycles per step on PE 1 <span class="tag measured">Measured, SDK 2.10.1 simulator</span>:</p>
+<div class="table-wrap"><table>
+<tr><th></th><th>k = 1</th><th>k = 2</th><th>k = 4</th><th>k = 4, lap re-aligned</th></tr>
+<tr><td>WSE-3, n = 16</td><td>131.0</td><td>114.8</td><td>109.5</td><td>92.5</td></tr>
+<tr><td>WSE-3, n = 64</td><td>251.0</td><td>234.8</td><td>319.5</td><td>212.5</td></tr>
+<tr><td>WSE-2, n = 16</td><td>134.8</td><td>108.8</td><td>99.8</td><td>108.0</td></tr>
+<tr><td>WSE-2, n = 64</td><td>254.8</td><td>228.8</td><td>317.2</td><td>210.3</td></tr>
+</table></div>
+<p>k = 1 reproduces the original program exactly. k = 2 saves 16 cycles per step on WSE-3 and 26 on WSE-2, close to the prediction. At k = 4, n = 64 got <em>slower</em>: sub-step 4 starts at <code>u[4]</code>, and with 72 words in <code>u</code> that lands on the same offset mod 4 as <code>lap</code>, the operand clash from Chapter 6 that halves <code>@fmacs</code>. Starting <code>lap</code> two words later for that sub-step (the last column) brings k = 4 to 38–44 cycles saved per step at n = 64, a little better than predicted. Re-aligning made WSE-2 at n = 16 slightly worse, because the clash rule differs between the chips (Chapter 11's "pad and measure").</p></details></li>
 </ol>
 
 <div class="quiz">
