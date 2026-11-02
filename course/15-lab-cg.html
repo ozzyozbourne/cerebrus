@@ -1,0 +1,979 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 5: Conjugate Gradient</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+#tl-svg .dim { opacity: .25; }
+.bud-cell { cursor: default; }
+#bud-svg .hl { stroke-width: 2.5; }
+#bud-svg .fade { opacity: .25; }
+.halo-txt { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+</style>
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 15 · Part III · Programming</div>
+<h1>Lab 5: a conjugate-gradient solver</h1>
+<p class="lede">Lab 3's stencil marched a rod forward in time. Most stencils on a supercomputer do something else: they are the matrix inside an iterative solver. This lab solves a 3-D Poisson problem with conjugate gradient (CG) on a grid of PEs. The program combines three modules, memcpy plus two SDK libraries, so its main lesson is composition: how modules share one PE's colors, tasks and queues. Then we measure where an iteration's cycles go, and why every iteration waits for one global sum.</p>
+
+<div class="objectives">
+<h4>After this lab you can</h4>
+<ul>
+<li>Write CG and sort its steps into local, neighbour and global work, and say which one limits a wafer-sized solve.</li>
+<li>Combine library modules on one PE: give each its colors, task IDs, queues and DSRs, and check the budget.</li>
+<li>Explain how the SDK's allreduce reroutes one color three times per call, and why it acts as a barrier.</li>
+<li>Compare a host-driven loop with an on-device loop in simulated cycles, and estimate the gap on a real system.</li>
+<li>Measure a per-iteration cost split with the TSC and predict how it scales with the grid and the column height.</li>
+</ul>
+</div>
+
+<div class="callout ok">
+<strong>Run it yourself</strong>
+<p><code>source /home/user/cerebras-sdk/env.sh</code>, then in <code>course/programs/07-cg</code> run <code>bash commands.sh</code> (about a minute). Knobs are environment variables: <code>W</code>, <code>H</code> (PEs, default 5 × 5), <code>Z</code> (cells per PE, default 5), <code>ITERS</code> (iteration cap, 30), <code>EPS</code> (stop when |r| ≤ EPS·|b|, 1e-5), <code>HOST_ITERS</code> (iterations of the host-driven loop, 3), <code>BLOCK</code> (stencil message size, 2), <code>PROFILE</code> (1 = per-phase timers) and <code>ARCH</code> (<code>wse3</code> or <code>wse2</code>). For example <code>W=8 H=8 Z=8 ITERS=60 bash commands.sh</code>.</p>
+</div>
+
+<h2 id="problem">The problem and the CG algorithm</h2>
+<p>Take the Poisson equation −∇²u = f on a box, with u = 0 on the boundary. The 7-point finite-difference stencil turns it into a linear system <em>A u = b</em>. Each row of A has 6 on the diagonal and −1 for each of the six neighbours (west, east, south, north, below, above); neighbours outside the box drop out. A is symmetric and positive definite, so conjugate gradient applies. With 125 unknowns you could invert A; with a billion you cannot even store it. CG never forms A. It only needs to <em>apply</em> it, and applying A is exactly a stencil.</p>
+<p>Here is CG in numpy. It is the reference that <code>run.py</code> checks the device against, and it follows Golub and Van Loan's Algorithm 10.2.1, as the SDK benchmark does:</p>
+<pre><code><span class="k">def</span> cg_numpy(max_ite):
+    x = x0.copy(); r = b - A(x); rho = np.vdot(r, r); k = 0
+    <span class="k">while</span> rho &gt; tol * tol <span class="k">and</span> k &lt; max_ite:
+        k += 1
+        p = r.copy() <span class="k">if</span> k == 1 <span class="k">else</span> r + (rho / rho_old) * p   <span class="c"># axpy           local</span>
+        w = A(p)                                             <span class="c"># stencil SpMV   neighbours</span>
+        alpha = rho / np.vdot(p, w)                          <span class="c"># dot product    GLOBAL</span>
+        x = x + alpha * p;  r = r - alpha * w                <span class="c"># 2 axpy         local</span>
+        rho_old, rho = rho, np.vdot(r, r)                    <span class="c"># dot product    GLOBAL</span>
+    <span class="k">return</span> x</code></pre>
+<p>One iteration is one stencil application, two dot products, three vector updates (axpys) and two scalar divides. Spread over a grid of PEs, these are three kinds of work:</p>
+<div class="table-wrap"><table>
+<tr><th>Step</th><th>Data it needs</th><th>On the wafer</th><th>Grows with</th></tr>
+<tr><td>axpy (p, x, r updates)</td><td>this PE's cells</td><td><code>@fmacs</code> over the local column</td><td>cells per PE</td></tr>
+<tr><td>w = A p</td><td>the 4 neighbouring PEs' cells</td><td>one-hop messages, then <code>@fmacs</code></td><td>cells per PE</td></tr>
+<tr><td>⟨p, w⟩ and ⟨r, r⟩</td><td><em>every</em> PE's cells</td><td>local dot, then an allreduce across the whole grid</td><td>grid width + height</td></tr>
+</table></div>
+<p>The last row is new. In Lab 3 every PE waited only for its two neighbours. Here every iteration contains two global sums. No PE can compute α until every PE has contributed to ⟨p, w⟩, and no PE can decide whether to stop until the global ⟨r, r⟩ is back.</p>
+<p><strong>How many iterations?</strong> CG's error shrinks at least as fast as 2·((√κ − 1)/(√κ + 1))<sup>k</sup>, where κ = λ<sub>max</sub>/λ<sub>min</sub> is A's condition number (Golub and Van Loan, Theorem 10.2.6). For this A on an N × N × N box, λ = 6 ∓ 6·cos(π/(N+1)), so κ = cot²(π/(2N+2)): 13.9 at N = 5, 32.2 at N = 8, 67.8 at N = 12 <span class="tag derived">Derived</span>. The SDK benchmark prints the same 0.80 and 11.20 extreme eigenvalues for its 5 × 5 × 5 case <span class="tag sdk">SDK 2.10.1</span>. √κ grows like N, so the iteration count grows in proportion to the grid's side. A bigger grid needs more iterations, and each one contains two global sums whose latency also grows with the side. Keep that in mind for the scaling section.</p>
+
+<h2 id="mapping">Mapping onto the wafer</h2>
+<p>The SDK's 3-D stencils, and this lab, use the <em>pencil</em> decomposition from Lab 3's last table. The box is W × H × Z cells. PE (px, py) owns the whole z-column at (x = px, y = py), Z cells long, of every vector. A PE stores five vectors (b, x, p, w, r), so 20·Z bytes, plus 7 stencil coefficients.</p>
+<figure>
+<svg id="map-svg" viewBox="0 0 760 250" width="760" role="img" aria-label="Pencil decomposition: each PE holds a z-column of every vector"></svg>
+<figcaption><b>Pencils.</b> Left: a 5 × 5 grid of PEs, each owning one z-column of the box. Centre: the stencil at one cell needs its x/y neighbours from the four adjacent PEs (fabric, one hop) and its z neighbours from the same PE's memory. Right: what one PE stores. Only the w = A p step talks to neighbours; the dot products talk to everyone.</figcaption>
+</figure>
+<ul>
+<li><strong>SpMV, w = A p.</strong> The z-neighbours are in local memory, so the z part of the stencil is three <code>@fmacs</code> over shifted DSDs. The x/y part needs the four neighbouring columns. The library sends p to the east, west, north and south in blocks of <code>BLOCK_SIZE</code> wavelets, receives the four neighbours' blocks, and adds them in with four more <code>@fmacs</code>.</li>
+<li><strong>Dot products.</strong> Each PE sums over its own column (<code>@map</code>, as in the SDK's <code>blas.csl</code>), then the allreduce adds the W·H partial sums and returns the total to every PE. A single wavelet travels.</li>
+<li><strong>axpys.</strong> Purely local <code>@fmacs</code>. α and β are scalars that every PE computes from the same allreduced values, so every PE takes the same decision without any extra message.</li>
+</ul>
+
+<h2 id="modules">Composing modules</h2>
+<p>Labs 1–3 wrote every line on the PE themselves, apart from memcpy. This program writes about 200 lines and imports about 2,700: the SDK's <code>benchmark-libs/stencil_3d_7pts</code> (the SpMV) and <code>benchmark-libs/allreduce</code> (the global sums), each with a layout half and a PE half. The libraries live in <code>course/programs/07-cg/lib/</code>, copied from SDK 2.10.1 with an attribution header.</p>
+<figure>
+<svg id="mod-svg" viewBox="0 0 760 305" width="760" role="img" aria-label="Module graph of the CG program"></svg>
+<figcaption><b>The module graph.</b> <code>layout.csl</code> imports the layout half of each library, which computes per-PE parameters (which colors a PE sends and receives on, whether it is first or last in its row and column). It passes them to every PE's <code>pe_program.csl</code>, which imports the PE halves with the IDs it reserves for each. Both libraries finish by calling <code>phase_done()</code>, a function the program passes in as <code>f_callback</code>. Solid arrows are imports, dashed arrows are parameters and callbacks.</figcaption>
+</figure>
+<p>Three rules make composition work.</p>
+<ol>
+<li><strong>The top level owns every hardware ID.</strong> A library takes the colors, local task IDs, queues and DSR numbers it uses as parameters (on WSE-3 the stencil also takes its microthread), and never picks its own. The layout comment in <code>layout.csl</code> is the ledger: stencil colors 0–7 and tasks 14–16; allreduce color 8 and tasks 17–20; the program's own state-machine task 12; queues 0–1 for memcpy, 2 for allreduce, 4–7 for the stencil.</li>
+<li><strong>Two halves, two kinds of parameter.</strong> A layout half runs at compile time for each (px, py) and returns a struct (for the stencil, the color parity of each direction, as in Lab 3's figure). The PE half takes that struct plus everything that is a property of the PE program, such as queue numbers.</li>
+<li><strong>Libraries hand control back through a callback.</strong> Neither library knows about the host. When <code>spmv()</code> or <code>allreduce()</code> finishes, it calls the function it was given. The SDK's host-driven kernel passes <code>sys_mod.unblock_cmd_stream</code>; its device-driven kernel passes a function that activates the next state. This program passes <code>phase_done()</code>, which does either. That one indirection is the whole difference between the two loops below.</li>
+</ol>
+
+<div class="widget" id="bud">
+<h4>The resource budget of one PE</h4>
+<p class="hint">Every slot one PE's program uses, by owner. Hover or tap a module name to highlight its slots. Pick an experiment to see what happens when two modules are given the same slot. Every outcome is <span class="tag measured">Measured</span> (SDK 2.10.1, 5 × 5 PEs). memcpy's own colors are assigned by <code>cslc --memcpy</code>; the SDK CG layout's comment marks 21–30 as reserved for it <span class="tag sdk">SDK 2.10.1</span>, and Chapter 7 shows its command stream on color 22.</p>
+<div class="controls">
+<label>chip <select id="bud-arch"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>experiment <select id="bud-x">
+<option value="none">none: the shipped assignment</option>
+<option value="queue">allreduce queue 2 → 4</option>
+<option value="color">allreduce color 8 → 7</option>
+<option value="task">state task 12 → 14</option>
+<option value="ut">stencil send microthread 3 → 2</option>
+<option value="c22">allreduce color 8 → 22</option>
+<option value="queue2">WSE-2: allreduce queue 2 → 3</option>
+</select></label>
+</div>
+<div id="bud-legend" class="controls"></div>
+<svg id="bud-svg" viewBox="0 0 700 300" width="700" role="img" aria-label="Resource budget map"></svg>
+<div class="readout" id="bud-out"></div>
+</div>
+
+<p>Every outcome in the widget came from compiling and running a one-line change to the shipped program (3 iterations, 5 × 5 PEs) <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>Change</th><th>Chip</th><th>Result</th></tr>
+<tr><td>allreduce queue 2 → 4 (the stencil's first input queue)</td><td>WSE-3</td><td>compile error in the stencil library: <code>initialization for this queue has already been set</code></td></tr>
+<tr><td>allreduce color 8 → 7 (a stencil color)</td><td>WSE-3</td><td>compile error: <code>config for this color has already been set</code></td></tr>
+<tr><td>allreduce color 8 → 22 (memcpy's command stream)</td><td>WSE-3</td><td>compile error, this time in the allreduce library: <code>config for this color has already been set</code></td></tr>
+<tr><td>state task 12 → 14 (a stencil task)</td><td>WSE-3</td><td>compile error: <code>task ID '14' bound to more than one task</code></td></tr>
+<tr><td>stencil send microthread 3 → 2</td><td>WSE-3</td><td>compiles, runs, correct; 4,595 instead of 4,574 cycles per iteration</td></tr>
+<tr><td>allreduce queue 2 → 3 (the stencil's output queue)</td><td>WSE-2</td><td>compiles, runs, correct; 4,180 instead of 4,186 cycles per iteration</td></tr>
+</table></div>
+<p>Colors, task IDs and initialized queues are checked by the compiler, and a clash names the library line where the second claim happens. Microthreads are only partly in the ledger: the stencil takes its microthread as a parameter, but the allreduce takes none, so the compiler picks one for its asynchronous sends, and moving the stencil’s from 3 to 2 changed nothing we could see. The WSE-2 row is a genuinely shared slot. On WSE-2 an output queue is not tied to a color (the color comes from the <code>fabout_dsd</code>; only WSE-3 code calls <code>@initialize_queue</code> on an output queue, which is why the WSE-3 stencil needs four output queues and the WSE-2 stencil one). That shared queue works here only because the program never runs the stencil and the allreduce at the same time. A program that overlapped them would break silently, so keep the ledger even for slots the compiler does not police.</p>
+
+<div class="callout bug">
+<strong>The import path trap</strong>
+<p>Copied out of the SDK on its own, the CG benchmark does not compile: <code>Unable to open ./src/../../benchmark-libs/stencil_3d_7pts/layout.csl</code> <span class="tag measured">Measured</span> (phase-3 review run). Its imports climb two directories to a sibling <code>benchmark-libs/</code> folder. Two more facts matter when you fix it. First, <code>cslc</code> resolves an import path relative to the directory of the top-level <code>layout.csl</code>, not the importing file: the stencil's dispatch file asked for <code>"wse3/pe.csl"</code> and got <code>Unable to open ./wse3/pe.csl</code> <span class="tag measured">Measured</span>. Second, <code>cslc</code> and <code>cs_python</code> run inside a container that only mounts the current directory, so a library elsewhere on disk needs <code>CSL_IMPORT_PATH</code> (or <code>--import-path</code>) <span class="tag sdk">SDK 2.10.1</span>. This lab avoids both by copying the libraries into <code>lib/</code> and changing the two dispatch paths to <code>"lib/stencil_3d_7pts/wse3/pe.csl"</code> and <code>…/wse2/pe.csl</code>, the only edit to the SDK files.</p>
+</div>
+
+<h2 id="allreduce">The allreduce every iteration waits on</h2>
+<p>A global sum over a 2-D grid needs a route for every partial sum to reach one PE and a route for the result to reach everyone. Lab 2 built a row reduce on two alternating colors and a broadcast on a multicast route, each with static routes. The SDK's allreduce does all three stages with <em>one</em> color, and rewrites that color's routes between stages:</p>
+<ol>
+<li><strong>Row reduce.</strong> Routes: every PE forwards from west to east, and the last PE in the row delivers to its CE. Every PE except the last sends its value, then a <em>switch-advance</em> control wavelet. The control wavelet flips the next router's switch from "forward from the west" (position 0) to "take from my own CE" (position 1), so values arrive at the last PE one at a time, nearest last. The last PE adds them as they arrive with an asynchronous <code>@fadds</code> from the fabric, W − 1 times. The first PE then sends a teardown wavelet.</li>
+<li><strong>Column reduce.</strong> The same, north to south, on the last column only: H − 1 values reach the bottom-right PE.</li>
+<li><strong>Broadcast.</strong> The bottom-right PE sends the sum north up the last column, and every PE in that column sends it west along its row, by multicast routes (Lab 2's mechanism). Then a teardown.</li>
+</ol>
+<p>Between stages each PE calls <code>reset_routes</code>, clears its switch position and exits teardown mode on that color (<code>tile_config</code>). The teardown wavelet is how the PEs agree that a stage is over: each PE's teardown handler activates the task that moves the library's state machine on. That is why it needs only one color, one queue and four task IDs. The cost is that a stage can only start once the previous one has drained, so the three stages run strictly one after another, and every message is a single wavelet whose cost is almost all latency.</p>
+<div class="callout key">
+<strong>Why the allreduce is a barrier</strong>
+<p>No PE gets the sum back until the broadcast reaches it, and the broadcast cannot start until the bottom-right PE has every row's partial sum. So no PE leaves an allreduce before the last PE has entered it. A PE that reaches the allreduce early just waits inside it. You can see this in the profile: on the default 5 × 5 grid every PE spends exactly the same 4,574 cycles per iteration, but the share spent inside the allreduce varies from PE to PE by 228 cycles <span class="tag measured">Measured</span>. The fast PEs absorb the difference as waiting.</p>
+</div>
+<p>The SDK also ships a general-purpose 2-D library, <code>&lt;collectives_2d&gt;</code>, introduced in <a href="12-lab-neighbours.html#collectives">Chapter 12</a>. It uses two colors per dimension and also rewrites routes at runtime; <a href="14-lab-gemm.html">Chapter 14</a> uses it for SUMMA's row and column broadcasts and goes into its parameters. Chapter 12's review measured its fixed overhead at about 700 cycles per operation <span class="tag measured">Measured</span>, the same order as the allreduce here.</p>
+<h2 id="code">The code</h2>
+<p>The layout imports the layout half of each library with the colors and task IDs it reserves for it, then hands every PE its three parameter structs. The comment at the top is the budget the widget above draws.</p>
+<div class="filename">course/programs/07-cg/layout.csl</div>
+<pre><code><span class="c">// Lab 5: conjugate gradient (CG) on a 7-point stencil, width x height PEs.</span>
+<span class="c">// Adapted from Cerebras SDK 2.10.1 benchmarks/conjugate-gradient (src/layout.csl, src/layout_cg.csl).</span>
+<span class="c">//</span>
+<span class="c">// Three modules share every PE: memcpy (host I/O), a 7-point stencil (y = A*x) and an</span>
+<span class="c">// allreduce (dot products). The top level owns all hardware IDs and hands each module its share.</span>
+<span class="c">//</span>
+<span class="c">// Budget on every PE                          stencil    allreduce   memcpy       this program</span>
+<span class="c">//   routable colors                           0-7        8           (21-30)*     -</span>
+<span class="c">//   local task IDs                            14-16      17-20       -            12 (state machine)</span>
+<span class="c">//   input/output queues (pe_program.csl)      in 4-7     2           0, 1         -</span>
+<span class="c">//                                             out 4-7 (WSE-3) / 3 (WSE-2)</span>
+<span class="c">//   microthread for its sends (WSE-3)         3          (compiler) -            -</span>
+<span class="c">//   explicit DSRs (dest / src0 / src1)        2,3/2/2,3  1/1/1       -            compiler&#x27;s choice</span>
+<span class="c">// * memcpy&#x27;s own colors are chosen by cslc --memcpy; a program must not use them.</span>
+
+<span class="k">param</span> width: <span class="n">i16</span>;      <span class="c">// PEs per row (x)</span>
+<span class="k">param</span> height: <span class="n">i16</span>;     <span class="c">// PEs per column (y)</span>
+<span class="k">param</span> MAX_ZDIM: <span class="n">i16</span>;   <span class="c">// capacity of each PE&#x27;s z-column</span>
+<span class="k">param</span> MAX_ITE: <span class="n">i16</span>;    <span class="c">// capacity of the residual / timestamp history</span>
+<span class="k">param</span> BLOCK_SIZE: <span class="n">i16</span>; <span class="c">// wavelets per stencil message</span>
+<span class="k">param</span> PROFILE: <span class="n">i16</span>;    <span class="c">// 1: per-phase TSC profile, 0: compiled out</span>
+
+<span class="k">const</span> stencil = <span class="b">@import_module</span>(<span class="s">&quot;lib/stencil_3d_7pts/<span class="k">layout</span>.csl&quot;</span>, .{
+  .colors = [8]<span class="n">color</span>{ <span class="b">@get_color</span>(0), <span class="b">@get_color</span>(1), <span class="b">@get_color</span>(2), <span class="b">@get_color</span>(3),
+                      <span class="b">@get_color</span>(4), <span class="b">@get_color</span>(5), <span class="b">@get_color</span>(6), <span class="b">@get_color</span>(7) },
+  .entrypoints = [3]<span class="n">local_task_id</span>{ <span class="b">@get_local_task_id</span>(14), <span class="b">@get_local_task_id</span>(15),
+                                   <span class="b">@get_local_task_id</span>(16) },
+  .width = width, .height = height,
+});
+
+<span class="k">const</span> reduce = <span class="b">@import_module</span>(<span class="s">&quot;lib/allreduce/<span class="k">layout</span>.csl&quot;</span>, .{
+  .colors = [1]<span class="n">color</span>{ <span class="b">@get_color</span>(8) },
+  .entrypoints = [4]<span class="n">local_task_id</span>{ <span class="b">@get_local_task_id</span>(17), <span class="b">@get_local_task_id</span>(18),
+                                   <span class="b">@get_local_task_id</span>(19), <span class="b">@get_local_task_id</span>(20) },
+  .width = width, .height = height,
+});
+
+<span class="k">const</span> memcpy = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/get_params&gt;&quot;</span>, .{ .width = width, .height = height });
+
+<span class="k">layout</span> {
+  <span class="b">@set_rectangle</span>(width, height);
+  <span class="k">var</span> py: <span class="n">i16</span> = 0;
+  <span class="k">while</span> (py &lt; height) : (py += 1) {
+    <span class="k">var</span> px: <span class="n">i16</span> = 0;
+    <span class="k">while</span> (px &lt; width) : (px += 1) {
+      <span class="b">@set_tile_code</span>(px, py, <span class="s">&quot;pe_program.csl&quot;</span>, .{
+        .memcpyParams = memcpy.get_params(px),
+        .stencilParams = stencil.get_params(px, py),   <span class="c">// which of colors 0-7 this PE sends/receives on</span>
+        .reduceParams = reduce.get_params(px, py),     <span class="c">// is it first/last in its row and column?</span>
+        .MAX_ZDIM = MAX_ZDIM, .MAX_ITE = MAX_ITE, .BLOCK_SIZE = BLOCK_SIZE, .PROFILE = PROFILE,
+        .STATE = <span class="b">@get_local_task_id</span>(12),
+      });
+    }
+  }
+
+  <span class="b">@export_name</span>(<span class="s">&quot;b&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;x&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;coeff&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;rho&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;rho_hist&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;t_hist&quot;</span>, [*]<span class="n">u32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;prof&quot;</span>, [*]<span class="n">u32</span>, true);
+
+  <span class="c">// host-driven loop: one RPC per phase</span>
+  <span class="b">@export_name</span>(<span class="s">&quot;f_init&quot;</span>, <span class="k">fn</span>(<span class="n">i16</span>)<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;f_spmv_Ax&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;f_residual&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;f_update_p&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;f_spmv_Ap&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;f_eta&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="b">@export_name</span>(<span class="s">&quot;f_update_x_r_rho&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+  <span class="c">// device-driven loop: one RPC for the whole solve</span>
+  <span class="b">@export_name</span>(<span class="s">&quot;f_cg&quot;</span>, <span class="k">fn</span>(<span class="n">i16</span>, <span class="n">f32</span>, <span class="n">i16</span>)<span class="n">void</span>);
+}</code></pre>
+<p>The PE program holds both loops. The five CG phases are ordinary functions. Each one either finishes by itself (<code>update_p</code>) or ends by calling a library that finishes later (<code>spmv_Ap</code> ends in the stencil, <code>eta_dot</code> and <code>update_x_r_rho</code> in the allreduce). Either way control comes back to <code>phase_done()</code>.</p>
+<div class="filename">course/programs/07-cg/pe_program.csl</div>
+<pre><code><span class="c">// Lab 5: one PE&#x27;s part of a conjugate-gradient solve of A x = b, A = 7-point stencil.</span>
+<span class="c">// Adapted from Cerebras SDK 2.10.1 benchmarks/conjugate-gradient (src/kernel.csl, the</span>
+<span class="c">// host-driven loop, and src/kernel_cg.csl, the device-driven state machine). Changes for the</span>
+<span class="c">// course: both loops in one program, a per-phase TSC profile, and a residual/time history.</span>
+<span class="c">//</span>
+<span class="c">// Each PE owns one z-column (&quot;pencil&quot;) of MAX_ZDIM cells of every vector.</span>
+<span class="c">// One CG iteration is five phases; two of them end in an allreduce that every PE waits for:</span>
+<span class="c">//   update_p        p = r + beta p                       (axpy)</span>
+<span class="c">//   spmv_Ap         w = A p                              (stencil library)</span>
+<span class="c">//   eta             eta = &lt;p, w&gt;                         (local dot, then allreduce)</span>
+<span class="c">//   update_x_r_rho  x += alpha p; r -= alpha w; rho = &lt;r, r&gt;   (2 axpy, local dot, allreduce)</span>
+<span class="c">//   (check)         stop when rho &lt;= tol^2 or k = max_ite</span>
+
+<span class="k">param</span> memcpyParams;
+<span class="k">param</span> stencilParams;
+<span class="k">param</span> reduceParams;
+<span class="k">param</span> MAX_ZDIM: <span class="n">i16</span>;
+<span class="k">param</span> MAX_ITE: <span class="n">i16</span>;
+<span class="k">param</span> BLOCK_SIZE: <span class="n">i16</span>;
+<span class="k">param</span> PROFILE: <span class="n">i16</span>;
+<span class="k">param</span> STATE: <span class="n">local_task_id</span>;          <span class="c">// the device loop&#x27;s state-machine task</span>
+
+<span class="k">const</span> timestamp = <span class="b">@import_module</span>(<span class="s">&quot;&lt;time&gt;&quot;</span>);
+<span class="k">const</span> sys_mod = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/memcpy&gt;&quot;</span>, memcpyParams);   <span class="c">// queues 0 and 1</span>
+
+<span class="c">// Both libraries call phase_done() when they finish: that one callback is how a library hands</span>
+<span class="c">// control back, to the host (host loop) or to the state machine (device loop).</span>
+<span class="k">const</span> reduce_mod = <span class="b">@import_module</span>(<span class="s">&quot;lib/allreduce/pe.csl&quot;</span>, .{
+  .reduce_params = reduceParams,
+  .f_callback = phase_done,
+  .queues = [1]<span class="n">u16</span>{2},
+  .dest_dsr_ids = [1]<span class="n">u16</span>{1}, .src0_dsr_ids = [1]<span class="n">u16</span>{1}, .src1_dsr_ids = [1]<span class="n">u16</span>{1},
+});
+<span class="k">const</span> stencil_mod = <span class="b">@import_module</span>(<span class="s">&quot;lib/stencil_3d_7pts/pe.csl&quot;</span>, .{
+  .stencil_params = stencilParams,
+  .f_callback = phase_done,
+  .input_queues = [4]<span class="n">u16</span>{4, 5, 6, 7},
+  .output_queues = <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">&quot;wse3&quot;</span>)) [4]<span class="n">u16</span>{4, 5, 6, 7} <span class="k">else</span> [1]<span class="n">u16</span>{3},
+  .output_ut_id = 3,                  <span class="c">// WSE-3: all sends on microthread 3, one after another</span>
+  .BLOCK_SIZE = BLOCK_SIZE,
+  .dest_dsr_ids = [2]<span class="n">u16</span>{2, 3}, .src0_dsr_ids = [1]<span class="n">u16</span>{2}, .src1_dsr_ids = [2]<span class="n">u16</span>{2, 3},
+});
+
+<span class="k">var</span> b = <span class="b">@zeros</span>([MAX_ZDIM]<span class="n">f32</span>);       <span class="c">// right-hand side</span>
+<span class="k">var</span> x = <span class="b">@zeros</span>([MAX_ZDIM]<span class="n">f32</span>);       <span class="c">// solution estimate</span>
+<span class="k">var</span> p = <span class="b">@zeros</span>([MAX_ZDIM]<span class="n">f32</span>);       <span class="c">// search direction</span>
+<span class="k">var</span> w = <span class="b">@zeros</span>([MAX_ZDIM]<span class="n">f32</span>);       <span class="c">// w = A p</span>
+<span class="k">var</span> r = <span class="b">@zeros</span>([MAX_ZDIM]<span class="n">f32</span>);       <span class="c">// residual</span>
+<span class="k">var</span> coeff = <span class="b">@zeros</span>([7]<span class="n">f32</span>);          <span class="c">// stencil: west, east, south, north, bottom, top, centre</span>
+<span class="k">var</span> rho = <span class="b">@zeros</span>([1]<span class="n">f32</span>);            <span class="c">// &lt;r, r&gt;, identical on every PE after the allreduce</span>
+<span class="k">var</span> rho_old: <span class="n">f32</span> = 0.0;
+<span class="k">var</span> eta = <span class="b">@zeros</span>([1]<span class="n">f32</span>);            <span class="c">// &lt;p, A p&gt;</span>
+
+<span class="k">var</span> n: <span class="n">i16</span> = 0;                      <span class="c">// cells in use per PE</span>
+<span class="k">var</span> k: <span class="n">i16</span> = 0;                      <span class="c">// iteration counter</span>
+<span class="k">var</span> tol: <span class="n">f32</span> = 0.0;
+<span class="k">var</span> max_ite: <span class="n">i16</span> = 0;
+<span class="k">var</span> device_loop: <span class="n">bool</span> = false;       <span class="c">// who starts the next phase: the host, or task STATE?</span>
+
+<span class="k">var</span> dsd_b = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{MAX_ZDIM} -&gt; b[i] });
+<span class="k">var</span> dsd_x = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{MAX_ZDIM} -&gt; x[i] });
+<span class="k">var</span> dsd_p = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{MAX_ZDIM} -&gt; p[i] });
+<span class="k">var</span> dsd_w = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{MAX_ZDIM} -&gt; w[i] });
+<span class="k">var</span> dsd_r = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{MAX_ZDIM} -&gt; r[i] });
+
+<span class="c">// ---------------- instrumentation (TSC, read on this PE only) ----------------</span>
+<span class="k">const</span> B_AXPY: <span class="n">u16</span> = 0;  <span class="k">const</span> B_SPMV: <span class="n">u16</span> = 1;  <span class="k">const</span> B_DOT: <span class="n">u16</span> = 2;
+<span class="k">const</span> B_ALLREDUCE: <span class="n">u16</span> = 3;  <span class="k">const</span> B_CONTROL: <span class="n">u16</span> = 4;
+<span class="k">var</span> prof = <span class="b">@zeros</span>([5]<span class="n">u32</span>);           <span class="c">// cycles per bucket, summed over iterations 1..k</span>
+<span class="k">var</span> bucket: <span class="n">u16</span> = B_CONTROL;
+<span class="k">var</span> t_last: <span class="n">u32</span> = 0;
+<span class="k">var</span> rho_hist = <span class="b">@zeros</span>([MAX_ITE + 1]<span class="n">f32</span>);   <span class="c">// rho after iteration 0..k</span>
+<span class="k">var</span> t_hist = <span class="b">@zeros</span>([MAX_ITE + 1]<span class="n">u32</span>);     <span class="c">// TSC (low 32 bits) at the same moments</span>
+<span class="k">var</span> tsc = <span class="b">@zeros</span>([timestamp.tsc_size_words]<span class="n">u16</span>);
+
+<span class="k">fn</span> now() <span class="n">u32</span> {
+  timestamp.get_timestamp(&amp;tsc);
+  <span class="k">return</span> <span class="b">@as</span>(<span class="n">u32</span>, tsc[0]) | (<span class="b">@as</span>(<span class="n">u32</span>, tsc[1]) &lt;&lt; 16);
+}
+
+<span class="c">// Close the running bucket and open the next one. Compiled out when PROFILE = 0.</span>
+<span class="k">fn</span> mark(next: <span class="n">u16</span>) <span class="n">void</span> {
+  <span class="k">if</span> (PROFILE != 0) {
+    <span class="k">const</span> t = now();
+    prof[bucket] += t - t_last;
+    t_last = t;
+    bucket = next;
+  }
+}
+
+<span class="c">// rho has just been allreduced: log it, with the time, for the convergence plot.</span>
+<span class="k">fn</span> record() <span class="n">void</span> {
+  rho_hist[k] = rho[0];
+  t_hist[k] = now();
+  <span class="k">if</span> (k == 0) {                      <span class="c">// profile iterations only, not the set-up</span>
+    <span class="k">for</span> (<span class="b">@range</span>(<span class="n">u16</span>, 5)) |i| { prof[i] = 0; }
+    t_last = t_hist[0];
+    bucket = B_CONTROL;
+  }
+}
+
+<span class="c">// ---------------- the phases ----------------</span>
+<span class="k">const</span> PH_INIT: <span class="n">i16</span> = 0;      <span class="k">const</span> PH_SPMV_AX: <span class="n">i16</span> = 1;  <span class="k">const</span> PH_RESIDUAL: <span class="n">i16</span> = 2;
+<span class="k">const</span> PH_UPDATE_P: <span class="n">i16</span> = 3;  <span class="k">const</span> PH_SPMV_AP: <span class="n">i16</span> = 4;  <span class="k">const</span> PH_ETA: <span class="n">i16</span> = 5;
+<span class="k">const</span> PH_UPDATE_XR: <span class="n">i16</span> = 6;
+<span class="k">var</span> phase: <span class="n">i16</span> = PH_INIT;            <span class="c">// the phase that is running or has just finished</span>
+
+<span class="c">// Every phase ends here, directly or as a library&#x27;s callback.</span>
+<span class="k">fn</span> phase_done() <span class="n">void</span> {
+  <span class="k">if</span> (phase == PH_RESIDUAL or phase == PH_UPDATE_XR) { record(); }
+  mark(B_CONTROL);
+  <span class="k">if</span> (device_loop) {
+    <span class="b">@activate</span>(STATE);                <span class="c">// the state machine starts the next phase</span>
+  } <span class="k">else</span> {
+    sys_mod.unblock_cmd_stream();    <span class="c">// the host&#x27;s launch() returns; it starts the next phase</span>
+  }
+}
+
+<span class="k">fn</span> local_dot(u: *[MAX_ZDIM]<span class="n">f32</span>, v: *[MAX_ZDIM]<span class="n">f32</span>) <span class="n">f32</span> {   <span class="c">// as in the SDK&#x27;s blas.csl</span>
+  <span class="k">var</span> s: <span class="n">f32</span> = 0.0;
+  <span class="b">@map</span>(dot_step, <span class="b">@set_dsd_base_addr</span>(dsd_x, u), <span class="b">@set_dsd_base_addr</span>(dsd_x, v), &amp;s, &amp;s);
+  <span class="k">return</span> s;
+}
+<span class="k">fn</span> dot_step(ui: <span class="n">f32</span>, vi: <span class="n">f32</span>, s: *<span class="n">f32</span>) <span class="n">f32</span> { <span class="k">return</span> s.* + ui * vi; }
+
+<span class="k">fn</span> init(size: <span class="n">i16</span>) <span class="n">void</span> {
+  phase = PH_INIT;
+  n = size;
+  k = 0;
+  <span class="k">const</span> len = <span class="b">@bitcast</span>(<span class="n">u16</span>, n);
+  dsd_b = <span class="b">@set_dsd_length</span>(dsd_b, len);  dsd_x = <span class="b">@set_dsd_length</span>(dsd_x, len);
+  dsd_p = <span class="b">@set_dsd_length</span>(dsd_p, len);  dsd_w = <span class="b">@set_dsd_length</span>(dsd_w, len);
+  dsd_r = <span class="b">@set_dsd_length</span>(dsd_r, len);
+  <span class="k">for</span> (<span class="b">@range</span>(<span class="n">i16</span>, MAX_ITE + 1)) |i| { rho_hist[i] = 0.0; t_hist[i] = 0; }
+  timestamp.enable_tsc();
+  phase_done();
+}
+
+<span class="k">fn</span> spmv_Ax() <span class="n">void</span> {                  <span class="c">// w = A x0</span>
+  phase = PH_SPMV_AX;
+  stencil_mod.spmv(n, &amp;coeff, &amp;x, &amp;w);
+}
+
+<span class="k">fn</span> residual() <span class="n">void</span> {                 <span class="c">// r = b - w; rho = &lt;r, r&gt;</span>
+  phase = PH_RESIDUAL;
+  <span class="b">@fsubs</span>(dsd_r, dsd_b, dsd_w);
+  rho[0] = local_dot(&amp;r, &amp;r);
+  reduce_mod.allreduce(1, &amp;rho, reduce_mod.TYPE_BINARY_OP.ADD);
+}
+
+<span class="k">fn</span> update_p() <span class="n">void</span> {                 <span class="c">// p = r (first iteration) or p = r + beta p</span>
+  phase = PH_UPDATE_P;
+  mark(B_AXPY);
+  k += 1;
+  <span class="k">if</span> (k == 1) {
+    <span class="b">@fmovs</span>(dsd_p, dsd_r);
+  } <span class="k">else</span> {
+    <span class="b">@fmacs</span>(dsd_p, dsd_r, dsd_p, rho[0] / rho_old);
+  }
+  phase_done();
+}
+
+<span class="k">fn</span> spmv_Ap() <span class="n">void</span> {                  <span class="c">// w = A p</span>
+  phase = PH_SPMV_AP;
+  mark(B_SPMV);
+  stencil_mod.spmv(n, &amp;coeff, &amp;p, &amp;w);
+}
+
+<span class="k">fn</span> eta_dot() <span class="n">void</span> {                  <span class="c">// eta = &lt;p, w&gt;, summed over all PEs</span>
+  phase = PH_ETA;
+  mark(B_DOT);
+  eta[0] = local_dot(&amp;p, &amp;w);
+  mark(B_ALLREDUCE);
+  reduce_mod.allreduce(1, &amp;eta, reduce_mod.TYPE_BINARY_OP.ADD);
+}
+
+<span class="k">fn</span> update_x_r_rho() <span class="n">void</span> {
+  phase = PH_UPDATE_XR;
+  mark(B_AXPY);
+  <span class="k">const</span> alpha = rho[0] / eta[0];
+  <span class="b">@fmacs</span>(dsd_x, dsd_x, dsd_p, alpha);
+  <span class="b">@fmacs</span>(dsd_r, dsd_r, dsd_w, -alpha);
+  rho_old = rho[0];
+  mark(B_DOT);
+  rho[0] = local_dot(&amp;r, &amp;r);
+  mark(B_ALLREDUCE);
+  reduce_mod.allreduce(1, &amp;rho, reduce_mod.TYPE_BINARY_OP.ADD);
+}
+
+<span class="c">// ---------------- host-driven loop: the host calls each phase ----------------</span>
+<span class="k">fn</span> f_init(size: <span class="n">i16</span>) <span class="n">void</span> { device_loop = false; init(size); }
+<span class="k">fn</span> f_spmv_Ax() <span class="n">void</span> { spmv_Ax(); }
+<span class="k">fn</span> f_residual() <span class="n">void</span> { residual(); }
+<span class="k">fn</span> f_update_p() <span class="n">void</span> { update_p(); }
+<span class="k">fn</span> f_spmv_Ap() <span class="n">void</span> { spmv_Ap(); }
+<span class="k">fn</span> f_eta() <span class="n">void</span> { eta_dot(); }
+<span class="k">fn</span> f_update_x_r_rho() <span class="n">void</span> { update_x_r_rho(); }
+
+<span class="c">// ---------------- device-driven loop: one RPC, a task picks each next phase ----------------</span>
+<span class="k">fn</span> f_cg(size: <span class="n">i16</span>, tol_val: <span class="n">f32</span>, max_ite_val: <span class="n">i16</span>) <span class="n">void</span> {
+  tol = tol_val;
+  max_ite = max_ite_val;
+  device_loop = true;
+  init(size);                        <span class="c">// ends in phase_done(), which activates STATE</span>
+}
+
+<span class="k">task</span> next_phase() <span class="n">void</span> {
+  <span class="k">if</span> (phase == PH_INIT) {
+    spmv_Ax();
+  } <span class="k">else</span> <span class="k">if</span> (phase == PH_SPMV_AX) {
+    residual();
+  } <span class="k">else</span> <span class="k">if</span> (phase == PH_RESIDUAL or phase == PH_UPDATE_XR) {
+    <span class="k">if</span> (rho[0] &gt; tol * tol and k &lt; max_ite) {   <span class="c">// every PE sees the same rho: same decision</span>
+      update_p();
+    } <span class="k">else</span> {
+      device_loop = false;
+      sys_mod.unblock_cmd_stream();  <span class="c">// solve finished: the host&#x27;s launch() returns</span>
+    }
+  } <span class="k">else</span> <span class="k">if</span> (phase == PH_UPDATE_P) {
+    spmv_Ap();
+  } <span class="k">else</span> <span class="k">if</span> (phase == PH_SPMV_AP) {
+    eta_dot();
+  } <span class="k">else</span> {                           <span class="c">// PH_ETA</span>
+    update_x_r_rho();
+  }
+}
+
+<span class="c">// host-visible symbols</span>
+<span class="k">var</span> b_ptr: [*]<span class="n">f32</span> = &amp;b;  <span class="k">var</span> x_ptr: [*]<span class="n">f32</span> = &amp;x;  <span class="k">var</span> coeff_ptr: [*]<span class="n">f32</span> = &amp;coeff;
+<span class="k">var</span> rho_ptr: [*]<span class="n">f32</span> = &amp;rho;  <span class="k">var</span> rho_hist_ptr: [*]<span class="n">f32</span> = &amp;rho_hist;
+<span class="k">var</span> t_hist_ptr: [*]<span class="n">u32</span> = &amp;t_hist;  <span class="k">var</span> prof_ptr: [*]<span class="n">u32</span> = &amp;prof;
+
+<span class="k">comptime</span> {
+  <span class="b">@bind_local_task</span>(next_phase, STATE);
+  <span class="b">@export_symbol</span>(b_ptr, <span class="s">&quot;b&quot;</span>);  <span class="b">@export_symbol</span>(x_ptr, <span class="s">&quot;x&quot;</span>);  <span class="b">@export_symbol</span>(coeff_ptr, <span class="s">&quot;coeff&quot;</span>);
+  <span class="b">@export_symbol</span>(rho_ptr, <span class="s">&quot;rho&quot;</span>);  <span class="b">@export_symbol</span>(rho_hist_ptr, <span class="s">&quot;rho_hist&quot;</span>);
+  <span class="b">@export_symbol</span>(t_hist_ptr, <span class="s">&quot;t_hist&quot;</span>);  <span class="b">@export_symbol</span>(prof_ptr, <span class="s">&quot;prof&quot;</span>);
+  <span class="b">@export_symbol</span>(f_init);  <span class="b">@export_symbol</span>(f_spmv_Ax);  <span class="b">@export_symbol</span>(f_residual);
+  <span class="b">@export_symbol</span>(f_update_p);  <span class="b">@export_symbol</span>(f_spmv_Ap);  <span class="b">@export_symbol</span>(f_eta);
+  <span class="b">@export_symbol</span>(f_update_x_r_rho);  <span class="b">@export_symbol</span>(f_cg);
+}</code></pre>
+
+<h3>Two loops, one program</h3>
+<p>The only difference between the loops is what <code>phase_done()</code> does next.</p>
+<ul>
+<li><strong>Host-driven.</strong> The host calls <code>f_update_p</code>, <code>f_spmv_Ap</code>, <code>f_eta</code> and <code>f_update_x_r_rho</code> one after another with <code>launch(…, nonblock=False)</code>, then copies <code>rho</code> back and decides whether to go on. <code>phase_done()</code> calls <code>unblock_cmd_stream()</code>, so each <code>launch</code> returns only when its phase has finished on every PE. This is the SDK's <code>run.py</code> with <code>kernel.csl</code>, and it is how you would first port a CG written in numpy: the loop stays in Python.</li>
+<li><strong>Device-driven.</strong> The host makes one call, <code>f_cg</code>. Now <code>phase_done()</code> activates task <code>STATE</code> (<code>next_phase</code>), which looks at the phase that just finished and starts the next one. After the ⟨r, r⟩ allreduce it tests the stopping rule itself. That is the SDK's <code>device_run.py</code> with <code>kernel_cg.csl</code>.</li>
+</ul>
+<p>The device loop decides when to stop without any extra message because the allreduce leaves the <em>same</em> ρ on every PE, so every PE takes the same branch at the same iteration. <code>run.py</code> checks that all W·H copies of the ρ history are identical. Unlike Lab 3's step chain, the iteration here is gated by the allreduce, a global barrier, rather than by neighbours. That is why a single counter of finished operations is enough and no PE can run an iteration ahead.</p>
+<p>The host script builds the matrix as a numpy function, runs the same f32 recurrence as a reference, then runs both loops on the device and compares the solution and the residual history with numpy:</p>
+<div class="filename">course/programs/07-cg/run.py</div>
+<pre><code>#!/usr/bin/env cs_python
+<span class="c"># Lab 5 host script: solve A x = b by CG twice on the same device, first with the host</span>
+<span class="c"># driving every phase, then with the device&#x27;s own state machine, and check both against numpy.</span>
+<span class="c"># Adapted from Cerebras SDK 2.10.1 benchmarks/conjugate-gradient (run.py, device_run.py).</span>
+<span class="k">import</span> argparse, json
+<span class="k">import</span> numpy as np
+<span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder  <span class="c"># pylint: disable=no-name-in-module</span>
+
+p = argparse.ArgumentParser(); p.add_argument(&#x27;--name&#x27;); p.add_argument(&#x27;--cmaddr&#x27;)
+p.add_argument(&#x27;--zdim&#x27;, type=int, default=5); p.add_argument(&#x27;--max-ite&#x27;, type=int, default=30)
+p.add_argument(&#x27;--eps&#x27;, type=float, default=1e-5)
+p.add_argument(&#x27;--host-ite&#x27;, type=int, default=3)   <span class="c"># the host loop is slow to simulate; a few iterations time it</span>
+args = p.parse_args()
+prm = json.load(open(f<span class="s">&quot;{args.name}/out.json&quot;</span>))[&#x27;params&#x27;]
+W, H, Z, ITE = int(prm[&#x27;width&#x27;]), int(prm[&#x27;height&#x27;]), args.zdim, args.max_ite
+assert Z &lt;= int(prm[&#x27;MAX_ZDIM&#x27;]) and ITE &lt;= int(prm[&#x27;MAX_ITE&#x27;])
+
+<span class="c"># The matrix: 3-D Laplacian, 6 on the diagonal and -1 for each of the 6 neighbours,</span>
+<span class="c"># zero (Dirichlet) outside the H x W x Z box. Symmetric positive definite, so CG applies.</span>
+coeff = np.array([-1, -1, -1, -1, -1, -1, 6], dtype=np.float32)   <span class="c"># W E S N bottom top centre</span>
+<span class="k">def</span> A(v):
+    y = np.float32(6) * v
+    <span class="k">for</span> ax in range(3):
+        sl = [slice(<span class="k">None</span>)] * 3; sr = [slice(<span class="k">None</span>)] * 3
+        sl[ax] = slice(1, <span class="k">None</span>); sr[ax] = slice(<span class="k">None</span>, -1)
+        y[tuple(sl)] -= v[tuple(sr)]; y[tuple(sr)] -= v[tuple(sl)]
+    <span class="k">return</span> y
+
+b = np.random.default_rng(15).random((H, W, Z), dtype=np.float32)   <span class="c"># [py][px][z]</span>
+x0 = np.zeros_like(b)
+tol = np.float32(args.eps * np.linalg.norm(b))
+
+<span class="k">def</span> cg_numpy(max_ite):                <span class="c"># the same recurrence, in f32</span>
+    x = x0.copy(); r = b - A(x); rho = np.vdot(r, r); hist = [rho]; k = 0
+    <span class="k">while</span> rho &gt; tol * tol and k &lt; max_ite:
+        k += 1
+        pp = r.copy() <span class="k">if</span> k == 1 <span class="k">else</span> r + (rho / rho_old) * pp
+        w = A(pp); alpha = rho / np.vdot(pp, w)
+        x = x + alpha * pp; r = r - alpha * w
+        rho_old, rho = rho, np.vdot(r, r); hist.append(rho)
+    <span class="k">return</span> x, np.array(hist, dtype=np.float32)
+HOST_ITE = min(args.host_ite, ITE)
+ref = {&#x27;host&#x27;: cg_numpy(HOST_ITE), &#x27;device&#x27;: cg_numpy(ITE)}
+
+<span class="c"># No per-cycle trace files: this lab simulates ~10^5 cycles, which would write gigabytes of them.</span>
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr, suppress_simfab_trace=<span class="k">True</span>)
+rt.load(); rt.run()
+<span class="n">f32</span> = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
+<span class="k">def</span> h2d(sym, a, n): rt.memcpy_h2d(rt.get_id(sym), np.ascontiguousarray(a).ravel(), 0, 0, W, H, n, **<span class="n">f32</span>)
+<span class="k">def</span> d2h(sym, n, dt=np.float32, w=<span class="k">None</span>, h=<span class="k">None</span>):
+    out = np.zeros((h or H) * (w or W) * n, dtype=dt)
+    rt.memcpy_d2h(out, rt.get_id(sym), 0, 0, w or W, h or H, n, **<span class="n">f32</span>)
+    <span class="k">return</span> out.reshape(h or H, w or W, n)
+
+h2d(&#x27;b&#x27;, b, Z); h2d(&#x27;coeff&#x27;, np.broadcast_to(coeff, (H, W, 7)), 7)
+
+<span class="k">def</span> collect():
+    x = d2h(&#x27;x&#x27;, Z)
+    th = d2h(&#x27;t_hist&#x27;, ITE + 1, np.uint32).astype(np.int64)
+    <span class="k">return</span> x, d2h(&#x27;rho_hist&#x27;, ITE + 1), th, d2h(&#x27;prof&#x27;, 5, np.uint32).astype(np.int64)
+
+<span class="c"># ---- 1. host-driven loop: one launch per phase, and rho comes back to the host every iteration</span>
+h2d(&#x27;x&#x27;, x0, Z)
+rt.launch(&#x27;f_init&#x27;, np.int16(Z), nonblock=<span class="k">False</span>)
+rt.launch(&#x27;f_spmv_Ax&#x27;, nonblock=<span class="k">False</span>)
+rt.launch(&#x27;f_residual&#x27;, nonblock=<span class="k">False</span>)
+rho = d2h(&#x27;rho&#x27;, 1, w=1, h=1)[0, 0, 0]; k = 0
+<span class="k">while</span> rho &gt; tol * tol and k &lt; HOST_ITE:
+    k += 1
+    <span class="k">for</span> f in (&#x27;f_update_p&#x27;, &#x27;f_spmv_Ap&#x27;, &#x27;f_eta&#x27;, &#x27;f_update_x_r_rho&#x27;):
+        rt.launch(f, nonblock=<span class="k">False</span>)
+    rho = d2h(&#x27;rho&#x27;, 1, w=1, h=1)[0, 0, 0]
+host = collect() + (k, &#x27;host&#x27;)
+
+<span class="c"># ---- 2. device-driven loop: one launch, the PEs&#x27; state machine runs every phase</span>
+h2d(&#x27;x&#x27;, x0, Z)
+rt.launch(&#x27;f_cg&#x27;, np.int16(Z), np.float32(tol), np.int16(ITE), nonblock=<span class="k">False</span>)
+k_dev = int(np.count_nonzero(d2h(&#x27;t_hist&#x27;, ITE + 1, np.uint32)[0, 0]))   <span class="c"># iterations + 1 stamps</span>
+dev = collect() + (k_dev - 1, &#x27;device&#x27;)
+rt.stop()
+
+<span class="c"># ---- check and report (timings: TSC on one PE, the centre one)</span>
+py, px = H <span class="c">// 2, W // 2</span>
+print(f<span class="s">&quot;{W} x {H} PEs x {Z} cells = {W*H*Z} unknowns; stop at |r| &lt;= {args.eps:g} |b| or {ITE} iterations&quot;</span>)
+names = [&#x27;axpy&#x27;, &#x27;stencil SpMV&#x27;, &#x27;local dot&#x27;, &#x27;allreduce&#x27;, &#x27;control&#x27;]
+<span class="k">for</span> label, (x, rh, th, pr, K, which) in ((&#x27;host-driven loop  &#x27;, host), (&#x27;device-driven loop&#x27;, dev)):
+    x_ref, hist_ref = ref[which]
+    assert K == len(hist_ref) - 1, f<span class="s">&quot;{label}: {K} iterations, numpy needed {len(hist_ref) - 1}&quot;</span>
+    np.testing.assert_allclose(x, x_ref, rtol=1e-4, atol=1e-5 * np.abs(x_ref).max())
+    np.testing.assert_allclose(rh[py, px, :K + 1], hist_ref, rtol=1e-3, atol=1e-6 * hist_ref[0])
+    assert np.all(rh[:, :, :K + 1] == rh[0, 0, :K + 1]), <span class="s">&quot;every PE must see the same rho&quot;</span>
+    <span class="k">if</span> K == 0: print(f<span class="s">&quot;{label}: 0 iterations&quot;</span>); continue
+    per = (th[:, :, K] - th[:, :, 0]) / K                <span class="c"># durations on each PE&#x27;s own clock</span>
+    split = &#x27;, &#x27;.join(f<span class="s">&quot;{n} {v / K:.0f}&quot;</span> <span class="k">for</span> n, v in zip(names, pr[py, px]) <span class="k">if</span> v)
+    print(f<span class="s">&quot;{label}: {K} iterations, {per[py, px]:.0f} cycles/iteration on PE ({px},{py})&quot;</span>
+          + (f<span class="s">&quot;  [{split}]&quot;</span> <span class="k">if</span> pr[py, px].any() <span class="k">else</span> <span class="s">&quot;&quot;</span>))
+    <span class="k">if</span> which == &#x27;device&#x27; and pr.any():
+        ar = pr[:, :, 3] / K
+        print(f<span class="s">&quot;  all {W*H} PEs: {per.min():.0f}-{per.max():.0f} cycles/iteration, &quot;</span>
+              f<span class="s">&quot;of which allreduce {ar.min():.0f}-{ar.max():.0f} (PE ({px},{py}) {ar[py, px]:.0f})&quot;</span>)
+K = dev[4]
+rel = np.sqrt(np.maximum(dev[1][py, px, :K + 1], 0)) / np.linalg.norm(b)
+print(<span class="s">&quot;|r_k|/|b|, k = 0..%d (device):&quot;</span> % K)
+print(np.array2string(rel, precision=2, max_line_width=100))
+true_res = np.linalg.norm(b - A(dev[0])) / np.linalg.norm(b)
+print(f<span class="s">&quot;true residual |b - A x|/|b| = {true_res:.2e}; max |x_wse - x_numpy| = {np.abs(dev[0] - ref[&#x27;device&#x27;][0]).max():.1e}&quot;</span>)
+print(<span class="s">&quot;SUCCESS!&quot;</span>)</code></pre>
+<p><code>commands.sh</code> sizes the fabric to the W × H rectangle plus memcpy's frame, as in every lab:</p>
+<div class="filename">course/programs/07-cg/commands.sh</div>
+<pre><code>#!/usr/bin/env bash
+<span class="c"># Knobs (environment): W x H PEs, Z cells per PE (z-column), ITERS = max CG iterations,</span>
+<span class="c"># HOST_ITERS = iterations of the (slow-to-simulate) host-driven loop,</span>
+<span class="c"># EPS = stop when |r| &lt;= EPS*|b|, PROFILE = 1|0 (per-phase timers), ARCH = wse3 | wse2.</span>
+<span class="c">#   e.g.  W=8 H=8 Z=20 ITERS=40 bash commands.sh</span>
+<span class="c"># Self-contained: lib/ holds the two SDK benchmark libraries this program imports.</span>
+set -e
+W=${W:-5}; H=${H:-5}; Z=${Z:-5}; ITERS=${ITERS:-30}; EPS=${EPS:-1e-5}; PROFILE=${PROFILE:-1}
+cslc --arch=${ARCH:-wse3} ./<span class="k">layout</span>.csl --fabric-dims=$((W+7)),$((H+2)) --fabric-offsets=4,1 \
+  --params=width:$W,height:$H,MAX_ZDIM:$Z,MAX_ITE:$ITERS,BLOCK_SIZE:${BLOCK:-2},PROFILE:$PROFILE \
+  -o out --memcpy --channels 1
+cs_python run.py --name out --zdim $Z --max-ite $ITERS --eps $EPS --host-ite ${HOST_ITERS:-3}</code></pre>
+<div class="filename">course/programs/07-cg/expected_output.txt</div>
+<pre class="output"><code>5 x 5 PEs x 5 cells = 125 unknowns; stop at |r| &lt;= 1e-05 |b| or 30 iterations
+host-driven loop  : 3 iterations, 5798 cycles/iteration on PE (2,2)  [axpy 323, stencil SpMV 1866, local dot 165, allreduce 1895, control 1557]
+device-driven loop: 15 iterations, 4574 cycles/iteration on PE (2,2)  [axpy 352, stencil SpMV 1866, local dot 165, allreduce 1898, control 295]
+  all 25 PEs: 4574-4574 cycles/iteration, of which allreduce 1898-2126 (PE (2,2) 1898)
+|r_k|/|b|, k = 0..15 (device):
+[1.00e+00 9.71e-01 6.08e-01 4.25e-01 1.91e-01 6.81e-02 2.44e-02 9.91e-03 5.82e-03 3.29e-03 1.59e-03
+ 5.05e-04 1.28e-04 4.02e-05 1.87e-05 5.74e-06]
+true residual |b - A x|/|b| = 5.71e-06; max |x_wse - x_numpy| = 2.4e-07
+SUCCESS!
+[145166 simulated cycles, WSE-3]</code></pre>
+<p>Both loops take the same iterations as numpy, and the device result agrees with numpy to 2.4e-7 (the solution is of order 0.1). The default run converges to 1e-5 in 15 iterations. WSE-2 gives the same 15 iterations at 4,186 cycles per iteration <span class="tag measured">Measured</span>.</p>
+
+<h2 id="profile">Where an iteration's cycles go</h2>
+<p>With <code>PROFILE=1</code> every phase calls <code>mark()</code>, which reads the timestamp counter, adds the time since the last mark to the running bucket and opens the next one. All readings are on one PE's own counter, so they are valid (Chapter 12 explains why readings from different PEs are not comparable). The profile starts after the initial residual, so it covers CG iterations only. Time spent waiting inside a library, for neighbours or for the global sum, counts towards that library's bucket.</p>
+<div class="stat-row">
+<div class="stat"><div class="v">4,574</div><div class="l">cycles per iteration, device loop, 5 × 5 × 5 <span class="tag measured">Measured</span></div></div>
+<div class="stat"><div class="v">41%</div><div class="l">of it in the two allreduces <span class="tag measured">Measured</span></div></div>
+<div class="stat"><div class="v">41%</div><div class="l">in the stencil SpMV <span class="tag measured">Measured</span></div></div>
+<div class="stat"><div class="v">+1,224</div><div class="l">cycles per iteration when the host drives <span class="tag measured">Measured</span></div></div>
+</div>
+
+<div class="widget" id="tl">
+<h4>One CG iteration on the centre PE</h4>
+<p class="hint">Measured split of one iteration (TSC on PE (2,2), 5 × 5 PEs, 5 cells each, averaged over 15 iterations in the device loop and 3 in the host loop). Hover a segment for its cycles. The last option scales the host loop to a real system using the SDK's 200 µs per host command (Chapter 7); that bar is <span class="tag derived">Derived</span>, not simulated.</p>
+<div class="controls">
+<label>chip <select id="tl-arch"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>view <select id="tl-view"><option value="sim">simulated cycles</option><option value="real">real system, host loop at 200 µs per command</option></select></label>
+</div>
+<svg id="tl-svg" viewBox="0 0 720 210" width="720" role="img" aria-label="Per-iteration cycle split, host loop versus device loop"></svg>
+<div class="readout" id="tl-out"></div>
+</div>
+
+<p>Four things stand out.</p>
+<ol>
+<li><strong>The SpMV is not the arithmetic.</strong> 7 multiply-adds on 5 cells is 35 flops, yet the stencil phase takes 1,866 cycles. Almost all of it is the library's message protocol: four directions, each a send and a receive of 2-wavelet blocks, each with its own task. Lab 3 measured the same thing on a much smaller scale (one message ≈ 15 cycles, plus instruction start-up ≈ 15 cycles each).</li>
+<li><strong>The allreduce costs as much as the SpMV</strong>, for two single-float sums. As the scaling section shows, that cost grows with the grid's side while the SpMV's does not.</li>
+<li><strong>Every PE takes the same time per iteration.</strong> All 25 PEs measured exactly 4,574 cycles per iteration, but their allreduce share ranged from 1,898 to 2,126 <span class="tag measured">Measured</span>. The allreduce is a barrier: PEs that finish their own work early wait inside it.</li>
+<li><strong>Profiling is not free.</strong> With <code>PROFILE=0</code> the device loop takes 4,261 cycles per iteration on WSE-3 (3,782 on WSE-2), so the eight <code>mark()</code> calls cost about 310–400 cycles per iteration, 7–10% <span class="tag measured">Measured</span>. Use the profile to see the split, and the <code>PROFILE=0</code> number for the speed.</li>
+</ol>
+
+<h3>Host loop or device loop</h3>
+<p>In the simulator the host loop costs 1,224 extra cycles per iteration on WSE-3 and 1,147 on WSE-2, all of it in the control bucket <span class="tag measured">Measured</span>. The simulator charges only the device side of each launch: memcpy's command task decoding the RPC and the <code>unblock_cmd_stream()</code> at the end, five times per iteration (four launches and one copy of ρ). The host side costs nothing in simulated time, because the simulator has no network. With 15 host iterations instead of 3 the per-iteration figure is 5,783 instead of 5,798, and repeated 3-iteration runs gave 5,790–5,798, so it is stable to about 0.3% <span class="tag measured">Measured</span>; the device-loop figure repeated exactly.</p>
+<p>On a real system each of those five commands crosses the network. Chapter 7 uses the SDK's figure of about 200 µs of overhead per transfer <span class="tag sdk">SDK 2.10.1</span>. Five per iteration is about 1 ms, against 4,261 cycles ≈ 5 µs for the iteration itself at the SDK's 850 MHz, so a host-driven CG would spend about 99.5% of its time waiting for the host <span class="tag derived">Derived</span>. The simulator's 27% gap understates the real one by two orders of magnitude. For any iterative solver, put the loop on the device, and copy results back once at the end.</p>
+
+<h2 id="scaling">How it scales</h2>
+<p>Two knobs change the cost of an iteration: the grid of PEs (W × H) and the column on each PE (Z). They act on different phases.</p>
+<p><strong>Grid size.</strong> With Z = 5 fixed, the stencil, axpy and dot phases take the same cycles on every grid from 3 × 3 to 16 × 16: each PE does the same local work and talks to the same four neighbours. Only the allreduce grows <span class="tag measured">Measured</span>, WSE-3, 6 iterations each:</p>
+<div class="table-wrap"><table id="grid-tab">
+<tr><th>PEs (W × H)</th><th>cycles / iteration</th><th>allreduce (2 per iteration)</th><th>fit 958 + 100·W + 88·H</th></tr>
+</table></div>
+<p>A plane fits all seven grids to within 30 cycles: <strong>allreduce ≈ 958 + 100·W + 88·H cycles</strong> for the two calls in an iteration on WSE-3 <span class="tag derived">Derived</span>. On WSE-2 the allreduce grows from 1,561 cycles at 5 × 5 to 2,705 at 12 × 12, about 82 cycles per PE of W + H against 94 on WSE-3 <span class="tag measured">Measured</span>. The extra cost per PE is about 50 cycles per call per PE along a row and 44 along a column. A router hop costs 2 cycles on WSE-3 (Chapter 4), so distance is not what costs. In the row and column reduce stages the values reach the last PE one at a time, each with its own send, switch-advance wavelet and fabric add, so the cost is per <em>value</em>, not per hop. That makes this allreduce linear in the grid's side, and serial.</p>
+<p><strong>Column length.</strong> With the grid fixed at 5 × 5, the allreduce stays at 1,898 cycles whatever Z is, and the stencil grows <span class="tag measured">Measured</span>, WSE-3:</p>
+<div class="table-wrap"><table id="z-tab">
+<tr><th>Z (cells per PE)</th><th>BLOCK</th><th>cycles / iteration</th><th>stencil SpMV</th><th>local dot</th><th>axpy</th></tr>
+</table></div>
+<p>With 2-wavelet blocks the stencil costs about 276 cycles per extra cell, over 100 times its 7 multiply-adds per cell. Bigger blocks remove almost all of it: at Z = 100 the stencil drops from 27,782 cycles (50 blocks per direction) to 6,483 (10 blocks) and 1,957 (one block) <span class="tag measured">Measured</span>. Each block saved is worth about 500–530 cycles, one send and one receive in each of four directions, so roughly 65 cycles per message <span class="tag derived">Derived</span>. The price is memory: <code>BLOCK_SIZE</code> sizes the library's temporary communication buffers (the SDK's own comment), so they grow with it. The SDK benchmark ships with <code>BLOCK_SIZE:2</code> <span class="tag sdk">SDK 2.10.1</span>; this program keeps that default and exposes it as <code>BLOCK</code>. The local dot is a scalar <code>@map</code> loop at 10 cycles per cell, so at Z = 100 it costs more than the whole stencil with one block. At <code>BLOCK=100</code> the allreduce also rose from 1,898 to 2,292 cycles; we did not track down why.</p>
+
+<div class="widget" id="cost">
+<h4>Predict a solve</h4>
+<p class="hint">A cost model built from the measurements above (WSE-3, BLOCK = 2, device loop, profiling on). The allreduce uses the fit; the other phases use the measured value at that Z (Z = 8 and 12 come from the 8³ and 12³ solves). The iteration count is CG's guaranteed bound for reducing the error to 1e-5 of its start (Theorem 10.2.6) and the measured count where we ran it. Past 16 PEs a side the model is an extrapolation, so treat it as a trend, not a prediction.</p>
+<div class="controls">
+<label>W <input type="range" id="c-w" min="2" max="1000" value="5"><span id="c-wv" class="mono"></span></label>
+<label>H <input type="range" id="c-h" min="2" max="1000" value="5"><span id="c-hv" class="mono"></span></label>
+<label>Z <select id="c-z"><option>5</option><option>8</option><option>12</option><option>20</option><option>50</option><option>100</option></select></label>
+<label>preset <select id="c-p"><option value="">choose…</option><option value="5,5,5">5 × 5 × 5 (default)</option><option value="8,8,8">8 × 8 × 8</option><option value="12,12,12">12 × 12 × 12</option><option value="16,16,5">16 × 16 PEs, Z = 5</option><option value="950,950,100">≈ whole wafer, Z = 100</option></select></label>
+</div>
+<svg id="cost-svg" viewBox="0 0 720 150" width="720" role="img" aria-label="Predicted per-iteration cost split"></svg>
+<div class="readout" id="cost-out"></div>
+</div>
+
+<p><strong>Iterations grow too.</strong> The condition number of the N × N × N Laplacian grows like N², so CG's iteration count grows like N. Measured iterations to 1e-5 on WSE-3: 15 iterations for 5³, 24 for 8³ and 34 for 12³ <span class="tag measured">Measured</span>, against the bound's 23, 35 and 51. CG usually beats its bound because the right-hand side does not excite the worst eigenvectors equally.</p>
+<figure>
+<svg id="conv-svg" viewBox="0 0 720 300" width="720" role="img" aria-label="Measured CG convergence on three grid sizes"></svg>
+<figcaption><b>Convergence.</b> Measured |r<sub>k</sub>|/|b| on the device (log scale) for an N × N × N box with N × N PEs and N cells each, with CG's bound 2·((√κ − 1)/(√κ + 1))<sup>k</sup> dashed in the same colour. The bound bounds the error in the A-norm, not the residual, so it is a guide to the trend, not a hard ceiling on these curves.</figcaption>
+</figure>
+
+<div class="callout key">
+<strong>The scaling law of this solver</strong>
+<p>Grow the box in x and y with a fixed column, and the time per solve grows like the square of the side: the number of iterations grows like N, and each iteration's allreduce cost grows like N. At 16 × 16 PEs the two allreduces already take 60% of an iteration (3,966 of 6,650 cycles) <span class="tag measured">Measured</span>. Extrapolated to a whole wafer (about 900,000 PEs, say 950 × 950) the fit gives roughly 180,000 cycles of allreduce per iteration against about 2,700 of other work <span class="tag derived">Derived</span>. That is an extrapolation sixty times beyond the largest grid we simulated, but the direction is clear. Algorithms for big wafers therefore attack the global sums: pipelined or tree-shaped reductions whose cost grows with hops rather than values, putting more cells on each PE so the local work hides the sum, or CG variants that merge the two dot products into one reduction per iteration.</p>
+</div>
+
+<h2 id="exercises">Exercises</h2>
+<ol>
+<li><p><strong>Read the profile.</strong> Run <code>W=12 H=12</code> and <code>W=16 H=4</code> (both with <code>ITERS=6 EPS=1e-12 HOST_ITERS=1</code> so the run lasts exactly 6 iterations). Before running, predict the allreduce cycles from the fit.</p>
+<details><summary>Expected result</summary><p>3,214 and 2,910 cycles per iteration in the allreduce; the fit gives 3,214 and 2,910.</p></details></li>
+<li><p><strong>Block size.</strong> At <code>Z=100</code>, compare <code>BLOCK=2</code>, <code>10</code> and <code>100</code>. Explain the stencil's change from what one message costs.</p>
+<details><summary>Hints</summary><p>The stencil sends Z/BLOCK messages in each of four directions and receives as many. Each message has a fixed cost (start an operation, run a completion task) on top of its wavelets.</p></details></li>
+<li><p><strong>One reduction per iteration.</strong> Chronopoulos and Gear's CG variant computes ⟨r, r⟩ and ⟨w, r⟩ together, so an iteration needs one allreduce of two values. The library's <code>allreduce(n, …)</code> takes a length. Measure what a 2-value allreduce costs compared to two 1-value calls, before you rewrite the solver.</p>
+<details><summary>Hints</summary><p>Call <code>reduce_mod.allreduce(2, &amp;buf, …)</code> on a two-element array from a test RPC and time it with <code>now()</code>. If it costs much less than two calls, the variant pays off on big grids.</p></details></li>
+<li><p><strong>Move a module.</strong> Give the allreduce color 9 and tasks 8–11 instead of 8 and 17–20, and the state machine task 13. Which edits does it take, and in which files? Could you use tasks 21–24 instead?</p>
+<details><summary>Hints</summary><p>Only <code>layout.csl</code> (and the ledger comment). The libraries never pick their own IDs. Chapter 5 explains why user tasks stay in 8–20: the SDK marks 21–23 as reserved for memcpy on WSE-3.</p></details></li>
+</ol>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Which CG steps need data from more than one PE, and what kind?</summary><p>The stencil (w = A p) needs the four neighbouring PEs' columns. The two dot products need every PE: a local sum, then an allreduce. The axpys are local.</p></details>
+<details><summary>Why does no library in this program choose its own colors or task IDs?</summary><p>Several modules share one PE. Only the top level sees all of them, so it hands each its slots as parameters and keeps the ledger. A clash on a color, task ID or initialized queue is then a compile error at a single place.</p></details>
+<details><summary>How does each PE know when to stop the device loop without asking the host?</summary><p>The allreduce leaves the same ρ = ⟨r, r⟩ on every PE, so every PE evaluates the same test with the same values and stops at the same iteration.</p></details>
+<details><summary>All 25 PEs take exactly 4,574 cycles per iteration, but their allreduce times differ by 228 cycles. Why?</summary><p>The allreduce is a barrier: no PE gets the sum back until all have contributed. A PE that reaches it early waits inside it, so the waiting shows up in its allreduce bucket and the iteration time comes out the same everywhere.</p></details>
+<details><summary>The simulator says the host loop costs 27% more per iteration. Why is that misleading for a real system?</summary><p>The simulator only charges the device's part of each launch. On a real system each of the five host commands per iteration has about 200 µs of overhead, so the host loop is roughly 200 times slower, not 27%.</p></details>
+<details><summary>You double both W and H, keeping Z. What happens to the time per iteration, and to the time per solve?</summary><p>Per iteration only the allreduce grows, by about 100·W + 88·H more cycles. The condition number grows too, so the solve needs more iterations as well. Together the allreduce part of a solve grows roughly like the square of the side.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const T = (tag, attrs, parent, text) => { const e = el(tag, attrs, parent); if (text !== undefined) e.textContent = text; return e; };
+  const fmt = v => Math.round(v).toLocaleString("en-US");
+  const PH = ["axpy", "stencil SpMV", "local dot", "allreduce", "control"];
+  const PHC = ["blu", "grn", "pur", "acc", "amb"];
+  const PHF = ["--blue", "--green", "--purple", "--accent", "--amber"];
+
+  // ---------- pencil decomposition ----------
+  (function () {
+    const s = $("#map-svg");
+    const defs = el("defs", {}, s);
+    const mk = el("marker", { id: "mh", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0 0 L10 5 L0 10 z", fill: cssVar("--accent") }, mk);
+    T("text", { x: 120, y: 20, "text-anchor": "middle", "font-weight": 700, "font-size": 14 }, s, "5 × 5 PEs, top view");
+    for (let py = 0; py < 5; py++) for (let px = 0; px < 5; px++) {
+      const c = px === 2 && py === 2, nb = (Math.abs(px - 2) + Math.abs(py - 2)) === 1;
+      el("rect", { x: 30 + px * 38, y: 34 + py * 38, width: 32, height: 32, rx: 4, class: c ? "acc" : nb ? "blu" : "box", "stroke-width": 1.3 }, s);
+    }
+    T("text", { x: 120, y: 240, "text-anchor": "middle", "font-size": 12, class: "muted" }, s, "x → (px)      y ↓ (py)");
+    // stencil
+    const cx = 380, cy = 125;
+    T("text", { x: cx, y: 20, "text-anchor": "middle", "font-weight": 700, "font-size": 14 }, s, "7-point stencil at one cell");
+    const pts = [[-70, 0, "west", "fabric"], [70, 0, "east", "fabric"], [0, -62, "north", "fabric"], [0, 62, "south", "fabric"]];
+    for (const [dx, dy, lab] of pts) {
+      el("line", { x1: cx, y1: cy, x2: cx + dx * 0.8, y2: cy + dy * 0.8, class: "s-acc", "stroke-width": 2, "marker-end": "url(#mh)" }, s);
+      el("rect", { x: cx + dx - 14, y: cy + dy - 14, width: 28, height: 28, rx: 4, class: "blu" }, s);
+      T("text", { x: cx + dx, y: cy + dy + (dy > 0 ? 32 : dy < 0 ? -20 : 32), "text-anchor": "middle", "font-size": 12 }, s, lab);
+    }
+    el("rect", { x: cx - 14, y: cy - 14, width: 28, height: 28, rx: 4, class: "acc" }, s);
+    T("text", { x: cx + 26, y: cy - 22, "font-size": 12, class: "muted" }, s, "z±1: same PE");
+    T("text", { x: cx, y: 240, "text-anchor": "middle", "font-size": 12, class: "muted" }, s, "blue: one hop away on the fabric");
+    // memory column
+    const mx = 560;
+    T("text", { x: mx + 90, y: 20, "text-anchor": "middle", "font-weight": 700, "font-size": 14 }, s, "One PE's memory");
+    ["b", "x", "p", "w", "r"].forEach((v, i) => {
+      for (let z = 0; z < 5; z++) el("rect", { x: mx + 20 + i * 34, y: 40 + z * 30, width: 28, height: 26, rx: 3, class: v === "p" || v === "w" ? "grn" : "box" }, s);
+      T("text", { x: mx + 34 + i * 34, y: 205, "text-anchor": "middle", "font-size": 13, class: "mono" }, s, v);
+    });
+    T("text", { x: mx + 10, y: 120, "text-anchor": "end", "font-size": 12, class: "muted" }, s, "Z cells");
+    T("text", { x: mx + 105, y: 230, "text-anchor": "middle", "font-size": 12, class: "muted" }, s, "+ 7 coefficients, ρ, η");
+  })();
+
+  // ---------- module graph ----------
+  (function () {
+    const s = $("#mod-svg");
+    const defs = el("defs", {}, s);
+    for (const [id, c] of [["ma", "--text"], ["mb", "--muted"]]) {
+      const m = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" }, defs);
+      el("path", { d: "M0 0 L10 5 L0 10 z", fill: cssVar(c) }, m);
+    }
+    const box = (x, y, w, h, cls, l1, l2) => {
+      el("rect", { x, y, width: w, height: h, rx: 6, class: cls, "stroke-width": 1.4 }, s);
+      T("text", { x: x + w / 2, y: y + (l2 ? 20 : 26), "text-anchor": "middle", "font-size": 13, "font-weight": 700, class: "mono" }, s, l1);
+      if (l2) T("text", { x: x + w / 2, y: y + 37, "text-anchor": "middle", "font-size": 11.5, class: "muted" }, s, l2);
+    };
+    const arr = (x1, y1, x2, y2, dash) => el("line", { x1, y1, x2, y2, stroke: cssVar(dash ? "--muted" : "--text"), "stroke-width": 1.4, "stroke-dasharray": dash ? "5 4" : "", "marker-end": `url(#${dash ? "mb" : "ma"})` }, s);
+    T("text", { x: 10, y: 22, "font-size": 12, class: "muted", "font-weight": 700 }, s, "COMPILE TIME, ONCE");
+    T("text", { x: 10, y: 152, "font-size": 12, class: "muted", "font-weight": 700 }, s, "ON EVERY PE");
+    box(300, 30, 160, 44, "acc", "layout.csl", "colors 0–8, tasks 12–20");
+    box(40, 92, 200, 44, "grn", "stencil layout.csl", "color parity per PE");
+    box(520, 92, 200, 44, "pur", "allreduce layout.csl", "first/last in row, column");
+    box(300, 160, 160, 44, "acc", "pe_program.csl", "queues, UTs, DSRs");
+    box(20, 214, 180, 44, "blu", "<memcpy/memcpy>", "queues 0–1");
+    box(220, 214, 160, 44, "grn", "stencil pe.csl", "spmv()");
+    box(400, 214, 160, 44, "pur", "allreduce pe.csl", "allreduce()");
+    box(580, 214, 160, 44, "box", "<time>", "TSC");
+    arr(330, 74, 160, 92); arr(430, 74, 600, 92);
+    arr(160, 136, 320, 160, true); arr(600, 136, 440, 160, true);
+    arr(380, 74, 380, 160, true);
+    arr(320, 204, 110, 214); arr(360, 204, 300, 214); arr(400, 204, 470, 214); arr(440, 204, 650, 214);
+    // callbacks
+    el("path", { d: "M300 258 V 280 H 480 V 258", fill: "none", stroke: cssVar("--accent"), "stroke-width": 1.4, "stroke-dasharray": "5 4" }, s);
+    T("text", { x: 390, y: 298, "text-anchor": "middle", "font-size": 11.5, class: "f-acc" }, s, "both finish by calling f_callback = phase_done() in pe_program.csl");
+    T("text", { x: 388, y: 124, "font-size": 11.5, class: "muted" }, s, "params per (px, py)");
+  })();
+
+  // ---------- resource budget ----------
+  (function () {
+    const s = $("#bud-svg"), out = $("#bud-out"), selA = $("#bud-arch"), selX = $("#bud-x");
+    const OWN = { stencil: "grn", allreduce: "pur", memcpy: "blu", program: "acc", both: "red" };
+    const NAMES = { stencil: "stencil", allreduce: "allreduce", memcpy: "memcpy", program: "this program" };
+    const lg = $("#bud-legend");
+    let hl = null;
+    for (const k of Object.keys(NAMES)) {
+      const b = document.createElement("button"); b.className = "btn"; b.textContent = NAMES[k];
+      const cv = { stencil: "--green", allreduce: "--purple", memcpy: "--blue", program: "--accent" }[k];
+      b.style.setProperty("background", `var(${cv}-soft)`, "important"); b.style.setProperty("color", `var(${cv})`, "important"); b.style.border = `1.5px solid var(${cv})`;
+      b.addEventListener("mouseenter", () => { hl = k; draw(); }); b.addEventListener("mouseleave", () => { hl = null; draw(); });
+      b.addEventListener("click", () => { hl = hl === k ? null : k; draw(); });
+      lg.appendChild(b);
+    }
+    const X = {
+      none: { arch: null, text: "The shipped assignment: no slot is claimed twice, except that on WSE-2 the stencil and the allreduce never send at the same time." },
+      queue: { arch: "wse3", row: "in", id: 4, a: "allreduce", text: "allreduce queue 2 → 4  (WSE-3)\ncompile error, in the stencil library (pe.csl:753):\n  initialization for this queue has already been set" },
+      color: { arch: "wse3", row: "color", id: 7, a: "allreduce", text: "allreduce color 8 → 7  (WSE-3)\ncompile error, in the stencil library (pe.csl:741):\n  config for this color has already been set" },
+      task: { arch: "wse3", row: "task", id: 14, a: "program", text: "state-machine task 12 → 14  (WSE-3)\ncompile error, in the stencil library (pe.csl:629):\n  task ID '14' bound to more than one task" },
+      ut: { arch: "wse3", row: "ut", id: 2, a: "stencil", ok: true, text: "stencil send microthread 3 → 2  (WSE-3)\ncompiles and runs correctly: 4,595 cycles per iteration (shipped: 4,574).\nThe allreduce takes no microthread parameter; its asynchronous sends use\nwhatever the compiler assigns, so this row shows only the stencil’s choice." },
+      c22: { arch: "wse3", row: "color", id: 22, a: "allreduce", text: "allreduce color 8 → 22  (WSE-3)\ncompile error, in the allreduce library (pe.csl:1097):\n  config for this color has already been set\nColor 22 carries memcpy's command stream (Chapter 7)." },
+      queue2: { arch: "wse2", row: "out", id: 3, a: "allreduce", ok: true, text: "allreduce queue 2 → 3  (WSE-2)\ncompiles and runs correctly: 4,180 cycles per iteration (shipped: 4,186).\nWSE-2 output queues are not tied to a color, so the compiler does not\nobject; it works because the two libraries never send at the same time." },
+    };
+    function slots(arch) {
+      const S = { color: {}, task: {}, in: {}, out: {}, ut: {} };
+      for (let c = 0; c < 8; c++) S.color[c] = ["stencil"];
+      S.color[8] = ["allreduce"]; S.color[22] = ["memcpy"];
+      for (const t of [14, 15, 16]) S.task[t] = ["stencil"];
+      for (const t of [17, 18, 19, 20]) S.task[t] = ["allreduce"];
+      S.task[12] = ["program"];
+      for (const q of [0, 1]) { S.in[q] = ["memcpy"]; S.out[q] = ["memcpy"]; }
+      S.in[2] = ["allreduce"]; S.out[2] = ["allreduce"];
+      for (const q of [4, 5, 6, 7]) S.in[q] = ["stencil"];
+      if (arch === "wse3") { for (const q of [4, 5, 6, 7]) S.out[q] = ["stencil"]; S.ut[3] = ["stencil"]; }
+      else S.out[3] = ["stencil"];
+      return S;
+    }
+    const ROWS = [["color", "colors", 24], ["task", "local task IDs", 24], ["in", "input queues", 8], ["out", "output queues", 8], ["ut", "microthreads", 8]];
+    function draw() {
+      const x = X[selX.value];
+      if (x.arch && selA.value !== x.arch) selA.value = x.arch;
+      const arch = selA.value, S = slots(arch);
+      if (x.arch) {
+        // move the claim
+        if (selX.value === "queue") { S.in[2] = []; S.out[2] = []; }
+        if (selX.value === "color" || selX.value === "c22") S.color[8] = [];
+        if (selX.value === "task") S.task[12] = [];
+        if (selX.value === "ut") S.ut[3] = [];
+        if (selX.value === "queue2") { S.in[2] = []; S.out[2] = []; S.in[3] = ["allreduce"]; }
+        S[x.row][x.id] = (S[x.row][x.id] || []).concat([x.a]);
+      }
+      s.innerHTML = "";
+      ROWS.forEach(([key, label, n], r) => {
+        const y = 22 + r * 56;
+        T("text", { x: 0, y: y + 14, "font-size": 13, "font-weight": 700 }, s, label);
+        if (key === "ut" && arch === "wse2") { T("text", { x: 130, y: y + 36, "font-size": 12, class: "muted" }, s, "WSE-2: no microthread parameters (the WSE-2 stencil ignores output_ut_id)"); }
+        for (let i = 0; i < n; i++) {
+          if (key === "ut" && arch === "wse2") break;
+          const cx = 130 + i * 23, owners = S[key][i] || [];
+          const cls = owners.length > 1 ? "red" : owners.length ? OWN[owners[0]] : "box";
+          const fade = hl && !owners.includes(hl);
+          const r_ = el("rect", { x: cx, y: y + 20, width: 20, height: 22, rx: 3, class: cls + (fade ? " fade" : "") + (owners.length > 1 ? " hl" : ""), "stroke-width": owners.length > 1 ? 2.5 : 1 }, s);
+          const t = el("title", {}, r_); t.textContent = `${label} ${i}: ` + (owners.length ? owners.map(o => NAMES[o]).join(" + ") : "unused here");
+          if (i % 4 === 0 || owners.length) T("text", { x: cx + 10, y: y + 54, "text-anchor": "middle", "font-size": 10, class: "muted mono" }, s, String(i));
+        }
+      });
+      out.textContent = x.text;
+      out.style.color = x.arch ? cssVar(x.ok ? "--green" : "--red") : "";
+    }
+    selA.addEventListener("change", () => { if (X[selX.value].arch && X[selX.value].arch !== selA.value) selX.value = "none"; draw(); });
+    selX.addEventListener("change", draw);
+    draw();
+  })();
+
+  // ---------- one iteration ----------
+  (function () {
+    const D = {
+      wse3: { host: [323, 1866, 165, 1895, 1557], dev: [352, 1866, 165, 1898, 295], tot: [5798, 4574], noprof: 4261, noprofHost: 5488 },
+      wse2: { host: [385, 1759, 163, 1592, 1439], dev: [422, 1756, 163, 1561, 285], tot: [5333, 4186], noprof: 3782, noprofHost: 4984 },
+    };
+    const s = $("#tl-svg"), out = $("#tl-out");
+    function draw() {
+      const d = D[$("#tl-arch").value], real = $("#tl-view").value === "real";
+      s.innerHTML = "";
+      const X0 = 150, WID = 500;
+      if (!real) {
+        const sum = a => a.reduce((p, c) => p + c, 0), mx = Math.max(sum(d.host), sum(d.dev));
+        [["host-driven", d.host], ["device-driven", d.dev]].forEach(([lab, a], r) => {
+          const y = 30 + r * 60;
+          T("text", { x: X0 - 10, y: y + 24, "text-anchor": "end", "font-size": 13, "font-weight": 700 }, s, lab);
+          let x = X0;
+          a.forEach((v, i) => {
+            const w = v / mx * WID;
+            const g = el("rect", { x, y, width: Math.max(w, 1), height: 36, class: PHC[i], "stroke-width": 1 }, s);
+            const t = el("title", {}, g); t.textContent = `${PH[i]}: ${fmt(v)} cycles`;
+            if (w > 46) T("text", { x: x + w / 2, y: y + 22, "text-anchor": "middle", "font-size": 11.5, class: "mono" }, s, fmt(v));
+            x += w;
+          });
+          T("text", { x: x + 6, y: y + 22, "font-size": 12, class: "mono muted" }, s, fmt(d.tot[r]));
+        });
+        PH.forEach((p, i) => {
+          const x = X0 + i * 108;
+          el("rect", { x, y: 160, width: 14, height: 14, rx: 2, class: PHC[i] }, s);
+          T("text", { x: x + 20, y: 172, "font-size": 12 }, s, p);
+        });
+        const extra = d.tot[0] - d.tot[1];
+        out.textContent = `device loop ${fmt(d.tot[1])} cycles/iteration, host loop ${fmt(d.tot[0])} (+${fmt(extra)}, +${(extra / d.tot[1] * 100).toFixed(0)}%)\n` +
+          `allreduce ${((d.dev[3]) / sum(d.dev) * 100).toFixed(0)}% and stencil ${(d.dev[1] / sum(d.dev) * 100).toFixed(0)}% of the device loop.  Without profiling: ${fmt(d.noprof)} / ${fmt(d.noprofHost)}.`;
+      } else {
+        const dev = d.noprof / 850, host = d.noprof / 850 + 5 * 200;  // µs, SDK's 850 MHz and 200 µs per command
+        [["host-driven", host, "acc"], ["device-driven", dev, "grn"]].forEach(([lab, v, cls], r) => {
+          const y = 30 + r * 60, w = v / host * WID;
+          T("text", { x: X0 - 10, y: y + 24, "text-anchor": "end", "font-size": 13, "font-weight": 700 }, s, lab);
+          el("rect", { x: X0, y, width: Math.max(w, 2), height: 36, class: cls }, s);
+          T("text", { x: X0 + Math.max(w, 2) + 6, y: y + 22, "font-size": 12, class: "mono" }, s, v >= 100 ? `${fmt(v)} µs` : `${v.toFixed(1)} µs`);
+        });
+        T("text", { x: X0, y: 172, "font-size": 12, class: "muted" }, s, "Derived: profiling off, 850 MHz, 5 host commands × 200 µs per iteration.");
+        out.textContent = `device loop ≈ ${dev.toFixed(1)} µs per iteration; host loop ≈ ${fmt(host)} µs (${(host / dev).toFixed(0)}× slower).\nThe simulator cannot show this: it has no network, so host commands cost no simulated time.`;
+      }
+    }
+    $("#tl-arch").addEventListener("change", draw); $("#tl-view").addEventListener("change", draw);
+    draw();
+  })();
+
+  // ---------- tables ----------
+  const GRID = [[3, 3, 4235, 1551], [5, 5, 4574, 1898], [8, 8, 5146, 2462], [12, 12, 5898, 3214], [16, 16, 6650, 3966], [16, 4, 5594, 2910], [4, 16, 5450, 2766]];
+  const fitAR = (w, h) => 958 + 100 * w + 88 * h;
+  for (const [w, h, it, ar] of GRID) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${w} × ${h}</td><td>${fmt(it)}</td><td>${fmt(ar)}</td><td>${fmt(fitAR(w, h))}</td>`;
+    $("#grid-tab").appendChild(tr);
+  }
+  const ZT = [[5, 2, 4574, 1866, 165, 352], [20, 2, 8688, 5722, 315, 441], [50, 2, 17282, 13945, 615, 512], [100, 2, 32004, 27782, 1115, 898], [100, 10, 10706, 6483, 1115, 898], [100, 100, 6573, 1957, 1115, 898]];
+  for (const r of ZT) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = r.map((v, i) => `<td>${i < 2 ? v : fmt(v)}</td>`).join("");
+    $("#z-tab").appendChild(tr);
+  }
+
+  // ---------- cost model ----------
+  (function () {
+    const ZM = { 5: [341, 1866, 165], 8: [387, 2413, 195], 12: [412, 3516, 235], 20: [441, 5722, 315], 50: [512, 13945, 615], 100: [898, 27782, 1115] };
+    const MEAS = { "5,5,5": 15, "8,8,8": 24, "12,12,12": 34 };
+    const sw = $("#c-w"), sh = $("#c-h"), sz = $("#c-z"), s = $("#cost-svg"), out = $("#cost-out");
+    const toV = v => Math.round(2 * Math.pow(500, v / 1000)), fromV = n => Math.round(1000 * Math.log(n / 2) / Math.log(500));
+    sw.max = sh.max = 1000; sw.value = sh.value = fromV(5);
+    function bound(w, h, z) {
+      const c = n => Math.cos(Math.PI / (n + 1));
+      const lmin = 6 - 2 * (c(w) + c(h) + c(z)), lmax = 6 + 2 * (c(w) + c(h) + c(z));
+      const q = (Math.sqrt(lmax / lmin) - 1) / (Math.sqrt(lmax / lmin) + 1);
+      return Math.ceil(Math.log(1e-5 / 2) / Math.log(q));
+    }
+    function draw() {
+      const w = toV(+sw.value), h = toV(+sh.value), z = +sz.value;
+      $("#c-wv").textContent = w; $("#c-hv").textContent = h;
+      const [ax, sp, dt] = ZM[z], ar = fitAR(w, h), parts = [ax, sp, dt, ar, 316], tot = parts.reduce((a, b) => a + b, 0);
+      s.innerHTML = "";
+      let x = 10;
+      parts.forEach((v, i) => {
+        const wd = v / tot * 700;
+        const g = el("rect", { x, y: 20, width: Math.max(wd, 0.5), height: 40, class: PHC[i] }, s);
+        el("title", {}, g).textContent = `${PH[i]}: ${fmt(v)} cycles`;
+        if (wd > 60) T("text", { x: x + wd / 2, y: 45, "text-anchor": "middle", "font-size": 11.5, class: "mono" }, s, `${PH[i]} ${(v / tot * 100).toFixed(0)}%`);
+        x += wd;
+      });
+      PH.forEach((p, i) => { el("rect", { x: 10 + i * 120, y: 90, width: 14, height: 14, rx: 2, class: PHC[i] }, s); T("text", { x: 30 + i * 120, y: 102, "font-size": 12 }, s, p); });
+      const it = bound(w, h, z), m = MEAS[`${w},${h},${z}`];
+      const extra = (w > 16 || h > 16) ? "   (extrapolated: beyond the measured 16 × 16)" : "";
+      out.textContent = `${w} × ${h} PEs × ${z} cells = ${fmt(w * h * z)} unknowns${extra}\n` +
+        `per iteration ≈ ${fmt(tot)} cycles, of which allreduce ${fmt(ar)} (${(ar / tot * 100).toFixed(0)}%)\n` +
+        `iterations to 1e-5: bound ${it}` + (m ? `, measured ${m}` : "") +
+        `\nsolve ≈ ${fmt((m || it) * tot)} cycles ≈ ${((m || it) * tot / 850e3).toPrecision(3)} ms at 850 MHz` + (m ? " (measured iterations)" : " (bound iterations)");
+    }
+    for (const e of [sw, sh, sz]) e.addEventListener("input", () => { $("#c-p").value = ""; draw(); });
+    $("#c-p").addEventListener("change", e => {
+      if (!e.target.value) return;
+      const [w, h, z] = e.target.value.split(",").map(Number);
+      sw.value = fromV(w); sh.value = fromV(h); sz.value = String(z); draw();
+    });
+    draw();
+  })();
+
+  // ---------- convergence ----------
+  (function () {
+    const C = [{"n": 5, "r": [1.0, 0.971, 0.608, 0.425, 0.191, 0.0681, 0.0244, 0.00991, 0.00582, 0.00329, 0.00159, 0.000505, 0.000128, 4.02e-05, 1.87e-05, 5.74e-06]}, {"n": 8, "r": [1.0, 1.31, 1.1, 0.798, 0.589, 0.419, 0.25, 0.127, 0.0583, 0.0256, 0.0121, 0.00736, 0.00491, 0.00322, 0.00232, 0.00146, 0.000749, 0.00045, 0.000281, 0.000153, 8.2e-05, 5.15e-05, 2.81e-05, 1.38e-05, 5.61e-06]}, {"n": 12, "r": [1.0, 1.46, 1.53, 1.19, 0.984, 0.825, 0.648, 0.498, 0.378, 0.262, 0.162, 0.0915, 0.0498, 0.0277, 0.0172, 0.0111, 0.00691, 0.00454, 0.00365, 0.00322, 0.00276, 0.00211, 0.00128, 0.000661, 0.000397, 0.000308, 0.000254, 0.000174, 9.55e-05, 6.2e-05, 4.87e-05, 3.37e-05, 2.14e-05, 1.41e-05, 8.77e-06]}];
+    const s = $("#conv-svg");
+    const X0 = 60, Y0 = 20, W = 620, H = 240, KMAX = Math.max(...C.map(c => c.r.length - 1)) + 2;
+    const xs = k => X0 + k / KMAX * W, ys = v => Y0 + (-Math.log10(v)) / 7 * H;
+    for (let e = 0; e <= 7; e++) {
+      el("line", { x1: X0, x2: X0 + W, y1: ys(Math.pow(10, -e)), y2: ys(Math.pow(10, -e)), class: "line" }, s);
+      T("text", { x: X0 - 8, y: ys(Math.pow(10, -e)) + 4, "text-anchor": "end", "font-size": 11, class: "muted mono" }, s, e ? `1e-${e}` : "1");
+    }
+    for (let k = 0; k <= KMAX; k += 5) T("text", { x: xs(k), y: Y0 + H + 16, "text-anchor": "middle", "font-size": 11, class: "muted mono" }, s, String(k));
+    T("text", { x: X0 + W / 2, y: Y0 + H + 34, "text-anchor": "middle", "font-size": 12, class: "muted" }, s, "iteration k");
+    const col = ["--blue", "--green", "--accent"];
+    C.forEach((c, i) => {
+      const n = c.n, cc = Math.cos(Math.PI / (n + 1)), kap = (6 + 6 * cc) / (6 - 6 * cc), q = (Math.sqrt(kap) - 1) / (Math.sqrt(kap) + 1);
+      let d = "";
+      for (let k = 0; k <= KMAX; k++) { const v = 2 * Math.pow(q, k); if (v < 1e-7) break; d += (k ? "L" : "M") + xs(k) + " " + ys(Math.min(v, 1)); }
+      el("path", { d, fill: "none", stroke: cssVar(col[i]), "stroke-width": 1.3, "stroke-dasharray": "5 4" }, s);
+      d = c.r.map((v, k) => (k ? "L" : "M") + xs(k) + " " + ys(v)).join("");
+      el("path", { d, fill: "none", stroke: cssVar(col[i]), "stroke-width": 2.2 }, s);
+      const kl = c.r.length - 1;
+      T("text", { x: xs(kl) + 6, y: ys(c.r[kl]) + 4, "font-size": 12, "font-weight": 700, class: "halo-txt" }, s, `${n}³: ${kl} it.`).style.fill = cssVar(col[i]);
+    });
+  })();
+})();
+</script>
+</body>
+</html>

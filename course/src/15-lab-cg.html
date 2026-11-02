@@ -23,7 +23,7 @@
 <h4>After this lab you can</h4>
 <ul>
 <li>Write CG and sort its steps into local, neighbour and global work, and say which one limits a wafer-sized solve.</li>
-<li>Combine library modules on one PE: give each its colors, task IDs, queues, microthreads and DSRs, and check the budget.</li>
+<li>Combine library modules on one PE: give each its colors, task IDs, queues and DSRs, and check the budget.</li>
 <li>Explain how the SDK's allreduce reroutes one color three times per call, and why it acts as a barrier.</li>
 <li>Compare a host-driven loop with an on-device loop in simulated cycles, and estimate the gap on a real system.</li>
 <li>Measure a per-iteration cost split with the TSC and predict how it scales with the grid and the column height.</li>
@@ -73,12 +73,12 @@
 <h2 id="modules">Composing modules</h2>
 <p>Labs 1–3 wrote every line on the PE themselves, apart from memcpy. This program writes about 200 lines and imports about 2,700: the SDK's <code>benchmark-libs/stencil_3d_7pts</code> (the SpMV) and <code>benchmark-libs/allreduce</code> (the global sums), each with a layout half and a PE half. The libraries live in <code>course/programs/07-cg/lib/</code>, copied from SDK 2.10.1 with an attribution header.</p>
 <figure>
-<svg id="mod-svg" viewBox="0 0 760 270" width="760" role="img" aria-label="Module graph of the CG program"></svg>
+<svg id="mod-svg" viewBox="0 0 760 305" width="760" role="img" aria-label="Module graph of the CG program"></svg>
 <figcaption><b>The module graph.</b> <code>layout.csl</code> imports the layout half of each library, which computes per-PE parameters (which colors a PE sends and receives on, whether it is first or last in its row and column). It passes them to every PE's <code>pe_program.csl</code>, which imports the PE halves with the IDs it reserves for each. Both libraries finish by calling <code>phase_done()</code>, a function the program passes in as <code>f_callback</code>. Solid arrows are imports, dashed arrows are parameters and callbacks.</figcaption>
 </figure>
 <p>Three rules make composition work.</p>
 <ol>
-<li><strong>The top level owns every hardware ID.</strong> A library takes the colors, local task IDs, queues, microthread and DSR numbers it uses as parameters, and never picks its own. The layout comment in <code>layout.csl</code> is the ledger: stencil colors 0–7 and tasks 14–16; allreduce color 8 and tasks 17–20; the program's own state-machine task 12; queues 0–1 for memcpy, 2 for allreduce, 4–7 for the stencil.</li>
+<li><strong>The top level owns every hardware ID.</strong> A library takes the colors, local task IDs, queues and DSR numbers it uses as parameters (on WSE-3 the stencil also takes its microthread), and never picks its own. The layout comment in <code>layout.csl</code> is the ledger: stencil colors 0–7 and tasks 14–16; allreduce color 8 and tasks 17–20; the program's own state-machine task 12; queues 0–1 for memcpy, 2 for allreduce, 4–7 for the stencil.</li>
 <li><strong>Two halves, two kinds of parameter.</strong> A layout half runs at compile time for each (px, py) and returns a struct (for the stencil, the color parity of each direction, as in Lab 3's figure). The PE half takes that struct plus everything that is a property of the PE program, such as queue numbers.</li>
 <li><strong>Libraries hand control back through a callback.</strong> Neither library knows about the host. When <code>spmv()</code> or <code>allreduce()</code> finishes, it calls the function it was given. The SDK's host-driven kernel passes <code>sys_mod.unblock_cmd_stream</code>; its device-driven kernel passes a function that activates the next state. This program passes <code>phase_done()</code>, which does either. That one indirection is the whole difference between the two loops below.</li>
 </ol>
@@ -110,10 +110,10 @@
 <tr><td>allreduce color 8 → 7 (a stencil color)</td><td>WSE-3</td><td>compile error: <code>config for this color has already been set</code></td></tr>
 <tr><td>allreduce color 8 → 22 (memcpy's command stream)</td><td>WSE-3</td><td>compile error, this time in the allreduce library: <code>config for this color has already been set</code></td></tr>
 <tr><td>state task 12 → 14 (a stencil task)</td><td>WSE-3</td><td>compile error: <code>task ID '14' bound to more than one task</code></td></tr>
-<tr><td>stencil microthread 3 → 2 (the allreduce's)</td><td>WSE-3</td><td>compiles, runs, correct; 4,595 instead of 4,574 cycles per iteration</td></tr>
+<tr><td>stencil send microthread 3 → 2</td><td>WSE-3</td><td>compiles, runs, correct; 4,595 instead of 4,574 cycles per iteration</td></tr>
 <tr><td>allreduce queue 2 → 3 (the stencil's output queue)</td><td>WSE-2</td><td>compiles, runs, correct; 4,180 instead of 4,186 cycles per iteration</td></tr>
 </table></div>
-<p>Colors, task IDs and initialized queues are checked by the compiler, and a clash names the library line where the second claim happens. Two things are not checked. A microthread is only in use while an asynchronous operation runs on it. On WSE-2 an output queue is not tied to a color (the color comes from the <code>fabout_dsd</code>; only WSE-3 code calls <code>@initialize_queue</code> on an output queue, which is why the WSE-3 stencil needs four output queues and the WSE-2 stencil one). Those two shared slots work here only because the program never runs the stencil and the allreduce at the same time. A program that overlapped them would break silently, so keep the ledger even for slots the compiler does not police.</p>
+<p>Colors, task IDs and initialized queues are checked by the compiler, and a clash names the library line where the second claim happens. Microthreads are only partly in the ledger: the stencil takes its microthread as a parameter, but the allreduce takes none, so the compiler picks one for its asynchronous sends, and moving the stencil’s from 3 to 2 changed nothing we could see. The WSE-2 row is a genuinely shared slot. On WSE-2 an output queue is not tied to a color (the color comes from the <code>fabout_dsd</code>; only WSE-3 code calls <code>@initialize_queue</code> on an output queue, which is why the WSE-3 stencil needs four output queues and the WSE-2 stencil one). That shared queue works here only because the program never runs the stencil and the allreduce at the same time. A program that overlapped them would break silently, so keep the ledger even for slots the compiler does not police.</p>
 
 <div class="callout bug">
 <strong>The import path trap</strong>
@@ -182,7 +182,7 @@
 </ol>
 
 <h3>Host loop or device loop</h3>
-<p>In the simulator the host loop costs 1,224 extra cycles per iteration on WSE-3 and 1,147 on WSE-2, all of it in the control bucket <span class="tag measured">Measured</span>. The simulator charges only the device side of each launch: memcpy's command task decoding the RPC and the <code>unblock_cmd_stream()</code> at the end, five times per iteration (four launches and one copy of ρ). The host side costs nothing in simulated time, because the simulator has no network. With 15 host iterations instead of 3 the per-iteration figure is 5,783 instead of 5,798, so it is stable <span class="tag measured">Measured</span>.</p>
+<p>In the simulator the host loop costs 1,224 extra cycles per iteration on WSE-3 and 1,147 on WSE-2, all of it in the control bucket <span class="tag measured">Measured</span>. The simulator charges only the device side of each launch: memcpy's command task decoding the RPC and the <code>unblock_cmd_stream()</code> at the end, five times per iteration (four launches and one copy of ρ). The host side costs nothing in simulated time, because the simulator has no network. With 15 host iterations instead of 3 the per-iteration figure is 5,783 instead of 5,798, and repeated 3-iteration runs gave 5,790–5,798, so it is stable to about 0.3% <span class="tag measured">Measured</span>; the device-loop figure repeated exactly.</p>
 <p>On a real system each of those five commands crosses the network. Chapter 7 uses the SDK's figure of about 200 µs of overhead per transfer <span class="tag sdk">SDK 2.10.1</span>. Five per iteration is about 1 ms, against 4,261 cycles ≈ 5 µs for the iteration itself at the SDK's 850 MHz, so a host-driven CG would spend about 99.5% of its time waiting for the host <span class="tag derived">Derived</span>. The simulator's 27% gap understates the real one by two orders of magnitude. For any iterative solver, put the loop on the device, and copy results back once at the end.</p>
 
 <h2 id="scaling">How it scales</h2>
@@ -200,18 +200,18 @@
 
 <div class="widget" id="cost">
 <h4>Predict a solve</h4>
-<p class="hint">A cost model built from the measurements above (WSE-3, BLOCK = 2, device loop, profiling on). The allreduce uses the fit; the other phases use the measured value at that Z. The iteration count is CG's guaranteed bound for reducing the error to 1e-5 of its start (Theorem 10.2.6) and the measured count where we ran it. Past 16 PEs a side the model is an extrapolation, so treat it as a trend, not a prediction.</p>
+<p class="hint">A cost model built from the measurements above (WSE-3, BLOCK = 2, device loop, profiling on). The allreduce uses the fit; the other phases use the measured value at that Z (Z = 8 and 12 come from the 8³ and 12³ solves). The iteration count is CG's guaranteed bound for reducing the error to 1e-5 of its start (Theorem 10.2.6) and the measured count where we ran it. Past 16 PEs a side the model is an extrapolation, so treat it as a trend, not a prediction.</p>
 <div class="controls">
 <label>W <input type="range" id="c-w" min="2" max="1000" value="5"><span id="c-wv" class="mono"></span></label>
 <label>H <input type="range" id="c-h" min="2" max="1000" value="5"><span id="c-hv" class="mono"></span></label>
-<label>Z <select id="c-z"><option>5</option><option>20</option><option>50</option><option>100</option></select></label>
+<label>Z <select id="c-z"><option>5</option><option>8</option><option>12</option><option>20</option><option>50</option><option>100</option></select></label>
 <label>preset <select id="c-p"><option value="">choose…</option><option value="5,5,5">5 × 5 × 5 (default)</option><option value="8,8,8">8 × 8 × 8</option><option value="12,12,12">12 × 12 × 12</option><option value="16,16,5">16 × 16 PEs, Z = 5</option><option value="950,950,100">≈ whole wafer, Z = 100</option></select></label>
 </div>
 <svg id="cost-svg" viewBox="0 0 720 150" width="720" role="img" aria-label="Predicted per-iteration cost split"></svg>
 <div class="readout" id="cost-out"></div>
 </div>
 
-<p><strong>Iterations grow too.</strong> The condition number of the N × N × N Laplacian grows like N², so CG's iteration count grows like N. Measured iterations to 1e-5 on WSE-3: %%CONV%% <span class="tag measured">Measured</span>, against the bound's 23, 35 and 51. CG usually beats its bound because the right-hand side does not excite the worst eigenvectors equally.</p>
+<p><strong>Iterations grow too.</strong> The condition number of the N × N × N Laplacian grows like N², so CG's iteration count grows like N. Measured iterations to 1e-5 on WSE-3: 15 iterations for 5³, 24 for 8³ and 34 for 12³ <span class="tag measured">Measured</span>, against the bound's 23, 35 and 51. CG usually beats its bound because the right-hand side does not excite the worst eigenvectors equally.</p>
 <figure>
 <svg id="conv-svg" viewBox="0 0 720 300" width="720" role="img" aria-label="Measured CG convergence on three grid sizes"></svg>
 <figcaption><b>Convergence.</b> Measured |r<sub>k</sub>|/|b| on the device (log scale) for an N × N × N box with N × N PEs and N cells each, with CG's bound 2·((√κ − 1)/(√κ + 1))<sup>k</sup> dashed in the same colour. The bound bounds the error in the A-norm, not the residual, so it is a guide to the trend, not a hard ceiling on these curves.</figcaption>
@@ -230,8 +230,8 @@
 <details><summary>Hints</summary><p>The stencil sends Z/BLOCK messages in each of four directions and receives as many. Each message has a fixed cost (start an operation, run a completion task) on top of its wavelets.</p></details></li>
 <li><p><strong>One reduction per iteration.</strong> Chronopoulos and Gear's CG variant computes ⟨r, r⟩ and ⟨w, r⟩ together, so an iteration needs one allreduce of two values. The library's <code>allreduce(n, …)</code> takes a length. Measure what a 2-value allreduce costs compared to two 1-value calls, before you rewrite the solver.</p>
 <details><summary>Hints</summary><p>Call <code>reduce_mod.allreduce(2, &amp;buf, …)</code> on a two-element array from a test RPC and time it with <code>now()</code>. If it costs much less than two calls, the variant pays off on big grids.</p></details></li>
-<li><p><strong>Move a module.</strong> Give the allreduce color 9 and tasks 21–24 instead of 8 and 17–20, and the state machine task 11. Which edits does it take, and in which files?</p>
-<details><summary>Hints</summary><p>Only <code>layout.csl</code> (and the ledger comment). The libraries never pick their own IDs. Check the result against Chapter 5's ranges for local task IDs.</p></details></li>
+<li><p><strong>Move a module.</strong> Give the allreduce color 9 and tasks 8–11 instead of 8 and 17–20, and the state machine task 13. Which edits does it take, and in which files? Could you use tasks 21–24 instead?</p>
+<details><summary>Hints</summary><p>Only <code>layout.csl</code> (and the ledger comment). The libraries never pick their own IDs. Chapter 5 explains why user tasks stay in 8–20: the SDK marks 21–23 as reserved for memcpy on WSE-3.</p></details></li>
 </ol>
 
 <div class="quiz">
@@ -246,7 +246,290 @@
 </main>
 <script src="assets/course.js"></script>
 <script>
-%%SCRIPT%%
+(function () {
+  const T = (tag, attrs, parent, text) => { const e = el(tag, attrs, parent); if (text !== undefined) e.textContent = text; return e; };
+  const fmt = v => Math.round(v).toLocaleString("en-US");
+  const PH = ["axpy", "stencil SpMV", "local dot", "allreduce", "control"];
+  const PHC = ["blu", "grn", "pur", "acc", "amb"];
+  const PHF = ["--blue", "--green", "--purple", "--accent", "--amber"];
+
+  // ---------- pencil decomposition ----------
+  (function () {
+    const s = $("#map-svg");
+    const defs = el("defs", {}, s);
+    const mk = el("marker", { id: "mh", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0 0 L10 5 L0 10 z", fill: cssVar("--accent") }, mk);
+    T("text", { x: 120, y: 20, "text-anchor": "middle", "font-weight": 700, "font-size": 14 }, s, "5 × 5 PEs, top view");
+    for (let py = 0; py < 5; py++) for (let px = 0; px < 5; px++) {
+      const c = px === 2 && py === 2, nb = (Math.abs(px - 2) + Math.abs(py - 2)) === 1;
+      el("rect", { x: 30 + px * 38, y: 34 + py * 38, width: 32, height: 32, rx: 4, class: c ? "acc" : nb ? "blu" : "box", "stroke-width": 1.3 }, s);
+    }
+    T("text", { x: 120, y: 240, "text-anchor": "middle", "font-size": 12, class: "muted" }, s, "x → (px)      y ↓ (py)");
+    // stencil
+    const cx = 380, cy = 125;
+    T("text", { x: cx, y: 20, "text-anchor": "middle", "font-weight": 700, "font-size": 14 }, s, "7-point stencil at one cell");
+    const pts = [[-70, 0, "west", "fabric"], [70, 0, "east", "fabric"], [0, -62, "north", "fabric"], [0, 62, "south", "fabric"]];
+    for (const [dx, dy, lab] of pts) {
+      el("line", { x1: cx, y1: cy, x2: cx + dx * 0.8, y2: cy + dy * 0.8, class: "s-acc", "stroke-width": 2, "marker-end": "url(#mh)" }, s);
+      el("rect", { x: cx + dx - 14, y: cy + dy - 14, width: 28, height: 28, rx: 4, class: "blu" }, s);
+      T("text", { x: cx + dx, y: cy + dy + (dy > 0 ? 32 : dy < 0 ? -20 : 32), "text-anchor": "middle", "font-size": 12 }, s, lab);
+    }
+    el("rect", { x: cx - 14, y: cy - 14, width: 28, height: 28, rx: 4, class: "acc" }, s);
+    T("text", { x: cx + 26, y: cy - 22, "font-size": 12, class: "muted" }, s, "z±1: same PE");
+    T("text", { x: cx, y: 240, "text-anchor": "middle", "font-size": 12, class: "muted" }, s, "blue: one hop away on the fabric");
+    // memory column
+    const mx = 560;
+    T("text", { x: mx + 90, y: 20, "text-anchor": "middle", "font-weight": 700, "font-size": 14 }, s, "One PE's memory");
+    ["b", "x", "p", "w", "r"].forEach((v, i) => {
+      for (let z = 0; z < 5; z++) el("rect", { x: mx + 20 + i * 34, y: 40 + z * 30, width: 28, height: 26, rx: 3, class: v === "p" || v === "w" ? "grn" : "box" }, s);
+      T("text", { x: mx + 34 + i * 34, y: 205, "text-anchor": "middle", "font-size": 13, class: "mono" }, s, v);
+    });
+    T("text", { x: mx + 10, y: 120, "text-anchor": "end", "font-size": 12, class: "muted" }, s, "Z cells");
+    T("text", { x: mx + 105, y: 230, "text-anchor": "middle", "font-size": 12, class: "muted" }, s, "+ 7 coefficients, ρ, η");
+  })();
+
+  // ---------- module graph ----------
+  (function () {
+    const s = $("#mod-svg");
+    const defs = el("defs", {}, s);
+    for (const [id, c] of [["ma", "--text"], ["mb", "--muted"]]) {
+      const m = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" }, defs);
+      el("path", { d: "M0 0 L10 5 L0 10 z", fill: cssVar(c) }, m);
+    }
+    const box = (x, y, w, h, cls, l1, l2) => {
+      el("rect", { x, y, width: w, height: h, rx: 6, class: cls, "stroke-width": 1.4 }, s);
+      T("text", { x: x + w / 2, y: y + (l2 ? 20 : 26), "text-anchor": "middle", "font-size": 13, "font-weight": 700, class: "mono" }, s, l1);
+      if (l2) T("text", { x: x + w / 2, y: y + 37, "text-anchor": "middle", "font-size": 11.5, class: "muted" }, s, l2);
+    };
+    const arr = (x1, y1, x2, y2, dash) => el("line", { x1, y1, x2, y2, stroke: cssVar(dash ? "--muted" : "--text"), "stroke-width": 1.4, "stroke-dasharray": dash ? "5 4" : "", "marker-end": `url(#${dash ? "mb" : "ma"})` }, s);
+    T("text", { x: 10, y: 22, "font-size": 12, class: "muted", "font-weight": 700 }, s, "COMPILE TIME, ONCE");
+    T("text", { x: 10, y: 152, "font-size": 12, class: "muted", "font-weight": 700 }, s, "ON EVERY PE");
+    box(300, 30, 160, 44, "acc", "layout.csl", "colors 0–8, tasks 12–20");
+    box(40, 92, 200, 44, "grn", "stencil layout.csl", "color parity per PE");
+    box(520, 92, 200, 44, "pur", "allreduce layout.csl", "first/last in row, column");
+    box(300, 160, 160, 44, "acc", "pe_program.csl", "queues, UTs, DSRs");
+    box(20, 214, 180, 44, "blu", "<memcpy/memcpy>", "queues 0–1");
+    box(220, 214, 160, 44, "grn", "stencil pe.csl", "spmv()");
+    box(400, 214, 160, 44, "pur", "allreduce pe.csl", "allreduce()");
+    box(580, 214, 160, 44, "box", "<time>", "TSC");
+    arr(330, 74, 160, 92); arr(430, 74, 600, 92);
+    arr(160, 136, 320, 160, true); arr(600, 136, 440, 160, true);
+    arr(380, 74, 380, 160, true);
+    arr(320, 204, 110, 214); arr(360, 204, 300, 214); arr(400, 204, 470, 214); arr(440, 204, 650, 214);
+    // callbacks
+    el("path", { d: "M300 258 V 280 H 480 V 258", fill: "none", stroke: cssVar("--accent"), "stroke-width": 1.4, "stroke-dasharray": "5 4" }, s);
+    T("text", { x: 390, y: 298, "text-anchor": "middle", "font-size": 11.5, class: "f-acc" }, s, "both finish by calling f_callback = phase_done() in pe_program.csl");
+    T("text", { x: 388, y: 124, "font-size": 11.5, class: "muted" }, s, "params per (px, py)");
+  })();
+
+  // ---------- resource budget ----------
+  (function () {
+    const s = $("#bud-svg"), out = $("#bud-out"), selA = $("#bud-arch"), selX = $("#bud-x");
+    const OWN = { stencil: "grn", allreduce: "pur", memcpy: "blu", program: "acc", both: "red" };
+    const NAMES = { stencil: "stencil", allreduce: "allreduce", memcpy: "memcpy", program: "this program" };
+    const lg = $("#bud-legend");
+    let hl = null;
+    for (const k of Object.keys(NAMES)) {
+      const b = document.createElement("button"); b.className = "btn"; b.textContent = NAMES[k];
+      const cv = { stencil: "--green", allreduce: "--purple", memcpy: "--blue", program: "--accent" }[k];
+      b.style.setProperty("background", `var(${cv}-soft)`, "important"); b.style.setProperty("color", `var(${cv})`, "important"); b.style.border = `1.5px solid var(${cv})`;
+      b.addEventListener("mouseenter", () => { hl = k; draw(); }); b.addEventListener("mouseleave", () => { hl = null; draw(); });
+      b.addEventListener("click", () => { hl = hl === k ? null : k; draw(); });
+      lg.appendChild(b);
+    }
+    const X = {
+      none: { arch: null, text: "The shipped assignment: no slot is claimed twice, except that on WSE-2 the stencil and the allreduce never send at the same time." },
+      queue: { arch: "wse3", row: "in", id: 4, a: "allreduce", text: "allreduce queue 2 → 4  (WSE-3)\ncompile error, in the stencil library (pe.csl:753):\n  initialization for this queue has already been set" },
+      color: { arch: "wse3", row: "color", id: 7, a: "allreduce", text: "allreduce color 8 → 7  (WSE-3)\ncompile error, in the stencil library (pe.csl:741):\n  config for this color has already been set" },
+      task: { arch: "wse3", row: "task", id: 14, a: "program", text: "state-machine task 12 → 14  (WSE-3)\ncompile error, in the stencil library (pe.csl:629):\n  task ID '14' bound to more than one task" },
+      ut: { arch: "wse3", row: "ut", id: 2, a: "stencil", ok: true, text: "stencil send microthread 3 → 2  (WSE-3)\ncompiles and runs correctly: 4,595 cycles per iteration (shipped: 4,574).\nThe allreduce takes no microthread parameter; its asynchronous sends use\nwhatever the compiler assigns, so this row shows only the stencil’s choice." },
+      c22: { arch: "wse3", row: "color", id: 22, a: "allreduce", text: "allreduce color 8 → 22  (WSE-3)\ncompile error, in the allreduce library (pe.csl:1097):\n  config for this color has already been set\nColor 22 carries memcpy's command stream (Chapter 7)." },
+      queue2: { arch: "wse2", row: "out", id: 3, a: "allreduce", ok: true, text: "allreduce queue 2 → 3  (WSE-2)\ncompiles and runs correctly: 4,180 cycles per iteration (shipped: 4,186).\nWSE-2 output queues are not tied to a color, so the compiler does not\nobject; it works because the two libraries never send at the same time." },
+    };
+    function slots(arch) {
+      const S = { color: {}, task: {}, in: {}, out: {}, ut: {} };
+      for (let c = 0; c < 8; c++) S.color[c] = ["stencil"];
+      S.color[8] = ["allreduce"]; S.color[22] = ["memcpy"];
+      for (const t of [14, 15, 16]) S.task[t] = ["stencil"];
+      for (const t of [17, 18, 19, 20]) S.task[t] = ["allreduce"];
+      S.task[12] = ["program"];
+      for (const q of [0, 1]) { S.in[q] = ["memcpy"]; S.out[q] = ["memcpy"]; }
+      S.in[2] = ["allreduce"]; S.out[2] = ["allreduce"];
+      for (const q of [4, 5, 6, 7]) S.in[q] = ["stencil"];
+      if (arch === "wse3") { for (const q of [4, 5, 6, 7]) S.out[q] = ["stencil"]; S.ut[3] = ["stencil"]; }
+      else S.out[3] = ["stencil"];
+      return S;
+    }
+    const ROWS = [["color", "colors", 24], ["task", "local task IDs", 24], ["in", "input queues", 8], ["out", "output queues", 8], ["ut", "microthreads", 8]];
+    function draw() {
+      const x = X[selX.value];
+      if (x.arch && selA.value !== x.arch) selA.value = x.arch;
+      const arch = selA.value, S = slots(arch);
+      if (x.arch) {
+        // move the claim
+        if (selX.value === "queue") { S.in[2] = []; S.out[2] = []; }
+        if (selX.value === "color" || selX.value === "c22") S.color[8] = [];
+        if (selX.value === "task") S.task[12] = [];
+        if (selX.value === "ut") S.ut[3] = [];
+        if (selX.value === "queue2") { S.in[2] = []; S.out[2] = []; S.in[3] = ["allreduce"]; }
+        S[x.row][x.id] = (S[x.row][x.id] || []).concat([x.a]);
+      }
+      s.innerHTML = "";
+      ROWS.forEach(([key, label, n], r) => {
+        const y = 22 + r * 56;
+        T("text", { x: 0, y: y + 14, "font-size": 13, "font-weight": 700 }, s, label);
+        if (key === "ut" && arch === "wse2") { T("text", { x: 130, y: y + 36, "font-size": 12, class: "muted" }, s, "WSE-2: no microthread parameters (the WSE-2 stencil ignores output_ut_id)"); }
+        for (let i = 0; i < n; i++) {
+          if (key === "ut" && arch === "wse2") break;
+          const cx = 130 + i * 23, owners = S[key][i] || [];
+          const cls = owners.length > 1 ? "red" : owners.length ? OWN[owners[0]] : "box";
+          const fade = hl && !owners.includes(hl);
+          const r_ = el("rect", { x: cx, y: y + 20, width: 20, height: 22, rx: 3, class: cls + (fade ? " fade" : "") + (owners.length > 1 ? " hl" : ""), "stroke-width": owners.length > 1 ? 2.5 : 1 }, s);
+          const t = el("title", {}, r_); t.textContent = `${label} ${i}: ` + (owners.length ? owners.map(o => NAMES[o]).join(" + ") : "unused here");
+          if (i % 4 === 0 || owners.length) T("text", { x: cx + 10, y: y + 54, "text-anchor": "middle", "font-size": 10, class: "muted mono" }, s, String(i));
+        }
+      });
+      out.textContent = x.text;
+      out.style.color = x.arch ? cssVar(x.ok ? "--green" : "--red") : "";
+    }
+    selA.addEventListener("change", () => { if (X[selX.value].arch && X[selX.value].arch !== selA.value) selX.value = "none"; draw(); });
+    selX.addEventListener("change", draw);
+    draw();
+  })();
+
+  // ---------- one iteration ----------
+  (function () {
+    const D = {
+      wse3: { host: [323, 1866, 165, 1895, 1557], dev: [352, 1866, 165, 1898, 295], tot: [5798, 4574], noprof: 4261, noprofHost: 5488 },
+      wse2: { host: [385, 1759, 163, 1592, 1439], dev: [422, 1756, 163, 1561, 285], tot: [5333, 4186], noprof: 3782, noprofHost: 4984 },
+    };
+    const s = $("#tl-svg"), out = $("#tl-out");
+    function draw() {
+      const d = D[$("#tl-arch").value], real = $("#tl-view").value === "real";
+      s.innerHTML = "";
+      const X0 = 150, WID = 500;
+      if (!real) {
+        const sum = a => a.reduce((p, c) => p + c, 0), mx = Math.max(sum(d.host), sum(d.dev));
+        [["host-driven", d.host], ["device-driven", d.dev]].forEach(([lab, a], r) => {
+          const y = 30 + r * 60;
+          T("text", { x: X0 - 10, y: y + 24, "text-anchor": "end", "font-size": 13, "font-weight": 700 }, s, lab);
+          let x = X0;
+          a.forEach((v, i) => {
+            const w = v / mx * WID;
+            const g = el("rect", { x, y, width: Math.max(w, 1), height: 36, class: PHC[i], "stroke-width": 1 }, s);
+            const t = el("title", {}, g); t.textContent = `${PH[i]}: ${fmt(v)} cycles`;
+            if (w > 46) T("text", { x: x + w / 2, y: y + 22, "text-anchor": "middle", "font-size": 11.5, class: "mono" }, s, fmt(v));
+            x += w;
+          });
+          T("text", { x: x + 6, y: y + 22, "font-size": 12, class: "mono muted" }, s, fmt(d.tot[r]));
+        });
+        PH.forEach((p, i) => {
+          const x = X0 + i * 108;
+          el("rect", { x, y: 160, width: 14, height: 14, rx: 2, class: PHC[i] }, s);
+          T("text", { x: x + 20, y: 172, "font-size": 12 }, s, p);
+        });
+        const extra = d.tot[0] - d.tot[1];
+        out.textContent = `device loop ${fmt(d.tot[1])} cycles/iteration, host loop ${fmt(d.tot[0])} (+${fmt(extra)}, +${(extra / d.tot[1] * 100).toFixed(0)}%)\n` +
+          `allreduce ${((d.dev[3]) / sum(d.dev) * 100).toFixed(0)}% and stencil ${(d.dev[1] / sum(d.dev) * 100).toFixed(0)}% of the device loop.  Without profiling: ${fmt(d.noprof)} / ${fmt(d.noprofHost)}.`;
+      } else {
+        const dev = d.noprof / 850, host = d.noprof / 850 + 5 * 200;  // µs, SDK's 850 MHz and 200 µs per command
+        [["host-driven", host, "acc"], ["device-driven", dev, "grn"]].forEach(([lab, v, cls], r) => {
+          const y = 30 + r * 60, w = v / host * WID;
+          T("text", { x: X0 - 10, y: y + 24, "text-anchor": "end", "font-size": 13, "font-weight": 700 }, s, lab);
+          el("rect", { x: X0, y, width: Math.max(w, 2), height: 36, class: cls }, s);
+          T("text", { x: X0 + Math.max(w, 2) + 6, y: y + 22, "font-size": 12, class: "mono" }, s, v >= 100 ? `${fmt(v)} µs` : `${v.toFixed(1)} µs`);
+        });
+        T("text", { x: X0, y: 172, "font-size": 12, class: "muted" }, s, "Derived: profiling off, 850 MHz, 5 host commands × 200 µs per iteration.");
+        out.textContent = `device loop ≈ ${dev.toFixed(1)} µs per iteration; host loop ≈ ${fmt(host)} µs (${(host / dev).toFixed(0)}× slower).\nThe simulator cannot show this: it has no network, so host commands cost no simulated time.`;
+      }
+    }
+    $("#tl-arch").addEventListener("change", draw); $("#tl-view").addEventListener("change", draw);
+    draw();
+  })();
+
+  // ---------- tables ----------
+  const GRID = [[3, 3, 4235, 1551], [5, 5, 4574, 1898], [8, 8, 5146, 2462], [12, 12, 5898, 3214], [16, 16, 6650, 3966], [16, 4, 5594, 2910], [4, 16, 5450, 2766]];
+  const fitAR = (w, h) => 958 + 100 * w + 88 * h;
+  for (const [w, h, it, ar] of GRID) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${w} × ${h}</td><td>${fmt(it)}</td><td>${fmt(ar)}</td><td>${fmt(fitAR(w, h))}</td>`;
+    $("#grid-tab").appendChild(tr);
+  }
+  const ZT = [[5, 2, 4574, 1866, 165, 352], [20, 2, 8688, 5722, 315, 441], [50, 2, 17282, 13945, 615, 512], [100, 2, 32004, 27782, 1115, 898], [100, 10, 10706, 6483, 1115, 898], [100, 100, 6573, 1957, 1115, 898]];
+  for (const r of ZT) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = r.map((v, i) => `<td>${i < 2 ? v : fmt(v)}</td>`).join("");
+    $("#z-tab").appendChild(tr);
+  }
+
+  // ---------- cost model ----------
+  (function () {
+    const ZM = { 5: [341, 1866, 165], 8: [387, 2413, 195], 12: [412, 3516, 235], 20: [441, 5722, 315], 50: [512, 13945, 615], 100: [898, 27782, 1115] };
+    const MEAS = { "5,5,5": 15, "8,8,8": 24, "12,12,12": 34 };
+    const sw = $("#c-w"), sh = $("#c-h"), sz = $("#c-z"), s = $("#cost-svg"), out = $("#cost-out");
+    const toV = v => Math.round(2 * Math.pow(500, v / 1000)), fromV = n => Math.round(1000 * Math.log(n / 2) / Math.log(500));
+    sw.max = sh.max = 1000; sw.value = sh.value = fromV(5);
+    function bound(w, h, z) {
+      const c = n => Math.cos(Math.PI / (n + 1));
+      const lmin = 6 - 2 * (c(w) + c(h) + c(z)), lmax = 6 + 2 * (c(w) + c(h) + c(z));
+      const q = (Math.sqrt(lmax / lmin) - 1) / (Math.sqrt(lmax / lmin) + 1);
+      return Math.ceil(Math.log(1e-5 / 2) / Math.log(q));
+    }
+    function draw() {
+      const w = toV(+sw.value), h = toV(+sh.value), z = +sz.value;
+      $("#c-wv").textContent = w; $("#c-hv").textContent = h;
+      const [ax, sp, dt] = ZM[z], ar = fitAR(w, h), parts = [ax, sp, dt, ar, 316], tot = parts.reduce((a, b) => a + b, 0);
+      s.innerHTML = "";
+      let x = 10;
+      parts.forEach((v, i) => {
+        const wd = v / tot * 700;
+        const g = el("rect", { x, y: 20, width: Math.max(wd, 0.5), height: 40, class: PHC[i] }, s);
+        el("title", {}, g).textContent = `${PH[i]}: ${fmt(v)} cycles`;
+        if (wd > 60) T("text", { x: x + wd / 2, y: 45, "text-anchor": "middle", "font-size": 11.5, class: "mono" }, s, `${PH[i]} ${(v / tot * 100).toFixed(0)}%`);
+        x += wd;
+      });
+      PH.forEach((p, i) => { el("rect", { x: 10 + i * 120, y: 90, width: 14, height: 14, rx: 2, class: PHC[i] }, s); T("text", { x: 30 + i * 120, y: 102, "font-size": 12 }, s, p); });
+      const it = bound(w, h, z), m = MEAS[`${w},${h},${z}`];
+      const extra = (w > 16 || h > 16) ? "   (extrapolated: beyond the measured 16 × 16)" : "";
+      out.textContent = `${w} × ${h} PEs × ${z} cells = ${fmt(w * h * z)} unknowns${extra}\n` +
+        `per iteration ≈ ${fmt(tot)} cycles, of which allreduce ${fmt(ar)} (${(ar / tot * 100).toFixed(0)}%)\n` +
+        `iterations to 1e-5: bound ${it}` + (m ? `, measured ${m}` : "") +
+        `\nsolve ≈ ${fmt((m || it) * tot)} cycles ≈ ${((m || it) * tot / 850e3).toPrecision(3)} ms at 850 MHz` + (m ? " (measured iterations)" : " (bound iterations)");
+    }
+    for (const e of [sw, sh, sz]) e.addEventListener("input", () => { $("#c-p").value = ""; draw(); });
+    $("#c-p").addEventListener("change", e => {
+      if (!e.target.value) return;
+      const [w, h, z] = e.target.value.split(",").map(Number);
+      sw.value = fromV(w); sh.value = fromV(h); sz.value = String(z); draw();
+    });
+    draw();
+  })();
+
+  // ---------- convergence ----------
+  (function () {
+    const C = [{"n": 5, "r": [1.0, 0.971, 0.608, 0.425, 0.191, 0.0681, 0.0244, 0.00991, 0.00582, 0.00329, 0.00159, 0.000505, 0.000128, 4.02e-05, 1.87e-05, 5.74e-06]}, {"n": 8, "r": [1.0, 1.31, 1.1, 0.798, 0.589, 0.419, 0.25, 0.127, 0.0583, 0.0256, 0.0121, 0.00736, 0.00491, 0.00322, 0.00232, 0.00146, 0.000749, 0.00045, 0.000281, 0.000153, 8.2e-05, 5.15e-05, 2.81e-05, 1.38e-05, 5.61e-06]}, {"n": 12, "r": [1.0, 1.46, 1.53, 1.19, 0.984, 0.825, 0.648, 0.498, 0.378, 0.262, 0.162, 0.0915, 0.0498, 0.0277, 0.0172, 0.0111, 0.00691, 0.00454, 0.00365, 0.00322, 0.00276, 0.00211, 0.00128, 0.000661, 0.000397, 0.000308, 0.000254, 0.000174, 9.55e-05, 6.2e-05, 4.87e-05, 3.37e-05, 2.14e-05, 1.41e-05, 8.77e-06]}];
+    const s = $("#conv-svg");
+    const X0 = 60, Y0 = 20, W = 620, H = 240, KMAX = Math.max(...C.map(c => c.r.length - 1)) + 2;
+    const xs = k => X0 + k / KMAX * W, ys = v => Y0 + (-Math.log10(v)) / 7 * H;
+    for (let e = 0; e <= 7; e++) {
+      el("line", { x1: X0, x2: X0 + W, y1: ys(Math.pow(10, -e)), y2: ys(Math.pow(10, -e)), class: "line" }, s);
+      T("text", { x: X0 - 8, y: ys(Math.pow(10, -e)) + 4, "text-anchor": "end", "font-size": 11, class: "muted mono" }, s, e ? `1e-${e}` : "1");
+    }
+    for (let k = 0; k <= KMAX; k += 5) T("text", { x: xs(k), y: Y0 + H + 16, "text-anchor": "middle", "font-size": 11, class: "muted mono" }, s, String(k));
+    T("text", { x: X0 + W / 2, y: Y0 + H + 34, "text-anchor": "middle", "font-size": 12, class: "muted" }, s, "iteration k");
+    const col = ["--blue", "--green", "--accent"];
+    C.forEach((c, i) => {
+      const n = c.n, cc = Math.cos(Math.PI / (n + 1)), kap = (6 + 6 * cc) / (6 - 6 * cc), q = (Math.sqrt(kap) - 1) / (Math.sqrt(kap) + 1);
+      let d = "";
+      for (let k = 0; k <= KMAX; k++) { const v = 2 * Math.pow(q, k); if (v < 1e-7) break; d += (k ? "L" : "M") + xs(k) + " " + ys(Math.min(v, 1)); }
+      el("path", { d, fill: "none", stroke: cssVar(col[i]), "stroke-width": 1.3, "stroke-dasharray": "5 4" }, s);
+      d = c.r.map((v, k) => (k ? "L" : "M") + xs(k) + " " + ys(v)).join("");
+      el("path", { d, fill: "none", stroke: cssVar(col[i]), "stroke-width": 2.2 }, s);
+      const kl = c.r.length - 1;
+      T("text", { x: xs(kl) + 6, y: ys(c.r[kl]) + 4, "font-size": 12, "font-weight": 700, class: "halo-txt" }, s, `${n}³: ${kl} it.`).style.fill = cssVar(col[i]);
+    });
+  })();
+})();
 </script>
 </body>
 </html>

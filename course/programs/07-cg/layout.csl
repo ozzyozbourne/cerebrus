@@ -9,7 +9,7 @@
 //   local task IDs                            14-16      17-20       -            12 (state machine)
 //   input/output queues (pe_program.csl)      in 4-7     2           0, 1         -
 //                                             out 4-7 (WSE-3) / 3 (WSE-2)
-//   microthread for its sends (WSE-3)         3          2           -            -
+//   microthread for its sends (WSE-3)         3          (compiler) -            -
 //   explicit DSRs (dest / src0 / src1)        2,3/2/2,3  1/1/1       -            compiler's choice
 // * memcpy's own colors are chosen by cslc --memcpy; a program must not use them.
 
