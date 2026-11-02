@@ -186,7 +186,7 @@ rt.stop()</code></pre>
   <label><input type="radio" name="rpc" value="c"> unblock in the send's completion task</label>
   <label><input type="radio" name="rpc" value="d"> one PE never unblocks</label>
 </div>
-<svg id="rpc-svg" viewBox="0 0 680 220" width="680" role="img" aria-label="RPC unblock placement"></svg>
+<svg id="rpc-svg" viewBox="0 0 680 236" width="680" role="img" aria-label="RPC unblock placement"></svg>
 <div class="readout" id="rpc-out" aria-live="polite"></div>
 </div>
 
@@ -487,9 +487,9 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
     const CASES = {
       a: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y)", 20, 28, "grn"]], pe: [["f() body", 2, 18, "acc"], ["D2H tasks", 21, 27, "grn"]], blocked: [[2, 18], [21, 27]], gate: 18,
         txt: "Correct. f does its work and calls unblock_cmd_stream() at the end. The PE decodes the D2H only after that, so it reads the finished y." },
-      b: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y)", 8, 16, "red"]], pe: [["f()", 2, 6, "acc"], ["async send in flight", 6, 30, "amb"], ["D2H tasks", 9, 15, "red"]], blocked: [[2, 6], [9, 15]], gate: 6,
+      b: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y)", 8, 16, "red"]], pe: [["f()", 2, 6, "acc"], ["async send in flight", 6, 30, "amb"], ["D2H tasks", 9, 15, "red", 1]], blocked: [[2, 6], [9, 15]], gate: 6,
         txt: "Wrong. f unblocks as soon as it has started the send. The D2H (or another launch reusing the same queue) runs while the send is still in flight, and reads unfinished data." },
-      c: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y)", 34, 42, "grn"]], pe: [["f()", 2, 6, "acc"], ["async send in flight", 6, 30, "amb"], ["done task", 30, 33, "pur"], ["D2H", 35, 41, "grn"]], blocked: [[2, 33], [35, 41]], gate: 33,
+      c: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y)", 34, 42, "grn"]], pe: [["f()", 2, 6, "acc"], ["async send in flight", 6, 30, "amb"], ["done", 30, 33, "pur", 1], ["D2H", 35, 41, "grn"]], blocked: [[2, 33], [35, 41]], gate: 33,
         txt: "Correct. f starts the send and returns without unblocking. The send's completion task calls unblock_cmd_stream(). Programs 03–05 do this." },
       d: { host: [["launch('f')", 0, 4, "blu"], ["memcpy_d2h(y) … never completes", 8, 48, "red"]], pe: [["f()", 2, 6, "acc"]], blocked: [[2, 48]], gate: null,
         txt: "Stall. On one PE f never calls unblock_cmd_stream(), so that PE never decodes the next command and the copy never completes. In the simulator cs_python aborts after about 4 s with \"could be a kernel stall\" (measured in the Chapter 10 review)." },
@@ -497,7 +497,7 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
     function draw() {
       const c = CASES[document.querySelector('input[name="rpc"]:checked').value];
       svg.innerHTML = "";
-      T(svg, 10, 44, "host commands"); T(svg, 10, 110, "command stream"); T(svg, 10, 124, "(color 22, one PE)", { "font-size": 10.5, class: "muted" }); T(svg, 10, 176, "PE work");
+      T(svg, 10, 44, "host commands"); T(svg, 10, 110, "command stream"); T(svg, 10, 124, "(color 22, one PE)", { "font-size": 10.5, class: "muted" }); T(svg, 10, 174, "PE work");
       const bar = (lab, a, b, cls, y, above) => {
         el("rect", { x: X(a), y, width: X(b) - X(a), height: 22, rx: 4, class: cls }, svg);
         T(svg, X(a) + 3, above ? y - 5 : y + 15, lab, { "font-size": 11 });
@@ -505,13 +505,12 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
       c.host.forEach(([l, a, b, cls], i) => bar(l, a, b, cls, 36, true));
       el("rect", { x: X(0), y: 98, width: X(48) - X(0), height: 16, rx: 3, class: "grn" }, svg);
       c.blocked.forEach(([a, b]) => el("rect", { x: X(a), y: 98, width: X(b) - X(a), height: 16, rx: 3, class: "red" }, svg));
-      T(svg, X(48), 92, "red = blocked, green = open", { "font-size": 10.5, class: "muted", "text-anchor": "end" });
-      let lift = false;
-      c.pe.forEach(([l, a, b, cls]) => { bar(l, a, b, cls, 160, lift); lift = !lift && (b - a) < 10; });
+      T(svg, X(48), 16, "command stream: red = blocked, green = open", { "font-size": 10.5, class: "muted", "text-anchor": "end" });
+      c.pe.forEach(([l, a, b, cls, row]) => bar(l, a, b, cls, row ? 186 : 158, !row));
       if (c.gate !== null) {
-        el("line", { x1: X(c.gate), x2: X(c.gate), y1: 92, y2: 196, class: "s-grn", "stroke-width": 2, "stroke-dasharray": "4 3" }, svg);
-        T(svg, X(c.gate) + 4, 212, "unblock_cmd_stream()", { "font-size": 11, class: "f-grn mono" });
-      } else T(svg, X(8), 212, "no unblock: the next command waits forever", { "font-size": 11, class: "f-red" });
+        el("line", { x1: X(c.gate), x2: X(c.gate), y1: 92, y2: 212, class: "s-grn", "stroke-width": 2, "stroke-dasharray": "4 3" }, svg);
+        T(svg, X(c.gate) + 4, 226, "unblock_cmd_stream()", { "font-size": 11, class: "f-grn mono" });
+      } else T(svg, X(8), 226, "no unblock: the next command waits forever", { "font-size": 11, class: "f-red" });
       out.textContent = c.txt; svg.setAttribute("aria-label", c.txt);
     }
     document.querySelectorAll('input[name="rpc"]').forEach(r => r.addEventListener("change", draw));
