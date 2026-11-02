@@ -1,13 +1,14 @@
-# Wafer-Scale Computing — a 15-chapter visual course
+# Wafer-Scale Computing — an 18-chapter visual course with five appendices
 
 Open `course/index.html` in a browser. It is plain static HTML with no build step needed to read it and no external dependencies. Every chapter has SVG diagrams and most have an interactive widget.
 
 | Part | Chapters |
 |---|---|
 | I · Why wafer-scale | 1 The memory wall · 2 One chip, one wafer |
-| II · The machine | 3 Processing element · 4 Fabric · 5 Tasks · 6 DSDs · 7 Host I/O and memcpy · 8 Systems |
-| III · Programming | 9 CSL and the toolchain · 10 Lab 1 · 11 Lab 2 · 12 Lab 3 |
-| IV · Comparison | 13 Tenstorrent · 14 NVIDIA GPUs · 15 Head to head |
+| II · The machine | 3 Processing element · 4 Fabric · 5 Tasks · 6 DSDs · 7 Host I/O and memcpy · 8 Systems · 9 From model to tokens |
+| III · Programming | 10 CSL and the toolchain · 11 Lab 1 · 12 Lab 2 · 13 Lab 3 · 14 Lab 4 (SUMMA GEMM) · 15 Lab 5 (CG solver) |
+| IV · Comparison | 16 Tenstorrent · 17 NVIDIA GPUs · 18 Head to head |
+| Appendices | A Glossary and number formats · B CUDA to CSL, budgets and constants · C Measuring and observing · D SDK example index · E Sources and unverified figures |
 
 ## Programs
 
@@ -16,10 +17,10 @@ Open `course/index.html` in a browser. It is plain static HTML with no build ste
 | Program | Teaches | WSE-3 cycles |
 |---|---|---|
 | 01-saxpy | layout, memcpy copy mode, RPC, memory DSDs | 7,740 |
-| 02-wavelet-tasks | streaming memcpy, input queues, data tasks, barrier RPC | 7,020 |
-| 03-row-reduce | colors, routes, checkerboard, fabric-to-fabric DSD op | 4,748 |
-| 04-heat-stencil | halo exchange on 4 colors, completion tasks, iteration | 10,291 |
-| 05-column-broadcast | multicast routes | 5,456 |
+| 02-wavelet-tasks | streaming memcpy, input queues, data tasks, barrier RPC | 7,021 |
+| 03-row-reduce | colors, routes, checkerboard, fabric-to-fabric DSD op | 6,860 |
+| 04-heat-stencil | halo exchange on 4 colors, completion tasks, iteration | 11,665 |
+| 05-column-broadcast | multicast routes | 7,620 |
 
 All five pass on both `--arch=wse3` and `--arch=wse2` with the Cerebras SDK 2.10.1 simulator.
 
@@ -32,7 +33,7 @@ ARCH=wse2 bash course/programs/run_all.sh
 
 ## Editing the lab chapters
 
-Chapters 10–12 are generated from `course/src/*.html`, so their code listings are copied from the validated program files. After editing a program or a template, run:
+Chapters 11–15 are generated from `course/src/*.html`, so their code listings are copied from the validated program files. After editing a program or a template, run:
 
 ```bash
 python3 course/tools/build.py
