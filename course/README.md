@@ -12,7 +12,7 @@ Open `course/index.html` in a browser. It is plain static HTML with no build ste
 
 ## Programs
 
-`course/programs/` holds five original CSL programs. Each has `layout.csl`, `pe_program.csl`, `run.py`, `commands.sh`, and `expected_output.txt` from a real simulator run.
+`course/programs/` holds seven CSL programs (06 and 07 adapted from SDK benchmarks, with attribution). Each has `layout.csl`, `pe_program.csl`, `run.py`, `commands.sh`, and `expected_output.txt` from a real simulator run.
 
 | Program | Teaches | WSE-3 cycles |
 |---|---|---|
@@ -22,7 +22,7 @@ Open `course/index.html` in a browser. It is plain static HTML with no build ste
 | 04-heat-stencil | halo exchange on 4 colors, completion tasks, iteration | 11,665 |
 | 05-column-broadcast | multicast routes | 7,620 |
 
-All five pass on both `--arch=wse3` and `--arch=wse2` with the Cerebras SDK 2.10.1 simulator.
+All seven pass on both `--arch=wse3` and `--arch=wse2` with the Cerebras SDK 2.10.1 simulator.
 
 ```bash
 bash .claude/skills/cerebras-sdk/scripts/setup.sh      # one-time SDK install
