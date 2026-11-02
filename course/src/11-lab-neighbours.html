@@ -93,7 +93,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 
 <div class="widget" id="pipe">
 <h4>Race: streaming vs store-and-forward, on one clock</h4>
-<p class="hint">Each cell is one element of the vector at one PE. Both grids advance on the same clock (30 ms per cycle), so the slower one really takes longer. The model uses the measured hop cost c for the chosen chip <span class="tag derived">Derived</span>. The dots in the chart are simulator measurements on the last PE's clock at M = 32 <span class="tag measured">Measured</span>.</p>
+<p class="hint">Each cell is one element of the vector at one PE. Both grids advance on the same clock (30 ms per cycle), so the slower one really takes longer. The model uses the measured hop cost c for the chosen chip: a streaming hop costs c, and a store-and-forward hop costs M + 2c, because each PE runs two ops and each op pays its own startup <span class="tag derived">Derived</span>. The fixed ~20 cycles per run are left out. At M = 32 the chart adds simulator measurements on the last PE's own clock <span class="tag measured">Measured</span>. Those readings run about one router hop per PE low (see "Only subtract timestamps from the same PE" below).</p>
 <div class="controls">
 <label>PEs <input type="range" id="w-p" min="2" max="16" value="8"> <span id="w-pv" class="mono"></span></label>
 <label>M <input type="range" id="w-m" min="4" max="32" value="12"> <span id="w-mv" class="mono"></span></label>
@@ -121,7 +121,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 <tr><td>Same, store-and-forward variant (<code>@fadds(v, in, v)</code>, then <code>@fmovs(out, v)</code>)</td><td>58</td><td>154</td><td>348</td><td>733</td><td>–</td></tr>
 <tr><td>Whole-run cycles, uninstrumented program</td><td>4,394</td><td>4,496</td><td>4,748</td><td>5,260</td><td>–</td></tr>
 </table></div>
-<p>All of these are <span class="tag measured">Measured</span> with the SDK 2.10.1 simulator. At P = 8 the kernel takes 77 / 101 / 199 / 588 cycles for M = 8 / 32 / 128 / 512, so about 1 cycle per element: the link rate of one wavelet per cycle. Each op here has only one memory operand stream, so the bank clash that halves a memory-to-memory <code>@fmacs</code> when its two source arrays start at addresses equal mod 4 words (Chapter 10) cannot occur. The whole run grows from 3,025 cycles (M = 8) to 11,463 (M = 128) because the host copies P × M elements in and M results out. On WSE-2 the kernel takes 54 / 64 / 84 / 124 / 204 cycles for P = 2 / 4 / 8 / 16 / 32. With the timer in place, the program's own total rises to 6,861 cycles: one more launch and two more small reads, all of it host I/O again. Whole-run totals also wander by tens to hundreds of cycles between identical runs, more when the host is busy. TSC differences repeat exactly.</p>
+<p>All of these are <span class="tag measured">Measured</span> with the SDK 2.10.1 simulator. Store-and-forward pays about M + 16 cycles per PE on these own-clock readings (48 at M = 32, and 1,024 vs 199 cycles at P = 8, M = 128), against about 7 for streaming. On WSE-2 the store-and-forward variant takes 307 / 643 cycles at P = 8 / 16. At P = 8 the kernel takes 77 / 101 / 199 / 588 cycles for M = 8 / 32 / 128 / 512, so about 1 cycle per element: the link rate of one wavelet per cycle. Each op here has only one memory operand stream, so the bank clash that halves a memory-to-memory <code>@fmacs</code> when its two source arrays start at addresses equal mod 4 words (Chapter 10) cannot occur. The whole run grows from 3,025 cycles (M = 8) to 11,463 (M = 128) because the host copies P × M elements in and M results out. On WSE-2 the kernel takes 54 / 64 / 84 / 124 / 204 cycles for P = 2 / 4 / 8 / 16 / 32. With the timer in place, the program's own total rises to 6,861 cycles: one more launch and two more small reads, all of it host I/O again. Whole-run totals also wander by tens to hundreds of cycles between identical runs, more when the host is busy. TSC differences repeat exactly.</p>
 
 <div class="callout warn">
 <strong>Only subtract timestamps from the same PE</strong>
@@ -147,7 +147,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 <p>The root PE of a column sends its vector once. Every middle router delivers each wavelet to its own CE <em>and</em> forwards it south in the same hop: <code>.tx = .{RAMP, SOUTH}</code>. The bottom router only delivers (<code>.tx = .{RAMP}</code>). Forwarding SOUTH there would push wavelets out of your rectangle into memcpy's frame. No PE runs relay code: the router does the copying, at router-hop cost.</p>
 
 <figure>
-<svg viewBox="110 0 560 380" width="560" role="img" aria-label="Column multicast, R = 6">
+<svg viewBox="110 0 600 380" width="600" role="img" aria-label="Column multicast, R = 6">
   <defs><marker id="b0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
   <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-pur"/></marker></defs>
   <g id="bc"></g>
@@ -172,7 +172,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 
 <div class="callout warn">
 <strong>Timing the broadcast, and a trap: command-stream skew</strong>
-<p>Each PE's memcpy commands form its own queue. The receivers skip the <code>x</code> copy, so they reach <code>go()</code> earlier than the root: 2,248 cycles after their timer reset, against 2,610 for the root. That gap of about 362 cycles is the root's extra host copy <span class="tag measured">Measured</span>. A receiver's own <code>go() → x received</code> span is therefore 431–439 cycles, and almost all of it is idle waiting for the root. The root itself finishes sending in 50.</p>
+<p>Each PE's memcpy commands form its own queue. The receivers skip the <code>x</code> copy, so they reach <code>go()</code> earlier than the root: 2,248 cycles after their timer reset, against 2,610 for the root. That gap of about 362 cycles is the root's extra host copy <span class="tag measured">Measured</span>. A receiver's own <code>go() → x received</code> span is therefore 431–439 cycles (±1 cycle run to run, because the skew depends on host timing), and almost all of it is idle waiting for the root. The root itself finishes sending in 50.</p>
 <p>Subtracting the skew, the last receiver has <code>x</code> about 69–78 cycles after the root starts. That is about 2 cycles per row on top of M + ~37 <span class="tag derived">Derived</span>, consistent with a pure router hop (2.0 cycles on WSE-3). Multicast forwarding never involves the CE, so each row costs a router hop, not program 03's ~9-cycle CE hop. On WSE-2 the skew is 348 cycles and the arrivals come 85–89 cycles after the root starts.</p>
 <p>Lesson: "kernel time" on one PE can be another PE's host I/O. If you time kernels, give every PE the same command history (for example, copy <code>x</code> to all PEs while timing), or synchronize clocks over the fabric as <code>bandwidth-test</code> does.</p>
 </div>
@@ -303,7 +303,7 @@ fn reduce() void { mpi_x.reduce_fadds(W - 1, &amp;v, &amp;r, M, cb_id); }  // ro
       [[[cx(0), 45, "v0", "acc"]], "PE 0 sends v0 on c. Router 0: rx RAMP → tx EAST. Fine so far."],
       [[[linkX(0), 140, "v0", "acc"]], "Router 1 must receive from WEST and also send its CE's output EAST, on one color, with one route: rx {WEST, RAMP} → tx {RAMP, EAST}. Every input goes to every output."],
       [[[cx(1), 45, "v0", "acc"], [linkX(1), 140, "raw v0 ✗", "bad"]], "So the raw v0 is copied up to CE 1 AND straight on EAST, before anything is added."],
-      [[[cx(1), 45, "v0+v1", "acc"], [cx(1) - 50, 100, "↺ back to CE 1 ✗", "bad"], [linkX(1), 140, "v0+v1", "acc"]], "CE 1's output enters router 1 from RAMP and is sent to EAST and back to its own RAMP."],
+      [[[cx(1), 45, "v0+v1", "acc"], [cx(1) - 78, 96, "↺ back to CE 1 ✗", "bad"], [linkX(1), 140, "v0+v1", "acc"]], "CE 1's output enters router 1 from RAMP and is sent to EAST and back to its own RAMP."],
       [[[cx(2), 45, "2M wavelets ✗", "bad"]], "PE 2 sees raw v0 and v0+v1 interleaved: twice the wavelets it expects. Its sum is wrong, and the extras have no consumer."],
       [[[cx(3), 45, "wrong / stall ✗", "bad"]], "Result: a wrong answer or a stalled run. Fix: alternate two colors by column parity (switch back to 'two')."]
     ]
@@ -361,7 +361,7 @@ fn reduce() void { mpi_x.reduce_fadds(W - 1, &amp;v, &amp;r, M, cb_id); }  // ro
     6: { stream: { 2: 54, 8: 84, 16: 124 }, saf: { 8: 307, 16: 643 } }
   };
   const params = () => ({ P: +$("#w-p").value, M: +$("#w-m").value, c: +$("#w-arch").value });
-  const totals = ({ P, M, c }) => ({ s: (P - 1) * c + M, f: (P - 1) * (M + c) + M });
+  const totals = ({ P, M, c }) => ({ s: (P - 1) * c + M, f: (P - 1) * (M + 2 * c) + M });
   function grid(y0, label, P, M, c, mode, total) {
     const cw = 600 / M, ch = Math.min(22, 148 / P), finished = t >= total;
     T("text", { x: 44, y: y0 - 6, "font-size": 12, "font-weight": 700 }, svg, label);
@@ -371,8 +371,8 @@ fn reduce() void { mpi_x.reduce_fadds(W - 1, &amp;v, &amp;r, M, cb_id); }  // ro
       const ry = y0 + p * ch;
       if (ch >= 10 && (P <= 8 || p % 2 === 0 || p === P - 1)) T("text", { x: 36, y: ry + (ch - 2) / 2, "text-anchor": "end", "dominant-baseline": "middle", "font-size": Math.min(11, ch - 1), class: "muted" }, svg, `PE ${p}`);
       for (let i = 0; i < M; i++) {
-        const tp = mode === "s" ? p * c + i : p * (M + c) + i;
-        const arrived = mode === "f" && p > 0 && t > (p - 1) * (M + c) + i + c;
+        const tp = mode === "s" ? p * c + i : p * (M + 2 * c) + i;
+        const arrived = mode === "f" && p > 0 && t > (p - 1) * (M + 2 * c) + i + c;
         const done = t > tp, now = t === tp;
         const st = now ? "fill:var(--accent)" : done ? "fill:var(--green);opacity:.55" : arrived ? "fill:var(--blue-soft);stroke:var(--blue)" : "fill:var(--surface-2);stroke:var(--border)";
         T("rect", { x: 44 + i * cw, y: ry, width: Math.max(1, cw - 2), height: ch - 2, rx: 2, style: st + ";stroke-width:.6" }, svg);
@@ -381,21 +381,21 @@ fn reduce() void { mpi_x.reduce_fadds(W - 1, &amp;v, &amp;r, M, cb_id); }  // ro
   }
   function drawPlot() {
     const { P, M, c } = params(); plot.innerHTML = "";
-    const px = p => 70 + (p - 2) / 14 * 540, maxY = (15) * (Math.max(M, 32) + 9) + Math.max(M, 32), py = v => 190 - v / maxY * 165;
-    for (let v = 0; v <= maxY; v += maxY > 600 ? 200 : 100) { T("path", { d: `M70 ${py(v)} H610`, class: "line", "stroke-width": 1, fill: "none" }, plot); T("text", { x: 62, y: py(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, plot, v); }
+    const showM = M === 32, px = p => 70 + (p - 2) / 14 * 510, maxY = Math.max(15 * (M + 2 * c) + M, showM ? 760 : 0), py = v => 190 - v / maxY * 165;
+    for (let v = 0; v <= maxY; v += maxY > 600 ? 200 : 100) { T("path", { d: `M70 ${py(v)} H580`, class: "line", "stroke-width": 1, fill: "none" }, plot); T("text", { x: 62, y: py(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, plot, v); }
     [2, 4, 8, 12, 16].forEach(p => T("text", { x: px(p), y: 206, "text-anchor": "middle", "font-size": 11, class: "muted" }, plot, p));
-    T("text", { x: 340, y: 224, "text-anchor": "middle", "font-size": 11, class: "muted" }, plot, `PEs in the row (P)  ·  model lines at M = ${M}; measured dots at M = 32`);
+    T("text", { x: 340, y: 224, "text-anchor": "middle", "font-size": 11, class: "muted" }, plot, showM ? "PEs in the row (P)  ·  lines: model at M = 32  ·  dots: measured, last PE's own clock" : `PEs in the row (P)  ·  model at M = ${M}  ·  set M = 32 to see the measured dots`);
     const line = (f, cls) => { let d = ""; for (let p = 2; p <= 16; p++) d += (p === 2 ? "M" : "L") + px(p) + " " + py(f(p)); T("path", { d, class: cls, "stroke-width": 2, fill: "none" }, plot); };
-    line(p => (p - 1) * c + M, "s-acc"); line(p => (p - 1) * (M + c) + M, "s-blu");
-    const m = MEAS[c];
+    line(p => (p - 1) * c + M, "s-acc"); line(p => (p - 1) * (M + 2 * c) + M, "s-blu");
+    const m = showM ? MEAS[c] : { stream: {}, saf: {} };
     for (const [k, cls] of [["stream", "f-acc"], ["saf", "f-blu"]]) for (const p in m[k]) {
       const d = T("circle", { cx: px(+p), cy: py(m[k][p]), r: 5, class: cls, style: "stroke:var(--surface);stroke-width:2" }, plot);
       T("title", {}, d, `${k === "stream" ? "streaming" : "store-and-forward"}, P = ${p}, M = 32: ${m[k][p]} cycles (measured, last PE's clock)`);
     }
     T("path", { d: `M${px(P)} 20 V190`, class: "s-muted", "stroke-width": 1, "stroke-dasharray": "4 3", fill: "none" }, plot);
     const tt = totals({ P, M, c });
-    T("text", { x: 616, y: py((15) * (M + c) + M) + 4, "font-size": 11, class: "f-blu" }, plot, "store-and-fwd");
-    T("text", { x: 616, y: py(15 * c + M) + 4, "font-size": 11, class: "f-acc" }, plot, "streaming");
+    T("text", { x: 588, y: py(15 * (M + 2 * c) + M) + 4, "font-size": 11, class: "f-blu" }, plot, "store-and-fwd");
+    T("text", { x: 588, y: py(15 * c + M) + 4, "font-size": 11, class: "f-acc" }, plot, "streaming");
     T("text", { x: px(P) + 6, y: 30, "font-size": 11 }, plot, `P = ${P}: ×${(tt.f / tt.s).toFixed(1)}`);
   }
   function frame() {
@@ -403,8 +403,10 @@ fn reduce() void { mpi_x.reduce_fadds(W - 1, &amp;v, &amp;r, M, cb_id); }  // ro
     svg.innerHTML = "";
     grid(24, "streaming: @fadds(out, in, v), fabric → fabric", P, M, c, "s", tt.s);
     grid(206, "store-and-forward: receive all M into memory, add, then send", P, M, c, "f", tt.f);
-    T("text", { x: 44, y: 368, "font-size": 11, class: "muted" }, svg, "■ orange: element being processed   ■ green: done   ■ blue: arrived in buffer, waiting   □ not yet arrived");
-    $("#w-out").textContent = `cycle ${Math.min(t, tt.f)}   ·   streaming: M + c(P−1) = ${M} + ${c}·${P - 1} = ${tt.s}   ·   store-and-forward: (P−1)(M+c) + M = ${tt.f}   ·   ratio ×${(tt.f / tt.s).toFixed(1)}`;
+    const lg = T("text", { x: 44, y: 368, "font-size": 11, class: "muted" }, svg);
+    [["■ ", "f-acc"], ["element being processed    ", "muted"], ["■ ", "f-grn"], ["done    ", "muted"], ["■ ", "f-blu"], ["arrived in buffer, waiting    ", "muted"], ["□ not yet arrived", "muted"]]
+      .forEach(([txt, cls]) => T("tspan", { class: cls }, lg, txt));
+    $("#w-out").textContent = `cycle ${Math.min(t, tt.f)}   ·   streaming: M + c(P−1) = ${M} + ${c}·${P - 1} = ${tt.s}   ·   store-and-forward: (P−1)(M+2c) + M = ${tt.f}   ·   ratio ×${(tt.f / tt.s).toFixed(1)}`;
     return tt.f;
   }
   function stop() { if (timer) { clearInterval(timer); timer = null; } $("#w-go").textContent = t > 0 && t < totals(params()).f ? "Resume" : "Play"; }
