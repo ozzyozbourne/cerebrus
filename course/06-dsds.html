@@ -201,7 +201,7 @@
 </ul>
 <div class="callout key">
 <strong>Lab 3's 2.5 cycles per cell, explained</strong>
-Each stencil step runs one <code>@fadds</code> and two <code>@fmacs</code> over n cells. On WSE-3 that is 0.5 + 1 + 1 = 2.5 cycles per cell, which is the slope Chapter 12 measures (per-step cost ≈ 90 + 2.5·n cycles) <span class="tag derived">Derived from the measured rates</span>. The fixed ~90 cycles is the halo exchange, the completion tasks and the start-up of each instruction.
+Each stencil step runs one <code>@fadds</code> and two <code>@fmacs</code> over n cells. On WSE-3 that is 0.5 + 1 + 1 = 2.5 cycles per cell, which is the slope Chapter 12 measures (per-step cost ≈ 90 + 2.5·n cycles) <span class="tag derived">Derived from the measured rates</span>. The fixed ~90 cycles is the halo exchange, the completion tasks and the start-up of each instruction. One caveat: in Chapter 12's kernel, where both <code>@fadds</code> sources are offset views of the same array, WSE-2 also streams the add at 2 elements per cycle (0.5 cycles per cell) instead of the 1 per cycle measured here with three separate arrays <span class="tag measured">Measured, Chapter 12</span>. Operand placement changes the rate on WSE-2; the reason is not documented.
 </div>
 
 <div class="callout">

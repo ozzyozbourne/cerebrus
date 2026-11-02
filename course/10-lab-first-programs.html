@@ -216,7 +216,7 @@ SUCCESS!
 <tr><td><code>memcpy_d2h(y)</code></td><td class="r">3,252–7,689</td><td class="r">57%</td><td>decode (~520), then 64 × (data + control wavelet)</td></tr>
 <tr><td>idle tail</td><td class="r">7,690–7,740</td><td class="r">1%</td><td>the simulator stops after 50 idle cycles</td></tr>
 </table></div>
-<p>So the <code>@fmacs</code> is about 130 cycles of 7,740, under 2% <span class="tag measured">Measured</span>, and copying y back costs more than everything else together. Lab 3 separates kernel time from host I/O a different way: run the same program with 0 and 100 kernel iterations and subtract, so the host transfers cancel.</p>
+<p>So the <code>@fmacs</code> is about 130 cycles of 7,740, under 2% <span class="tag measured">Measured</span>, and copying y back costs more than everything else together. Lab 3 keeps host I/O out of its numbers the same way this lab's <code>timed/</code> variant does: it reads the on-tile timestamp counter at the start and end of the kernel on one PE. Subtracting whole-run totals for two step counts also works, but it is noisier (Chapter 12 explains why).</p>
 
 <h3>Cycles versus N</h3>
 <p>Running the unmodified program at several sizes (one run at a time, on an idle machine) gives a straight line <span class="tag measured">Measured</span>:</p>
