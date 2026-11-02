@@ -30,8 +30,8 @@
 
 <h2>How to use this course</h2>
 <ul>
-<li>Read in order the first time: each chapter builds on the previous one. Every chapter ends with "Check yourself" questions.</li>
-<li>Every number carries a provenance tag: <span class="tag vendor">Vendor</span> <span class="tag indep">Indep</span> <span class="tag analyst">Analyst</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span>. Web figures were gathered largely from search extracts of primary sources; check them against the primary document before relying on them.</li>
+<li>Read in order the first time: each chapter builds on the previous one. Every chapter ends with "Check yourself" questions, and the lab chapters have exercises with expected answers.</li>
+<li>Every number carries a provenance tag: <span class="tag vendor">Vendor</span> <span class="tag indep">Indep</span> <span class="tag analyst">Analyst</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span>. Web figures were gathered largely from search extracts of primary sources; check them against the primary document before relying on them.</li>
 <li>To run the programs: set up the SDK with <code>.claude/skills/cerebras-sdk/scripts/setup.sh</code>, then <code>source /home/user/cerebras-sdk/env.sh</code> and <code>bash course/programs/run_all.sh</code>.</li>
 <li>The research behind the course is in <code>reports/</code> and <code>research_notes/</code> in this repository.</li>
 </ul>
@@ -42,16 +42,16 @@
   const blurbs = [
     "Rooflines, ridge points, and why LLM decode is starved for bandwidth.",
     "Reticles, stitching, specs by generation, and surviving defects.",
-    "48 KB SRAM, registers, DSRs, SIMD, microthreads, no caches.",
+    "48 KB SRAM, banks, measured FLOP rates, microthreads, the memory budget.",
     "Wavelets, 24 colors, static routes, multicast, checkerboards.",
     "Data, local and control tasks; WSE-2 vs WSE-3; a real hang.",
-    "Data structure descriptors: one instruction, a whole loop.",
+    "Data structure descriptors: one instruction, a whole loop; measured rates and bank clashes.",
     "memcpy halos, copy vs streaming, the command stream, a real race.",
     "Weight streaming, MemoryX/SwarmX, inference across wafers, CS-4.",
     "Language, program anatomy, cslc, the simulator, debugging, setup.",
-    "SAXPY and wavelet-triggered tasks, validated on the simulator.",
-    "Systolic row reduction and multicast broadcast across PEs.",
-    "1-D heat equation with halo exchange; cycles per step measured.",
+    "SAXPY and wavelet-triggered tasks, step by step, with on-chip timing and a real race.",
+    "Row reduction and multicast broadcast; measured hop costs and streaming vs store-and-forward.",
+    "1-D heat equation with halo exchange; 90 + 2.5·n cycles per step, explained piece by piece.",
     "Tensix cores, five RISC-Vs, NoCs, reader/compute/writer kernels.",
     "SMs, HBM, SIMT, occupancy; SAXPY in CUDA vs CSL.",
     "Architecture, programming, scaling, evidence, and when to choose which.",
