@@ -177,6 +177,7 @@ ol.decoder li { margin: 4px 0; }
 <tr><td>CS-3</td><td>21 PB/s SRAM <span class="tag vendor">Vendor</span></td><td>1.2 Tb/s = 150 GB/s <span class="tag vendor">HC2024</span></td><td>≈ 140,000×</td><td>pipelines layers across wafers so only activations cross (inference), or streams each weight once per many tokens (training)</td></tr>
 <tr><td>H100</td><td>3.35 TB/s HBM3 <span class="tag vendor">Vendor</span></td><td>900 GB/s NVLink 4 <span class="tag vendor">Vendor via secondary</span></td><td>≈ 3.7×</td><td>keeps tensor parallelism inside the NVLink domain</td></tr>
 <tr><td>B200</td><td>~8 TB/s HBM3e <span class="tag vendor">Vendor</span></td><td>1.8 TB/s NVLink 5 <span class="tag vendor">Vendor via secondary</span></td><td>≈ 4.4×</td><td>same, across 72 GPUs in NVL72</td></tr>
+<tr><td>Groq 3 LPU (LP30)</td><td>~150 TB/s SRAM, ~0.5 GB <span class="tag vendor">Vendor via secondary</span></td><td>~2.5 TB/s scale-up <span class="tag vendor">Vendor via secondary</span></td><td>≈ 60×</td><td>spreads the decode layers over hundreds of chips in a 256-LPU rack</td></tr>
 <tr><td>Blackhole p150</td><td>512 GB/s GDDR6 <span class="tag vendor">Vendor</span></td><td>4 × 800 GbE = 400 GB/s <span class="tag derived">Derived</span></td><td>≈ 1.3×</td><td>treats many chips as one, at modest per-chip speed</td></tr>
 </table></div>
 <p class="small">NVLink figures are the usual bidirectional totals; per direction the GPU cliff is about twice as steep. The CS-3 figure is the whole system's I/O, so this cliff is the wafer edge that Chapter 1 gave a ridge of about 100,000 FLOP/byte.</p>
@@ -211,11 +212,36 @@ ol.decoder li { margin: 4px 0; }
 <div class="table-wrap"><table class="mini">
 <tr><th></th><th>Cerebras</th><th>NVIDIA</th><th>Tenstorrent</th></tr>
 <tr><td>Training</td><td>activations stay on the wafer; weights stream from MemoryX; SwarmX broadcasts weights and reduces gradients; "linear scaling" claimed <span class="tag vendor">Vendor</span>, no independent multi-system benchmark</td><td>one hardware for all phases; TP in NVLink, PP/DP across IB; the default for large-scale training</td><td>training recipes exist (TT-Blacksmith); no credible training benchmarks found; inference-first in practice</td></tr>
-<tr><td>Prefill</td><td>compute-bound (many tokens share each weight); fast decode "does not shorten prefill or time to first token"</td><td>compute-bound on Tensor Cores; NVIDIA now splits prefill onto Rubin CPX, a GDDR7 part <span class="tag vendor">Vendor via secondary</span></td><td>compute-bound on the matrix FPUs</td></tr>
-<tr><td>Decode</td><td>weights pinned in SRAM; limited by pipeline latency, not bandwidth (above)</td><td>bandwidth-bound per user; batching lifts aggregate throughput</td><td>bandwidth-bound: "bound by time to read model weights from DRAM" <span class="tag vendor">tt-metal LLMs report</span></td></tr>
+<tr><td>Prefill</td><td>compute-bound (many tokens share each weight); fast decode "does not shorten prefill or time to first token"</td><td>compute-bound on Tensor Cores, on the Rubin GPUs themselves. The GDDR7 prefill part announced in 2025, Rubin CPX, was missing from the GTC 2026 roadmap and is reported shelved <span class="tag unv">Unverified</span>; the split NVIDIA now shows is at decode (next row)</td><td>compute-bound on the matrix FPUs</td></tr>
+<tr><td>Decode</td><td>weights pinned in SRAM; limited by pipeline latency, not bandwidth (above)</td><td>bandwidth-bound per user; batching lifts aggregate throughput. From H2 2026, Attention-FFN Disaggregation: attention and KV cache on Rubin HBM, decode FFN/MoE layers on Groq 3 LPX SRAM chips <span class="tag vendor">Vendor via secondary</span> (<a href="17-gpu.html#groq-lpx">Ch. 17</a>)</td><td>bandwidth-bound: "bound by time to read model weights from DRAM" <span class="tag vendor">tt-metal LLMs report</span></td></tr>
 <tr><td>Evidence</td><td>decode: independent (AA); training: vendor only</td><td>broad</td><td>vendor repo tables only</td></tr>
 </table></div>
 <p>The chapter's verdicts are about inference decode. They do not carry over to training, where the sources hold no independent comparison at all.</p>
+
+<div class="callout key" id="sram-chips">
+<strong>Many small SRAM chips, or one 44 GB wafer</strong>
+<p>Since GTC 2026 NVIDIA's own decode answer includes on-chip SRAM: the Groq 3 LPX rack of LP30 LPUs, ~0.5 GB and ~150 TB/s each, 256 per rack (some reports say 128) <span class="tag vendor">Vendor via secondary</span> (<a href="17-gpu.html#groq-lpx">Ch. 17</a>). That makes the question in this chapter sharper. Both designs keep decode weights in SRAM; they differ in where the chip edges fall. All figures below are <span class="tag derived">Derived</span> from the tagged inputs.</p>
+<div class="table-wrap"><table class="mini">
+<tr><th></th><th>One WSE-3</th><th>One LP30 LPU</th><th>One LPX rack (256 LPUs)</th></tr>
+<tr><td>SRAM</td><td>44 GB</td><td>~0.5 GB</td><td>~128 GB ≈ 2.9 wafers</td></tr>
+<tr><td>SRAM bandwidth</td><td>21 PB/s</td><td>~150 TB/s</td><td>~38 PB/s ≈ 1.8 wafers</td></tr>
+<tr><td>Chips to match one wafer's SRAM</td><td>1</td><td>~88</td><td>—</td></tr>
+<tr><td>Bandwidth across chip edges</td><td>on-wafer fabric ~27 PB/s; 150 GB/s leaves the system</td><td>~2.5 TB/s per chip</td><td>~640 TB/s aggregate scale-up, ~1/42 of one wafer's fabric</td></tr>
+<tr><td>Llama-70B weights, 16-bit (~140 GB)</td><td>4 wafers (<a href="08-systems.html">Ch. 8</a>)</td><td>~280 LPUs: more than one rack</td><td>does not fit</td></tr>
+<tr><td>Llama-70B weights, FP8 (~70 GB)</td><td>2 wafers</td><td>~140 LPUs</td><td>fits, ~55% of the rack</td></tr>
+</table></div>
+<p>This is Chapter 2's reticle argument again. The LPX rack cuts an SRAM machine into reticle-sized pieces, so a layer's matrices cross a chip edge every ~0.5 GB, where bandwidth drops ~60×. The wafer crosses an edge only every 44 GB, and the drop there is ~140,000×. So the LPX design must keep many chip-to-chip transfers short and pipelined. The wafer avoids most of those transfers but pays a far steeper price at its edge. Neither side has published per-layer latency breakdowns, and no independent LPX decode measurement exists yet. NVIDIA's split also keeps attention and the KV cache in HBM on the GPUs. The wafer has to fit the KV cache in the same 44 GB as the weights.</p>
+</div>
+
+<div class="callout" id="other-designs">
+<strong>Other designs, one line each</strong>
+<ul>
+<li><b>Google TPU</b> (Ironwood, TPU7x): systolic matrix units fed from HBM (192 GiB, ~7.4 TB/s per chip), joined by a direct ICI 3-D torus up to 9,216 chips <span class="tag indep">Secondary</span> (Google Cloud TPU docs, via search extract). Philosophically between a GPU and Tenstorrent: HBM like the GPU, a switchless neighbour mesh like Galaxy.</li>
+<li><b>Groq</b> (still independent, running GroqCloud): a deterministic, compiler-scheduled SRAM-only chip; NVIDIA's licensed descendant is the LP30 above <span class="tag indep">Secondary</span>.</li>
+<li><b>SambaNova</b> SN40L: a dataflow "RDU" with three memory tiers per chip, ~520 MB SRAM, 64 GB HBM and up to 1.5 TB DDR (the datasheet says 768 GB), so it swaps experts and models from DDR instead of keeping them all in SRAM <span class="tag indep">Secondary</span> (arXiv 2405.07518; Hot Chips 2024).</li>
+<li><b>AMD Instinct</b> MI355X: an HBM-heavy GPU in the same class as NVIDIA's, 288 GB HBM3E at 8 TB/s per GPU <span class="tag indep">Secondary</span> (AMD product page via Tom's Hardware). Everything said here about NVIDIA's memory wall applies.</li>
+</ul>
+</div>
 
 <h2>Cost and energy per token</h2>
 <p>"GPUs win on throughput per dollar" is the main counterweight to Cerebras's speed. The model below shows <em>why</em> prices differ and what would change them. Every input is editable and tagged; every output is <span class="tag derived">Derived</span>.</p>
@@ -291,7 +317,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 <tr><th></th><th>Strength</th><th>Matching weakness</th></tr>
 <tr><td>Cerebras</td><td>21 PB/s local SRAM bandwidth <span class="tag vendor">Vendor</span>; one-cycle memory; native sparsity; on-wafer fabric; cycle-level simulator</td><td>44 GB per wafer, so 70B at FP16 needs 4+ systems (<a href="08-systems.html">Ch. 8</a>); ~23 kW per system <span class="tag vendor">Vendor</span>; per-token list price above batched GPUs; 48 KB per PE for code and data (<a href="03-processing-element.html">Ch. 3</a>); 24 colors minus 4 for memcpy (<a href="04-fabric.html">Ch. 4</a>, <a href="07-host-io.html">Ch. 7</a>); host I/O ~7 Gb/s per channel <span class="tag sdk">SDK</span> (<a href="07-host-io.html">Ch. 7</a>); WSE-2 vs WSE-3 differences that break ports (<a href="05-tasks.html">Ch. 5</a>); low-level CSL</td></tr>
 <tr><td>Tenstorrent</td><td>low price; open stack; Ethernet on the die (not on p100); large per-core SRAM</td><td>~512 GB/s DRAM per card <span class="tag vendor">Vendor</span>; decode "bound by time to read model weights from DRAM" <span class="tag vendor">tt-metal</span>; shipping cards cut by firmware from 140 to 120 cores (<a href="16-tenstorrent.html">Ch. 16</a>); maturing software; vendor-only benchmarks</td></tr>
-<tr><td>NVIDIA</td><td>capacity per device; CUDA ecosystem; NVL72 scale-up</td><td>decode stays below the ridge point even at batch 64 (<a href="17-gpu.html">Ch. 17</a>); FLOP/byte gap widening each generation (<a href="01-memory-wall.html">Ch. 1</a>); rack power; lock-in; announced specs revised before shipping (Rubin HBM4 22 → 19.2 TB/s)</td></tr>
+<tr><td>NVIDIA</td><td>capacity per device; CUDA ecosystem; NVL72 scale-up; from 2026 an SRAM decode tier (Groq 3 LPX) beside the HBM GPUs</td><td>decode stays below the ridge point even at batch 64 (<a href="17-gpu.html">Ch. 17</a>); FLOP/byte gap widening each generation (<a href="01-memory-wall.html">Ch. 1</a>); rack power; lock-in; announced specs revised before shipping (Rubin HBM4 22 → 19.2 TB/s)</td></tr>
 </table></div>
 
 <h2>What programming the wafer taught us</h2>
@@ -340,7 +366,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 </div>
 
 <h2>Back to the memory wall</h2>
-<p>Chapter 1 asked how to feed compute that grows faster than memory bandwidth. <strong>NVIDIA</strong> buys more HBM bandwidth each generation and raises intensity with batching and fused kernels; the ridge still climbs (295 → ~2,600 FLOP/byte from H100 to Rubin). <strong>Tenstorrent</strong> keeps tiles in a large per-core SRAM, streams weights from cheap GDDR6, and spreads models across chips over Ethernet that costs it almost no bandwidth. <strong>Cerebras</strong> makes the SRAM big enough to hold the working set and pays in capacity, power per system and communication between PEs. The labs confirmed that answer from the inside: memory was never the bottleneck, messages and their completion tasks were, and every byte had to be placed by hand.</p>
+<p>Chapter 1 asked how to feed compute that grows faster than memory bandwidth. <strong>NVIDIA</strong> buys more HBM bandwidth each generation and raises intensity with batching and fused kernels; the ridge still climbs (295 → ~2,600 FLOP/byte from H100 to Rubin). Since 2026 it also adds small SRAM chips (Groq 3 LPX) for decode, which concedes the wafer's point about bandwidth while keeping the chips reticle-sized. <strong>Tenstorrent</strong> keeps tiles in a large per-core SRAM, streams weights from cheap GDDR6, and spreads models across chips over Ethernet that costs it almost no bandwidth. <strong>Cerebras</strong> makes the SRAM big enough to hold the working set and pays in capacity, power per system and communication between PEs. The labs confirmed that answer from the inside: memory was never the bottleneck, messages and their completion tasks were, and every byte had to be placed by hand.</p>
 <h3>Where to go next</h3>
 <ul>
 <li>The SDK tutorials, in order (gemv-00 → 09, then the topic tutorials): <code>cerebras-sdk/extras/csl-extras-*/examples/tutorials</code> <span class="tag sdk">SDK 2.10.1</span>.</li>

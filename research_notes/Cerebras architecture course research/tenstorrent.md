@@ -1,5 +1,7 @@
 # Tenstorrent AI Accelerator Architecture and Programming Model (for comparison with the Cerebras WSE)
 
+> **Errata (2026-11-02).** Some figures below have been superseded by measurements in the course. See the "Errata / superseded by course measurements" table at the top of `reports/Cerebras architecture course research.md` and `course/reviews/CROSS_CHAPTER_NOTES.md`. Affected here: Blackhole L1 is 1536 KiB with 64 B flits and ≤16 KiB packets (1464 KiB / 32 B / 8 KiB are Wormhole).
+
 > Research note on method (as of 2026-11-01): this session's network sandbox blocked docs.tenstorrent.com, tenstorrent.com, theregister.com, servethehome.com, corsix.org, and blog.gpu.net. Only raw.githubusercontent.com could be fetched. Primary facts below come from fetched GitHub sources: tt-metal METALIUM_GUIDE.md, the tt-metal tech reports, and tt-isa-documentation. Everything else comes from search-result snippets, which are marked "(snippet)". Those should be re-checked against the full page before publication.
 
 ## 1. Product line and specs (Grayskull, Wormhole, Blackhole, Galaxy, 2025-2026 products)

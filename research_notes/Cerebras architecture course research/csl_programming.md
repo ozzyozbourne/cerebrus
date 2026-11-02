@@ -1,5 +1,7 @@
 # CSL Programming Model and Cerebras SDK 2.10.1 Toolchain
 
+> **Errata (2026-11-02).** Some figures below have been superseded by measurements in the course. See the "Errata / superseded by course measurements" table at the top of `reports/Cerebras architecture course research.md` and `course/reviews/CROSS_CHAPTER_NOTES.md`. Affected here: forgetting unblock_cmd_stream aborts after ~4 s in the simulator rather than hanging forever; DSD op rates and the queue/microthread collision were measured (CCN 1, 7, 11, 16).
+
 Scope note. Nearly everything below comes from primary material in the installed SDK 2.10.1 (`/home/user/cerebras-sdk`): the tutorial and benchmark sources in the extras tarball, the CSL standard library that ships inside the container image, the `--help` output of the tools, and my own compile-and-simulate runs. The online docs at sdk.cerebras.net could not be reached: DNS resolution failed from this cloud session, so that host has to be allowed in the session's network settings. Anything that only exists in the online docs is therefore listed under Gaps.
 
 Source abbreviations used in links:

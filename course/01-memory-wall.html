@@ -46,7 +46,7 @@
 <div><b>KV cache:</b> the keys and values of every earlier token, which attention re-reads on every decode step.</div>
 </div>
 
-<h2>Two numbers describe every accelerator</h2>
+<h2 id="two-numbers">Two numbers describe every accelerator</h2>
 <p>Strip an accelerator down and you get two numbers: how fast it can compute (peak FLOP/s) and how fast it can move data from where the data lives to where the math happens (bytes/s). The ratio between them is the <strong>ridge point</strong>:</p>
 <pre><code>ridge point  =  peak FLOP/s  ÷  memory bandwidth (bytes/s)      <span class="c">// units: FLOP per byte</span></code></pre>
 <p>A kernel has its own ratio, its <strong>arithmetic intensity</strong>: how many floating-point operations it performs for each byte it moves between the math units and the memory in question, reads plus writes. (For LLM decode that is essentially the weight bytes it reads.) If the kernel's intensity is below the ridge point, the arithmetic units sit idle waiting for memory — the kernel is <em>bandwidth-bound</em>. Above it, memory keeps up and the kernel is <em>compute-bound</em>. Plotting attainable performance against intensity gives the <strong>roofline</strong>: a slanted line (bandwidth × intensity) that meets a flat ceiling (peak compute) at the ridge.</p>
@@ -88,7 +88,7 @@
 </table></div>
 <p class="note">The H100 shared-memory figure assumes ~128 B per clock per SM at ~1.8 GHz; neither number is in our sources, so treat it as an order of magnitude. The registers are faster again. The SDK host-link row is 16 channels × ~7 Gb/s from the SDK's bandwidth-test README (Chapter 7). The 12 × 100 GbE figure comes only from a forum post citing Cerebras.</p>
 
-<h2>Why LLM decode lives on the slanted part</h2>
+<h2 id="decode">Why LLM decode lives on the slanted part</h2>
 <p>When a language model generates a token, every weight of the model is read once and used for one multiply-add per sequence in the batch. <strong>Worked example:</strong> a multiply-add is 2 FLOPs and an FP16 weight is 2 bytes, so batch-1 decode does 2 FLOP ÷ 2 B = <strong>about 1 FLOP per byte of weights</strong> <span class="tag derived">Derived</span>. That is 300× below the H100's HBM ridge, so the tensor cores are busy about 0.3% of the time.</p>
 <p>Because each token must stream every weight once, single-stream speed has a hard cap: <strong>tokens/s ≤ bandwidth ÷ model bytes</strong>. An 8B model in FP16 (16 GB) on one H100 gives 3.35 TB/s ÷ 16 GB ≈ <strong>210 tokens/s at most</strong> <span class="tag derived">Derived</span>, however many FLOPs the chip has. Prefill is different: it reuses each weight across every prompt token, so a 2,000-token prompt reaches about 1,300 FLOP/byte and is compute-bound <span class="tag derived">Derived</span>.</p>
 
@@ -137,7 +137,7 @@
 <figcaption><b>Decode reads everything to do very little.</b> Both sides read W once; the difference is how many times each byte is used. That is why tokens per second for a single user is capped by memory bandwidth, not by FLOPs. Intensities: <span class="tag derived">Derived</span>, using the formula below with d = 8,192.</figcaption>
 </figure>
 
-<h3>Why batching helps, and why it stops helping</h3>
+<h3 id="batching">Why batching helps, and why it stops helping</h3>
 <div class="callout derivation">
 <strong>Derivation: intensity of a linear layer, plus the KV cache</strong>
 <p>A linear layer multiplies a <em>d</em> × <em>d</em> weight matrix by <em>B</em> input vectors (one per sequence). FLOPs = 2·B·d². Bytes moved at FP16 = 2·d² (weights) + 2·2·B·d (inputs in, outputs out). So intensity = B·d² ÷ (d² + 2·B·d) ≈ B while B ≪ d. For d = 8,192: B = 1 gives 1.0, B = 64 gives 63, and B = 2,000 (a prefill) gives about 1,300 <span class="tag derived">Derived</span>. It can never exceed d/2 ≈ 4,100.</p>
@@ -173,7 +173,7 @@
 <p>On Tenstorrent the bound lands within about 2× of the real speed, so bandwidth really is the limit there, as Tenstorrent itself says. On the wafer the bound is 65–260× above the measured speed. Compute is not the limit either: 140 GFLOP per token against 4 × 15.6 PF allows about 450,000 tok/s <span class="tag derived">Derived</span>. With the weights in SRAM, single-stream decode is limited by something the roofline does not model: each token must pass through 80 layers in sequence, spread over four wafers joined by Ethernet, and each layer's partial sums must be reduced across many PEs over the fabric. <strong>On the wafer, decode becomes a latency and communication problem, not a bandwidth problem.</strong> The sources do not break down Cerebras's per-token latency, so this explanation is our inference <span class="tag derived">Derived</span>; Chapters 4, 5 and 8 show what that latency is made of.</p>
 <p>Prefill is the other half. On the flat part of the roofline every chip runs at its peak, so the comparison becomes FLOPs per dollar and per watt. Dense WSE-3 is estimated at about 16× an H100 (15.6 PF ÷ 989 TF) <span class="tag analyst">Analyst</span> <span class="tag derived">Derived</span>, but a CS-3 system draws about 23 kW <span class="tag vendor">Vendor</span>, and fast decode does not shorten time to first token. That is why the independently measured Cerebras advantage is tokens per second for one user, not cost per token at high batch ($0.60 per million tokens versus ~$0.10–0.25 on H100 at large batch <span class="tag vendor">Vendor</span> <span class="tag analyst">Analyst</span>; Chapter 18).</p>
 
-<h2>The wall is getting taller</h2>
+<h2 id="taller">The wall is getting taller</h2>
 <p>From H100 to Rubin, HBM bandwidth grows about 5.7× (3.35 → 19.2 TB/s; 19.2 is Rubin's revised spec, the launch spec was 22) <span class="tag derived">Derived from vendor figures</span>. Rubin is rated at about 50 PF NVFP4 for inference <span class="tag vendor">Vendor</span> (the sources do not say whether that is dense), roughly 50× the H100's 989 TF BF16. So the ridge rises from ~295 to ~2,600 FLOP/byte <span class="tag derived">Derived</span>. Part of that growth is the number format: an FP4 weight is a quarter of the bytes of a BF16 one, so decode intensity also rises 4×. Even so, the gap widens.</p>
 <div class="table-wrap"><table class="num">
 <tr><th>Chip</th><th>Format</th><th>Peak</th><th>Bandwidth</th><th>Ridge <span class="tag derived">Derived</span></th><th>Batch-1 decode at that format</th><th>Gap (ridge ÷ decode)</th></tr>
@@ -188,9 +188,9 @@
 </table></div>
 <p>Halving the bytes per weight doubles decode intensity, which is why every vendor pushes FP8 and FP4. For B200 the smaller format roughly kept pace with the extra FLOPs; for Rubin and Blackhole the gap is about twice the H100's. On every HBM or GDDR machine the gap is in the hundreds. The wafer rows sit below 1 only because they are measured against SRAM, and only while the weights fit in it.</p>
 
-<h2>Three answers to the same wall</h2>
+<h2 id="three-answers">Three answers to the same wall</h2>
 <ul>
-<li><strong>GPU:</strong> raise intensity (batching, fused kernels) and buy more HBM bandwidth every generation.</li>
+<li><strong>GPU:</strong> raise intensity (batching, fused kernels) and buy more HBM bandwidth every generation. Since 2026 NVIDIA also pairs its GPUs with an SRAM decode chip (Groq 3 LPX, Chapter 17), a partial move toward the on-chip-memory answer.</li>
 <li><strong>Tenstorrent:</strong> keep tiles in a large per-core SRAM, stream from cheap GDDR6, and spread models over Ethernet built into every chip.</li>
 <li><strong>Cerebras:</strong> make on-chip SRAM big enough to hold the working set, so decode runs on the SRAM roofline — then pay for it in capacity and in moving data between PEs.</li>
 </ul>
@@ -233,7 +233,7 @@
 
 <p><strong>Latency is not bandwidth.</strong> The GPU's thousands of threads hide the <em>wait</em> for each HBM access, but they cannot raise the <em>rate</em> at which HBM delivers bytes; a bandwidth-bound kernel stays bandwidth-bound however many threads it has. Little's law says how much work must be in flight: <code>bytes in flight = bandwidth × latency</code>. To keep 3.35 TB/s busy at a hypothetical 600 ns memory latency (an illustrative value, not from our sources), an H100 needs about 2 MB of requests outstanding <span class="tag derived">Derived</span>, which is why it keeps thousands of threads resident. A PE's SRAM answers in one cycle, so a PE needs only a few bytes in flight; the latency it must hide is the fabric's, about one cycle per hop plus about two cycles on and off the ramp (Chapter 4).</p>
 
-<h2>The comparison trap</h2>
+<h2 id="trap">The comparison trap</h2>
 <div class="widget" id="map">
 <h4>Capacity versus bandwidth: where can the working set live?</h4>
 <p class="hint">Each point is one memory level: how much it holds (x) and how fast it delivers (y), both log-scale. Fast memory is normally small. Hover or tap a point for its source. The two dashed lines are the FP16 weights of an 8B and a 70B model. Switch between the marketing comparison and a like-for-like one.</p>

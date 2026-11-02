@@ -1,5 +1,7 @@
 # NVIDIA GPU Architecture and Cross-Architecture Comparison (GPU vs Cerebras WSE vs Tenstorrent)
 
+> **Errata (2026-11-02).** Some figures below have been superseded by measurements in the course. See the "Errata / superseded by course measurements" table at the top of `reports/Cerebras architecture course research.md` and `course/reviews/CROSS_CHAPTER_NOTES.md`. Affected here: Rubin CPX is reported shelved (unconfirmed); NVIDIA now pairs Vera Rubin with the Groq 3 LPX SRAM decode rack (course Ch 17).
+
 *Research date: 2026-11-01. Method note: in this session WebFetch was blocked for every host tried (resources.nvidia.com, developer.nvidia.com, tomshardware.com, cerebras.ai, arxiv.org, chipsandcheese.com). All findings below come from WebSearch result summaries and snippets. Figures should be checked against the primary documents linked before they go into course material. Labels: **[VENDOR]** = vendor-published or vendor-claimed; **[INDEP]** = independent measurement or third-party analysis; **[SECONDARY]** = aggregator/blog that repeats specs.*
 
 ## 1. GPU internals: H100, B200/GB200, Rubin (2026). SM structure, memory hierarchy, NVLink, key numbers

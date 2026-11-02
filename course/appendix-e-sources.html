@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sources and Unverified Figures</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+.small { font-size: 14px; color: var(--muted); }
+.mini td, .mini th { font-size: 14px; vertical-align: top; }
+ul.bib { padding-left: 20px; font-size: 14.5px; }
+ul.bib li { margin: 2px 0; overflow-wrap: anywhere; }
+ul.bib .src { color: var(--muted); font-size: 12.5px; }
+.flag-table td:nth-child(2) { min-width: 220px; }
+.flag-table td:nth-child(4), .flag-table td:nth-child(5) { min-width: 160px; color: var(--muted); }
+.flag-table .tag { white-space: normal; }
+/* tag-count chart */
+.tc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tc-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  border-radius: 999px; padding: 3px 10px 3px 6px; font: 600 13px var(--sans); cursor: pointer; }
+.tc-chip i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.tc-chip[aria-pressed="false"] { opacity: .45; }
+.tc-chip[aria-pressed="false"] i { background: transparent !important; outline: 1px dashed var(--muted); }
+.tc-rows { margin-top: 10px; }
+.tc-row { display: grid; grid-template-columns: 58px 1fr 44px; gap: 8px; align-items: center; padding: 3px 4px; border-radius: 6px; cursor: pointer; }
+.tc-row:hover, .tc-row:focus { background: var(--surface-2); outline: none; }
+.tc-row.sel { background: var(--accent-soft); }
+.tc-row .lab { font: 600 13px var(--sans); white-space: nowrap; }
+.tc-row .lab a { color: var(--text); text-decoration: none; }
+.tc-row .bar { display: flex; height: 16px; border-radius: 4px; overflow: hidden; background: var(--surface-2); }
+.tc-row .bar span { display: block; height: 100%; min-width: 0; }
+.tc-row .tot { font: 600 13px var(--mono); text-align: right; }
+.tc-row.missing .bar { background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 4px, transparent 4px, transparent 8px); }
+.tc-row.missing .lab { color: var(--muted); }
+.c-vendor { background: var(--amber); } .c-indep { background: color-mix(in srgb, var(--green) 45%, var(--surface)); }
+.c-analyst { background: var(--purple); } .c-sdk { background: var(--blue); } .c-measured { background: var(--green); }
+.c-derived { background: color-mix(in srgb, var(--muted) 55%, var(--surface)); } .c-unv { background: var(--red); }
+#tc-table td, #tc-table th { text-align: right; font-variant-numeric: tabular-nums; }
+#tc-table td:first-child, #tc-table th:first-child { text-align: left; }
+#tc-table tr.sel td { background: var(--accent-soft); }
+.issue { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 12px 16px; margin: 14px 0; }
+.issue h3 { margin: 0 0 6px; font-size: 17px; }
+.issue dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 15px; }
+.issue dt { font-weight: 700; color: var(--muted); }
+.issue dd { margin: 0; }
+@media (max-width: 680px) { .issue dl { grid-template-columns: 1fr; } .issue dd { margin-bottom: 6px; } }
+</style>
+</head>
+<body>
+<main>
+<div class="kicker">Appendix E</div>
+<h1>Sources and unverified figures</h1>
+<p class="lede">Every number in this course carries a small coloured tag that says where it came from. This appendix explains the tags, lists the sources behind them, and keeps a generated list of every figure the course could not confirm, with what would settle each one. It ends with the open technical questions that the course's own simulator measurements raised but could not answer.</p>
+
+<div class="objectives">
+<h4>After this appendix you can</h4>
+<ul>
+<li>Read a provenance tag and say how much weight the number can bear.</li>
+<li>Check a figure yourself, from its tag back to a primary document or a simulator run.</li>
+<li>Find every Unverified or second-hand figure in the course, and the evidence that would settle it.</li>
+<li>Name the seven open questions about the PE and fabric that the measurements left open.</li>
+</ul>
+</div>
+
+<h2 id="tags">How provenance tags work</h2>
+<p>A tag follows the number or sentence it qualifies. In a table it applies to the cell it sits in. The tag's colour gives the class; the label inside can add the specific source ("Vendor, HC22", "SDK 2.10.1, topic-15").</p>
+<div class="table-wrap"><table class="mini">
+<tr><th>Tag</th><th>Means</th><th>How much weight it bears</th></tr>
+<tr><td><span class="tag measured">Measured</span></td><td>Run during this course's build in the Cerebras SDK 2.10.1 simulator (or compiled with cslc). The text says which chip (WSE-2 or WSE-3) and size.</td><td>High for the simulator. It is cycle-level, but it is not silicon: host I/O timing and anything outside the fabric are modelled.</td></tr>
+<tr><td><span class="tag sdk">SDK 2.10.1</span></td><td>Read directly from the installed SDK: tutorial READMEs, benchmark code, the CSL standard library in the container image, tool output.</td><td>High for programming facts. The SDK is the vendor's own working code.</td></tr>
+<tr><td><span class="tag vendor">Vendor</span></td><td>Published or presented by Cerebras, NVIDIA or Tenstorrent (datasheets, Hot Chips decks, ISA docs, press releases).</td><td>Accurate about what was claimed. Check the precision, sparsity, date and "announced vs shipping".</td></tr>
+<tr><td><span class="tag vendor">Vendor via secondary</span></td><td>A vendor figure that reached the course through press, a forum, a search-engine extract or a reprint, because the vendor's page was unreachable.</td><td>Probably right, but the wording, units or revision may have shifted. Listed below.</td></tr>
+<tr><td><span class="tag indep">Indep</span></td><td>A third-party measurement (Artificial Analysis, Chips and Cheese, peer-reviewed papers). "Secondary" uses the same colour for third-party descriptions that are not measurements.</td><td>Good evidence for what was measured. Check the configuration.</td></tr>
+<tr><td><span class="tag analyst">Analyst</span></td><td>A third-party estimate, not a measurement (SemiAnalysis, Futurum, GPU-cloud blogs).</td><td>A reasoned guess. Often the only dense-FLOP figure available.</td></tr>
+<tr><td><span class="tag derived">Derived</span></td><td>Arithmetic done in this course from tagged inputs. The inputs are next to it.</td><td>As good as its inputs. Re-do the sum.</td></tr>
+<tr><td><span class="tag unv">Unverified</span></td><td>No reachable source confirmed it. Kept because it is useful background, and listed below.</td><td>Treat as a lead, not a fact.</td></tr>
+</table></div>
+<p>Two limits applied throughout the build. Most vendor documentation sites (sdk.cerebras.ai, cerebras.ai, docs.tenstorrent.com, most NVIDIA pages) could not be fetched from the build environment, so many web facts came from search extracts of the cited pages. And the simulator is not hardware: no measured number here is a silicon measurement.</p>
+
+<h3>How to check a figure</h3>
+<ol>
+<li><b>Read the tag.</b> Measured and SDK figures can be checked locally. Vendor, Indep and Analyst figures point to a document. Derived figures point to their inputs.</li>
+<li><b>Find the source.</b> Use the label and the <a href="#bib">bibliography</a> below. Prefer the primary document (the Hot Chips deck, not the article about it).</li>
+<li><b>Match the conditions.</b> Which generation (WSE-2, WSE-3, WSE-3T)? Which precision, dense or sparse? Shipping or announced? Per chip, per system or per rack? Which spec revision (Rubin HBM4 went from 22 to 19.2 TB/s after announcement)?</li>
+<li><b>Redo the arithmetic</b> for Derived figures, with your own inputs if they differ.</li>
+<li><b>Re-run</b> Measured figures: each lab's <code>commands.sh</code> honours <code>ARCH=wse2|wse3</code>. Time kernels with the on-tile <code>&lt;time&gt;</code> counter on one PE (<a href="appendix-c-measuring.html">Appendix C</a>). Whole-run cycle counts vary by 1–4% with host load.</li>
+<li><b>Check the canonical list.</b> The course keeps one record of cross-chapter corrections (reviews/CROSS_CHAPTER_NOTES.md, items 1–24). Where a chapter and that list disagree, the list wins.</li>
+</ol>
+
+<h2 id="bib">Bibliography by topic</h2>
+<p>Built by the same script from every link in the research report, the four research notes and the course pages, plus the sources verified for the 2026 NVIDIA–Groq update in Chapters 17 and 18. Many were reached only through search extracts (see above). Local SDK paths use <code>EX/</code> for <code>/home/user/cerebras-sdk/extras/csl-extras-202604101435-6-d2f7d96e/examples/</code>.</p>
+<!-- bib:begin -->
+<p class="small">286 distinct sources after de-duplication. Grey text after each entry says where it is cited: <i>report</i> = the research report, a note name = that research note, <i>Ch N</i> = a course page.</p>
+<h3 id="bib-nvidia-groq">NVIDIA, Groq and the 2026 SRAM decode tier <span class="small">(14)</span></h3>
+<ul class="bib">
+<li><a href="https://www.abiresearch.com/market-research/insight/7787784-inference-is-disaggregating-to-balance-per" rel="noopener">ABI Research: Inference is disaggregating (32 trays × 8 LP30)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.computerweekly.com/news/366640398" rel="noopener">Computer Weekly: NVIDIA and Groq</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.constellationr.com/insights/news/nvidias-groq-deal-acquisition-acquihire-or-creative-licensing-deal" rel="noopener">Constellation Research: Nvidia&#x27;s Groq deal, acquisition, acquihire or licensing deal?</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.counterpointresearch.com/en/insights/GTC-2026-NVIDIA%E2%80%99s-LPU-Strategy-and-the-Rise-of-Agentic-AI-Infrastructure" rel="noopener">Counterpoint Research: GTC 2026, NVIDIA&#x27;s LPU strategy</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://groq.com/blog/groq-among-the-first-to-bring-nvidia-groq-3-lpx-and-vera-rubin-nvl72-to-market" rel="noopener">Groq blog: Groq among the first to bring NVIDIA Groq 3 LPX and Vera Rubin NVL72 to market</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://groq.com/newsroom/groq-and-nvidia-enter-non-exclusive-inference-technology-licensing-agreement-to-accelerate-ai-inference-at-global-scale" rel="noopener">Groq newsroom: Groq and Nvidia enter non-exclusive inference technology licensing agreement (24 Dec 2025)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://hashrateindex.com/blog/nvidia-vera-rubin-reference-architecture/" rel="noopener">Hashrate Index: NVIDIA Vera Rubin reference architecture (AFD, CPX shelved)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.hpcwire.com/2026/03/16/nvidia-boasts-7-chips-in-production-for-vera-rubin-platform-including-groq-3-lpu/" rel="noopener">HPCwire: Nvidia boasts 7 chips in production for Vera Rubin platform, including Groq 3 LPU (16 Mar 2026)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.nvidia.com/ja-jp/data-center/lpx/" rel="noopener">NVIDIA Groq 3 LPX product page (localised editions reached via search)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.spheron.network/blog/groq-lpu-vs-cerebras-wse-cheapest-inference-2026/" rel="noopener">Spheron Groq vs Cerebras</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.storagereview.com/news/nvidia-groq-3-lpx-everything-we-know" rel="noopener">StorageReview: NVIDIA Groq 3 LPX, everything we know</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.theregister.com/2025/12/31/groq_nvidia_analysis" rel="noopener">The Register: Groq–NVIDIA analysis (31 Dec 2025)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.3dtested.com/pc-components/gpus/nvidia-removes-rubin-cpx-accelerators-from-its-roadmap-groq-3-lpus-take-center-stage-as-cpx-is-removed" rel="noopener">Tom&#x27;s Hardware (via 3dtested): Nvidia removes Rubin CPX accelerators from its roadmap</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.tomshardware.com/tech-industry/semiconductors/nvidias-20-billion-groq-deal-produces-its-first-chip" rel="noopener">Tom&#x27;s Hardware: Nvidia&#x27;s $20 billion Groq deal produces its first chip</a> <span class="src">Ch 17/18 update</span></li>
+</ul>
+<h3 id="bib-cerebras-hw">Cerebras hardware and systems <span class="small">(41)</span></h3>
+<ul class="bib">
+<li><a href="https://www.cerebras.ai/blog/announcing-the-cerebras-architecture-for-extreme-scale-ai" rel="noopener">Announcing the Cerebras Architecture for Extreme-Scale AI</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://www.slideshare.net/slideshow/cerebras-ai-day-deck-a-closer-look-at-the-worlds-fastest-ai-chip/266911791" rel="noopener">Cerebras AI Day deck</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/cerebras-architecture-deep-dive-first-look-inside-the-hw-sw-co-design-for-deep-learning" rel="noopener">Cerebras architecture deep dive blog</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/100x-defect-tolerance-how-cerebras-solved-the-yield-problem" rel="noopener">Cerebras blog &quot;100x Defect Tolerance&quot;</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/linear-scaling-made-possible-with-weight-streaming" rel="noopener">Cerebras blog &quot;Linear scaling with weight streaming&quot;</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/cerebras-breaks-exascale-record-for-molecular-dynamics-simulations" rel="noopener">Cerebras blog: exascale MD record</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.cerebras.ai/press-release/cerebras-systems-announces-worlds-first-brain-scale-artificial-intelligence-solution" rel="noopener">Cerebras brain-scale press release</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://cerebras.net/chip/" rel="noopener">Cerebras chip page</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/cerebras-cs3" rel="noopener">Cerebras CS-3 blog</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/cerebras-cs-3-vs-nvidia-b200-2024-ai-accelerators-compared" rel="noopener">Cerebras CS-3 vs B200 blog</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://investors.cerebras.ai/news-releases/news-release-details/cerebras-unveils-cs-4-30-times-faster-gpu-based-solutions" rel="noopener">Cerebras CS-4 investor release</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/the-complete-guide-to-scale-out-on-cerebras-wafer-scale-clusters" rel="noopener">Cerebras scale-out guide</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/press-release/cerebras-systems-smashes-the-2-5-trillion-transistor-mark-with-new-second-generation-wafer-scale-engine" rel="noopener">Cerebras WSE-2 press release</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/press-release/cerebras-announces-third-generation-wafer-scale-engine" rel="noopener">Cerebras WSE-3 press release</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/blackwell-vs-cerebras" rel="noopener">Cerebras: Blackwell vs Cerebras</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.clarigital.com/hardware/ai-chips/cerebras/cs3/" rel="noopener">clarigital</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.damnang.com/p/cerebras-wse-3-the-technical-achievement" rel="noopener">damnang: WSE-3 physical ceiling</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.datacenterdynamics.com/en/news/cerebras-unveils-four-trillion-transistor-giant-chip-targets-generative-ai/" rel="noopener">DCD</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.datacenterdynamics.com/en/news/cerebras-unveils-cs-4-rack-scale-solution-powered-by-four-trillion-transistor-wse-3t-chip/" rel="noopener">DCD</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://futurumgroup.com/insights/cerebras-cs-3-bring-on-the-nvidia-blackwell-competition/" rel="noopener">Futurum</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://gpusmith.com/articles/en/cerebras-wafer-scale-engine-explained" rel="noopener">gpusmith</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://hc2024.hotchips.org/assets/program/conference/day2/72_HC2024.Cerebras.Sean.v03.final.pdf" rel="noopener">HC2024 Cerebras slides (Sean Lie)</a> <span class="src">gpu_and_comparison, report, wse_hardware</span></li>
+<li><a href="https://old.hotchips.org/hc31/HC31_1.13_Cerebras.SeanLie.v02.pdf" rel="noopener">HC31 Sean Lie slides</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://hc34.hotchips.org/assets/program/conference/day2/Machine%20Learning/HC2022_Cerebras_Final_v02.pdf" rel="noopener">HC34 Cerebras slides</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://hyper-accel.github.io/en/posts/cerebras-wse/" rel="noopener">hyper-accel blog</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.insidedeeptech.com/cerebras-wafer-scale-engine-wse-cs3-full-guide/" rel="noopener">insidedeeptech</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://introl.com/blog/cerebras-wafer-scale-engine-cs3-alternative-ai-architecture-guide-2025" rel="noopener">introl</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://blog.kowatek.com/?p=33381" rel="noopener">Kowatek</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://www.linuxpro.com.br/en/2026/09/cerebras-cs-4-inferencia-ia-video/" rel="noopener">linuxpro summary</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://mirrorfrog.com/en/docs/cards/cerebras/wse-3/" rel="noopener">mirrorfrog WSE-3 card</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://semiwiki.com/forum/threads/the-new-cerebras-cs-3.19821/" rel="noopener">SemiWiki forum</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.servethehome.com/?p=79969" rel="noopener">ServeTheHome</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://www.servethehome.com/cerebras-talks-going-rack-scale-with-their-wses-at-hot-chips-2026/" rel="noopener">ServeTheHome HC2026</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.servethehome.com/cerebras-wafer-scale-engine-wse-2-and-cs-2-at-hot-chips-34/" rel="noopener">ServeTheHome HC34</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.servethehome.com/cerebras-talks-going-rack-scale-with-their-wses-at-hot-chips-2026/cerebras-cs-4-hot-chips-2026-power-delivery-continued/" rel="noopener">STH HC2026 power delivery</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.theregister.com/systems/2026/08/19/cerebras-cs-4-rack-systems-juice-chips-for-every-last-drop-of-ai-performance/5289286" rel="noopener">The Register</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.tomshardware.com/news/cerebras-wafer-scale-engine-2-worlds-largest-chip-7nm-850000-cores" rel="noopener">Tom&#x27;s Hardware</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.tomshardware.com/tech-industry/artificial-intelligence/cerebras-launches-900000-core-125-petaflops-wafer-scale-processor-for-ai-theoretically-equivalent-to-about-62-nvidia-h100-gpus" rel="noopener">Tom&#x27;s Hardware</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://www.ece.ucdavis.edu/~bbaas/116/notes/VlsiInTheNews.2023.11.14.cerebras.pdf" rel="noopener">UC Davis EEC116 notes</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://wafer.substack.com/p/breaking-down-the-cerebras-wafer" rel="noopener">wafer.ai substack: breaking down the WSE</a> <span class="src">gpu_and_comparison, report, wse_hardware</span></li>
+<li><a href="https://wccftech.com/cerebras-cs-4-30x-uplift-ai-2026-next-gen-rack-solutions-cs-5-10k-tps-2027-cs-6-3d-wafer-scale-sram/" rel="noopener">Wccftech</a> <span class="src">report, wse_hardware</span></li>
+</ul>
+<h3 id="bib-cerebras-inf">Cerebras inference, benchmarks and business <span class="small">(21)</span></h3>
+<ul class="bib">
+<li><a href="https://aiweekly.co/alerts/cerebras-cs-4-posts-4400-tokenssec-up-to-30x-vs-gpus" rel="noopener">aiweekly</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://artificialanalysis.ai/providers/cerebras" rel="noopener">Artificial Analysis: Cerebras provider page</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://benchlm.ai/blog/posts/cerebras-won-speed-not-the-shortlist" rel="noopener">benchlm.ai</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.businesswire.com/news/home/20241118595546/en" rel="noopener">BusinessWire 2024-11-18</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.cerebras.ai/blog/cerebras-inference-3x-faster" rel="noopener">Cerebras blog</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.cerebras.ai/blog/introducing-cerebras-inference-ai-at-instant-speed" rel="noopener">Cerebras blog &quot;Introducing Cerebras Inference&quot;</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://cerebras.ai/blog/how-cerebras-serves-gpt-5-6-sol-at-up-to-750-tokens-per-second" rel="noopener">Cerebras blog: GPT-5.6 Sol at 750 tok/s</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.cerebras.ai/blog/ultrafast-frontier-inference-cerebras-deep-dive-at-hot-chips-2026" rel="noopener">Cerebras HC2026 blog</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://x.com/cerebras/status/1878926975571763571" rel="noopener">Cerebras on X</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://x.com/CerebrasSystems/status/1775188628811227389" rel="noopener">Cerebras on X (108 TB)</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://x.com/CerebrasSystems/status/1767977185535734057" rel="noopener">Cerebras on X (CG-3)</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.hpcwire.com/off-the-wire/cerebras-powers-openais-gpt-5-6-sol-ultrafast-mode/" rel="noopener">HPCwire</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://machine-learning-made-simple.medium.com/why-cerebras-raised-at-56-4-billion-usd-to-attack-nvidias-memory-bottleneck-c11bfe81f417" rel="noopener">Medium: Why Cerebras raised at $56.4B</a> <span class="src">gpu_and_comparison, report, wse_hardware</span></li>
+<li><a href="https://www.morphllm.com/cerebras-pricing" rel="noopener">morphllm: Cerebras pricing</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://newsletter.semianalysis.com/p/cerebras-faster-tokens-please" rel="noopener">SemiAnalysis &quot;Faster Tokens Please&quot;</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.spheron.network/blog/cerebras-vs-nvidia-h100-inference-2026/" rel="noopener">Spheron: Cerebras vs H100 2026</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://news.syncflo.xyz/2026-08-28-cerebras-systems-cs3-wafer-scale-engine-fast-inference.html" rel="noopener">SyncFlo</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://thedataexchange.media/cerebras-inference/" rel="noopener">The Data Exchange</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.theregister.com/2024/08/27/cerebras_ai_inference/" rel="noopener">The Register</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://ustastockman.substack.com/p/the-cerebras-bear-case-is-built-on" rel="noopener">ustastockman substack (pro-Cerebras)</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://venturebeat.com/ai/cerebras-says-its-chips-run-a-trillion-parameter-ai-model-nearly-7-times-faster-than-gpu-clouds" rel="noopener">VentureBeat</a> <span class="src">gpu_and_comparison, report</span></li>
+</ul>
+<h3 id="bib-sdk">Cerebras SDK and CSL programming <span class="small">(6)</span></h3>
+<ul class="bib">
+<li><a href="https://training-api.cerebras.ai/en/2.0.3/wsc/cerebras-basics/how-cerebras-works.html" rel="noopener">Cerebras developer docs &quot;How Cerebras works&quot;</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://sdk.cerebras.ai/llms-full.txt" rel="noopener">Cerebras SDK docs (llms-full.txt)</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://8968533.fs1.hubspotusercontent-na2.net/hubfs/8968533/Cerebras%20SDK%20Technical%20Overview%20White%20Paper.pdf" rel="noopener">Cerebras SDK Technical Overview white paper</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://sdk.cerebras.ai/csl/language/builtins" rel="noopener">SDK builtins</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://sdk.cerebras.ai/computing-with-cerebras" rel="noopener">SDK docs &quot;Wafer-Scale Engine Architecture&quot;</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://sdk.cerebras.ai/sdk-release-notes/sdk-rel-notes-cumulative" rel="noopener">SDK release notes</a> <span class="src">wse_hardware</span></li>
+</ul>
+<h3 id="bib-papers">Academic papers on wafer-scale computing <span class="small">(17)</span></h3>
+<ul class="bib">
+<li><a href="https://arxiv.org/pdf/2608.28048" rel="noopener">AI Hardware Accelerators for LLMs: Architectures and the Memory Wall (arXiv 2608.28048)</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://arxiv.org/abs/2404.15888" rel="noopener">arXiv:2404.15888 Near-Optimal Wafer-Scale Reduce</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://arxiv.org/pdf/2405.07898" rel="noopener">arXiv:2405.07898</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://arxiv.org/pdf/2503.11698" rel="noopener">arXiv:2503.11698 comparison paper</a> <span class="src">wse_hardware</span></li>
+<li><a href="https://arxiv.org/abs/2604.27985" rel="noopener">arXiv:2604.27985 SpMM on CS-3</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.computerhistory.org/collections/catalog/102752088" rel="noopener">Computer History Museum</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://microarch.org/micro54/media/lie-keynote.pdf" rel="noopener">Lie MICRO-54 keynote</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://www.llnl.gov/article/52081/nnsa-researchers-break-molecular-dynamics-timescale-barrier-worlds-largest-chip" rel="noopener">LLNL news</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://arxiv.org/pdf/2601.17754" rel="noopener">MLIR Lowering Pipeline for Stencils at Wafer-Scale (arXiv 2601.17754)</a> <span class="src">gpu_and_comparison, report, wse_hardware</span></li>
+<li><a href="https://www.ornl.gov/news/calculations-frontier-earns-gordon-bell-prize-ornl-major-presence-sc24" rel="noopener">ORNL</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://arxiv.org/abs/2010.03660" rel="noopener">Rocki et al., SC20, arXiv:2010.03660</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://arxiv.org/abs/2511.09447" rel="noopener">SpaDA: Spatial Dataflow Architecture Programming Language (arXiv 2511.09447)</a> <span class="src">gpu_and_comparison, report, wse_hardware</span></li>
+<li><a href="https://arxiv.org/abs/2605.07954" rel="noopener">Stencil Computations on Cerebras WSE (arXiv 2605.07954)</a> <span class="src">gpu_and_comparison, report, wse_hardware</span></li>
+<li><a href="https://www.nextplatform.com/2024/05/15/one-cerebras-wafer-beats-an-exascale-super-at-molecular-dynamics/" rel="noopener">The Next Platform, 2024-05-15</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://arxiv.org/pdf/2407.02079" rel="noopener">Theseus, arXiv:2407.02079</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/11580394" rel="noopener">US patent 11580394 &quot;Accelerated deep learning&quot;</a> <span class="src">report, wse_hardware</span></li>
+<li><a href="https://arxiv.org/abs/2209.15040" rel="noopener">Wafer-scale FFT, arXiv:2209.15040</a> <span class="src">report, wse_hardware</span></li>
+</ul>
+<h3 id="bib-tt">Tenstorrent <span class="small">(56)</span></h3>
+<ul class="bib">
+<li><a href="https://aiproductivity.ai/news/tenstorrent-quietbox-2-risc-v-ai-workstation/" rel="noopener">AIProductivity</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://www.aiwiki.ai/wiki/blackhole_tenstorrent" rel="noopener">AIWiki Blackhole</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://www.anandtech.com/show/21482/tenstorrent-launches-wormhole-ai-processors-466-fp8-tflops-at-300w" rel="noopener">AnandTech</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://blog.gpu.net/posts/2026/june/new-blog-june13/" rel="noopener">blog.gpu.net benchmarks post</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://www.counterpointresearch.com/en/insights/tenstorrent-at-the-open-frontier" rel="noopener">Counterpoint</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://www.design-reuse.com/news/202530698-qualcomm-is-reportedly-considering-a-tenstorrent-acquisition-for-up-to-10-billion-dollars-jim-keller-s-ai-and-risc-v-company-in-focus/" rel="noopener">Design &amp; Reuse</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://github.com/tenstorrent/tt-metal/blob/main/tech_reports/FlashAttention/FlashAttention.md" rel="noopener">FlashAttention tech report</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://flopper.io/system/tenstorrent-galaxy-blackhole" rel="noopener">Flopper Galaxy Blackhole</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://flopper.io/gpu/tenstorrent-wormhole-n300s" rel="noopener">Flopper n300s</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://flopper.io/gpu/tenstorrent-blackhole-p150a" rel="noopener">Flopper p150a</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://futurumgroup.com/insights/tenstorrents-galaxy-blackhole-can-risc-v-processors-expand-fast-inference-globally/" rel="noopener">Futurum</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://gigazine.net/gsc_news/en/20250404-tenstorrent-blackhole" rel="noopener">Gigazine</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://blog.gpu.net/posts/2026/june/new-blog-june11/" rel="noopener">gpu.net: Inside Tenstorrent chips (2026-06)</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://gpusmith.com/datasheets/tenstorrent-blackhole-p150-datasheet.pdf" rel="noopener">gpusmith p150 datasheet</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://hackster.io/news/tenstorrent-launches-its-risc-v-powered-ai-inference-acceleration-boards-the-grayskull-e75-and-e150-e5b07d9e7274" rel="noopener">Hackster</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://hothardware.com/news/tenstorrent-wormhole-developer-kits-workstations" rel="noopener">HotHardware</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://docs.tenstorrent.com/tt-metal/latest/tt-metalium/tt_metal/examples/matmul_single_core.html" rel="noopener">Matmul single core</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://github.com/tenstorrent/tt-metal/blob/main/METALIUM_GUIDE.md" rel="noopener">METALIUM_GUIDE.md</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://insights.munich-startup.de/news/feed/tenstorrent-launches-110k-galaxy-blackhole-ai-server-with-32-accelerators-and-23-petaflops" rel="noopener">Munich Startup</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://insights.munich-startup.de/news/feed/tenstorrent-launches-galaxy-blackhole-ai-system-with-10x-faster-video-generation-and-350-tokens-second-llm-inference" rel="noopener">Munich Startup</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://arxiv.org/pdf/2606.09879" rel="noopener">Operator Fusion for LLM Inference on Tensix (arXiv 2606.09879)</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://pypi.org/project/ttnn/" rel="noopener">PyPI ttnn</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://servethehome.com/tenstorrent-blackhole-and-metalium-for-standalone-ai-processing" rel="noopener">ServeTheHome</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://www.spheron.network/blog/tenstorrent-vs-nvidia-open-source-ai-hardware/" rel="noopener">Spheron: Tenstorrent vs NVIDIA 2026</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://finance.technews.tw/2026/07/10/qualcomm-reportedly-acquires-tensorrent-for-10-billion/" rel="noopener">TechNews TW</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://github.com/tanaymihani/tensixfuse" rel="noopener">tensixfuse repo</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://docs.tenstorrent.com/aibs/blackhole/specifications.html" rel="noopener">Tenstorrent Blackhole specs</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://tenstorrent.com/hardware/galaxy" rel="noopener">Tenstorrent Galaxy page</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://docs.tenstorrent.com/aibs/grayskull/specifications.html" rel="noopener">Tenstorrent Grayskull spec page</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://tenstorrent.com/ja/hardware/galaxy" rel="noopener">Tenstorrent JP Galaxy</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://tenstorrent.com/newsroom/tenstorrent-announces-availability-of-tt-ascalon" rel="noopener">Tenstorrent newsroom</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://riscv.epcc.ed.ac.uk/assets/files/hpcasia25/Tenstorrent.pdf" rel="noopener">Tenstorrent slides, EPCC HPC Asia 2025</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://tenstorrent.com/software/tt-forge" rel="noopener">Tenstorrent TT-Forge page</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://tenstorrent.com/assets/one-pagers/08.01.24_Wormhole.pdf" rel="noopener">Tenstorrent Wormhole one-pager</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://docs.tenstorrent.com/aibs/wormhole/specifications.html" rel="noopener">Tenstorrent Wormhole specs</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://thelogic.co/briefing/intel-qualcomm-interested-in-acquiring-tenstorrent-report/" rel="noopener">The Logic</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://www.theregister.com/2025/11/27/tenstorrent_quietbox_review/" rel="noopener">The Register review</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://riscv.org/blog/tenstorrents-blackhole-chips-boast-768-risc-v-cores-and-almost-as-many-flops/" rel="noopener">The Register via RISC-V Intl.</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://www.tomshardware.com/tech-industry/semiconductors/jim-kellers-tenstorrent-is-downgrading-blackhole-p150-cards-from-140-to-120-tensor-cores-via-firmware-update-will-ship-cards-with-120-tensor-cores-going-forward-company-claims-existing-users-should-expect-1-2-percent-performance-drop" rel="noopener">Tom&#x27;s Hardware: Blackhole downgrade</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://tenstorrent.com/software/tt-buda" rel="noopener">TT-Buda page</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://github.com/tenstorrent/tt-forge" rel="noopener">tt-forge GitHub</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://raw.githubusercontent.com/tenstorrent/tt-isa-documentation/main/BlackholeA0/README.md" rel="noopener">tt-isa-documentation BlackholeA0 README</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://raw.githubusercontent.com/tenstorrent/tt-isa-documentation/main/README.md" rel="noopener">tt-isa-documentation README</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://raw.githubusercontent.com/tenstorrent/tt-isa-documentation/main/WormholeB0/NoC/README.md" rel="noopener">tt-isa-documentation WormholeB0 NoC</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://raw.githubusercontent.com/tenstorrent/tt-isa-documentation/main/WormholeB0/README.md" rel="noopener">tt-isa-documentation WormholeB0 README</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://raw.githubusercontent.com/tenstorrent/tt-isa-documentation/main/WormholeB0/TensixTile/README.md" rel="noopener">tt-isa-documentation WormholeB0 TensixTile</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://raw.githubusercontent.com/tenstorrent/tt-metal/main/tech_reports/Blackhole/BlackholeBringUpProgrammingGuide.md" rel="noopener">tt-metal Blackhole Bring-Up Programming Guide</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://raw.githubusercontent.com/tenstorrent/tt-metal/main/tech_reports/LLMs/llms.md" rel="noopener">tt-metal LLMs tech report</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://raw.githubusercontent.com/tenstorrent/tt-metal/main/METALIUM_GUIDE.md" rel="noopener">tt-metal METALIUM_GUIDE.md</a> <span class="src">report, tenstorrent</span></li>
+<li><a href="https://github.com/tenstorrent/tt-metal/blob/main/models/docs/MODEL_UPDATES.md" rel="noopener">tt-metal MODEL_UPDATES.md</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://github.com/mgajewskiTT/tt-metal" rel="noopener">tt-metal README tables</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://docs.tenstorrent.com/tt-metal/latest/tt-metalium/tt_metal/examples/eltwise_binary.html" rel="noopener">TT-Metalium docs: Eltwise binary</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://docs.tenstorrent.com/tt-metal/latest/tt-metalium/tt_metal/labs/matmul/lab1/lab1.html" rel="noopener">TT-Metalium docs: Lab 1 single-core matmul</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://videocardz.com/newz/tenstorrent-downgrades-blackhole-p150-pcie-cards-specs-from-140-to-120-cores" rel="noopener">VideoCardz</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://wccftech.com/jim-keller-cerebras-ipo-was-helpful-tenstorrent-to-beat-them-on-everything/" rel="noopener">Wccftech</a> <span class="src">tenstorrent</span></li>
+<li><a href="https://de.whatpsu.com/articles/2460-Tenstorrent-Removes-20-Cores-From-Already-Shipped-Blackhole-P150-Cards" rel="noopener">WhatPSU</a> <span class="src">tenstorrent</span></li>
+</ul>
+<h3 id="bib-nvidia">NVIDIA GPUs <span class="small">(26)</span></h3>
+<ul class="bib">
+<li><a href="https://chipsandcheese.com/p/nvidias-h100-funny-l2-and-tons-of-bandwidth" rel="noopener">Chips and Cheese: &quot;Nvidia&#x27;s H100: Funny L2, and Tons of Bandwidth&quot;</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.cudocompute.com/products/nvidia-gb200-nvl72" rel="noopener">CudoCompute GB200 NVL72</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://cyfuture.ai/nvidia-gb200-gpu-server" rel="noopener">cyfuture GB200</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://datacenterdynamics.com/en/news/nvidia-announces-vera-rubin-superchip-for-late-2026" rel="noopener">DCD</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://cudacourseh100.github.io/H100-Course/slides/1.%20Introduction%20to%20H100.pdf" rel="noopener">H100 course slides</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://hashrateindex.com/blog/nvidia-vera-rubin-nvl72-specs-breakdown/" rel="noopener">Hashrate Index NVL72 breakdown</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://hothardware.com/news/nvidia-announce-vera-rubin-nvl576" rel="noopener">HotHardware roadmap</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://hyper.ai/en/stories/3422d6a72152beb34a564461208438ff" rel="noopener">hyper.ai summary</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://jarvislabs.ai/ai-faqs/nvidia-b200-specs" rel="noopener">Jarvislabs B200 specs</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://modal.com/blog/nvidia-b200-pricing" rel="noopener">Modal B200 pricing</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.nextpcb.com/blog/nvidia-gb200-nvl72-architecture" rel="noopener">nextpcb: GB200 NVL72 architecture</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://developer.download.nvidia.com/CUDA/training/cuda_webinars_WarpsAndOccupancy.pdf" rel="noopener">NVIDIA CUDA webinar: Warps and Occupancy</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.hpctech.co.jp/assets/images/info/catalog/pdf/gtc22-whitepaper-hopper_v1.02.pdf" rel="noopener">NVIDIA H100 Tensor Core GPU Architecture whitepaper v1.02 (mirror)</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://lists.riscv.org/g/tech-attached-matrix-extension/attachment/25/0/NVIDIA%20Hopper%20Architecture%20In-Depth%20_%20NVIDIA%20Technical%20Blog.pdf" rel="noopener">NVIDIA Hopper Architecture In-Depth blog (PDF mirror)</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://pasqualepillitteri.it/en/news/27546/nvidia-site-confirms-vera-rubin-spec-cut-hbm4-nvlink-6" rel="noopener">pasqualepillitteri.it: NVIDIA site confirms Vera Rubin spec cut</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.runpod.io/gpu-models/b200" rel="noopener">RunPod B200</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://inferencex.semianalysis.com/chips/gb200-nvl72" rel="noopener">SemiAnalysis InferenceX GB200 NVL72</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://inferencex.semianalysis.com/chips/b200" rel="noopener">SemiAnalysis InferenceX: B200</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.spheron.network/blog/nvidia-b200-complete-guide/" rel="noopener">Spheron B200 guide</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://spheron.network/gpu-rental/gb200/" rel="noopener">Spheron GB200</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.spheron.network/blog/nvidia-gb200-nvl72-guide/" rel="noopener">Spheron NVL72 guide</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://tech-insider.org/nvidia-gtc-2026-rubin-gpu-analysis/" rel="noopener">tech-insider.org</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.theregister.com/2026/01/05/ces_rubin_nvidia/" rel="noopener">The Register, CES 2026, 2026-01-05</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://tomshardware.com/pc-components/gpus/nvidias-vera-rubin-platform-in-depth-inside-nvidias-most-complex-ai-and-hpc-platform-to-date" rel="noopener">Tom&#x27;s Hardware Vera Rubin in depth</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://wccftech.com/nvidia-official-statement-on-vera-rubin-spec-change/" rel="noopener">Wccftech: NVIDIA official statement on Vera Rubin spec change</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://en.wikipedia.org/wiki/Hopper_(microarchitecture)" rel="noopener">Wikipedia: Hopper</a> <span class="src">gpu_and_comparison</span></li>
+</ul>
+<h3 id="bib-roofline">Roofline, GPU programming and inference economics (tutorials and analysis) <span class="small">(14)</span></h3>
+<ul class="bib">
+<li><a href="https://bentoml.com/llm/kernel-optimization/gpu-architecture-fundamentals" rel="noopener">BentoML: GPU architecture fundamentals</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://dev.to/ji_ai/why-llm-decoding-is-memory-bound-prefill-vs-decode-roofline-223f" rel="noopener">dev.to: why LLM decoding is memory-bound</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.digitalocean.com/community/tutorials/cuda-performance-tuning-workflow" rel="noopener">DigitalOcean: CUDA performance tuning</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.lrde.epita.fr/~carlinet/cours/GPGPU/j1-part4-gpu_programming_model.slides.pdf" rel="noopener">EPITA GPGPU slides</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://intro-to-cuda.readthedocs.io/en/latest/tutorial/warps.html" rel="noopener">Intro to CUDA: Understanding Warps</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://mlsysbook.ai/mlsysim/tutorials/00_hello_roofline.html" rel="noopener">mlsysbook: Hello Roofline</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://handbook.modular.com/kernel-optimization/gpu-architecture-fundamentals/gpu-memory/" rel="noopener">Modular handbook: GPU memory hierarchy</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://sergiunistor.substack.com/p/cuda-made-simple-a-short-practical" rel="noopener">Sergiu Nistor: CUDA Made Simple</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.spheron.network/blog/gpu-memory-hierarchy-diagram-registers-to-hbm-explained/" rel="noopener">Spheron: memory hierarchy</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.spheron.network/blog/the-roofline-model-for-llm-inference-are-you-compute-bound-o/" rel="noopener">Spheron: roofline model for LLM inference</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://theorempath.com/topics/cuda-programming-fundamentals" rel="noopener">TheoremPath: CUDA fundamentals</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.zartis.com/you-dont-have-a-compute-problem-you-have-a-bytes-per-token-problem/" rel="noopener">Zartis: bytes-per-token problem</a> <span class="src">gpu_and_comparison, report</span></li>
+<li><a href="https://www.zeroentropy.dev/concepts/arithmetic-intensity/" rel="noopener">ZeroEntropy: arithmetic intensity</a> <span class="src">gpu_and_comparison</span></li>
+<li><a href="https://www.zeroentropy.dev/concepts/cuda-programming/" rel="noopener">ZeroEntropy: CUDA programming</a> <span class="src">gpu_and_comparison</span></li>
+</ul>
+<h3 id="bib-other">Other accelerators (TPU, SambaNova, AMD) <span class="small">(6)</span></h3>
+<ul class="bib">
+<li><a href="https://www.amd.com/en/products/accelerators/instinct/mi350/mi355x/platform.html" rel="noopener">AMD Instinct MI355X platform page</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://docs.cloud.google.com/tpu/docs/tpu7x" rel="noopener">Google Cloud: TPU7x (Ironwood) documentation</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://arxiv.org/abs/2405.07518" rel="noopener">Prabhakar et al., SambaNova SN40L: scaling the AI memory wall (arXiv 2405.07518)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.hc2024.hotchips.org/assets/program/conference/day1/48_HC2024.Sambanova.Prabhakar.final-withoutvideo.pdf" rel="noopener">SambaNova at Hot Chips 2024 (Prabhakar)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.theregister.com/2025/11/06/googles_ironwood_tpus_ai/" rel="noopener">The Register: Google&#x27;s Ironwood TPUs (6 Nov 2025)</a> <span class="src">Ch 17/18 update</span></li>
+<li><a href="https://www.tomshardware.com/pc-components/gpus/amd-announces-mi350x-and-mi355x-ai-gpus-claims-up-to-4x-generational-gain-up-to-35x-faster-inference-performance" rel="noopener">Tom&#x27;s Hardware: AMD announces MI350X and MI355X</a> <span class="src">Ch 17/18 update</span></li>
+</ul>
+<h3 id="bib-local">Installed SDK 2.10.1 files cited by the research notes <span class="small">(85)</span></h3>
+<ul class="bib">
+<li><code>EX/benchmarks</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/benchmarks/25-pt-stencil/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/benchmarks/25-pt-stencil/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/benchmarks/bandwidth-test/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/benchmarks/conjugate-gradient/run.py</code> <span class="src">csl_programming</span></li>
+<li><code>EX/benchmarks/game-of-life/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/benchmarks/game-of-life/layout.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/benchmarks/gemv-collectives_2d/README.rst</code> <span class="src">csl_programming</span></li>
+<li><code>EX/benchmarks/row-col-broadcast/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/benchmarks/single-tile-matvec/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/benchmarks/spmv-hypersparse/run.py</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-00-basic-syntax/code.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-00-basic-syntax/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-01-complete-program/commands_wse3.sh</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/gemv-01-complete-program/layout.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-01-complete-program/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-01-complete-program/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-01-complete-program/run.py</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-02-memory-dsds/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-02-memory-dsds/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-02-memory-dsds/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/gemv-03-memcpy/run.py</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-04-params/layout.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-04-params/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-05-multiple-pes/README.rst</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-06-routes-1/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-06-routes-1/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-06-routes-1/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-07-routes-2/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-07-routes-2/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-08-routes-3/layout.csl</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-08-routes-3/pe_program.csl</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-08-routes-3/README.rst</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-08-routes-3/run.py</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/gemv-09-streaming/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-09-streaming/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/gemv-09-streaming/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/pipeline-01-basic/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/pipeline-01-basic/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/pipeline-02-fifo/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/pipeline-02-fifo/README.rst</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/sdklayout-01-introduction/gv.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/sdklayout-01-introduction/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/sdklayout-02-routing/send_receive.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/sdklayout-03-ports-and-connections/add2vec.csl</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/sdklayout-04-h2d-d2h/add2vec.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-01-arrays-and-pointers/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-01-arrays-and-pointers/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/topic-02-libraries/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-02-libraries/README.rst</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-03-streaming-wavelet-data/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/topic-04-sparse-tensors/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-04-sparse-tensors/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/topic-05-sentinels/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-05-sentinels/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/topic-06-switches/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-06-switches/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/topic-06-switches/send.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-07-switches-entrypt/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-07-switches-entrypt/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/topic-08-filters/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-08-filters/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/topic-09-fifos/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-09-fifos/buffer.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-09-fifos/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/topic-10-map-builtin/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-10-map-builtin/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-10-map-builtin/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/topic-11-collectives/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-11-collectives/pe_program.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-12-debug-library/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-12-debug-library/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/topic-12-debug-library/receiver.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-13-simprint/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/topic-14-color-swap/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>EX/tutorials/topic-15-wse3-microthreads/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-15-wse3-microthreads/README.rst</code> <span class="src">report</span></li>
+<li><code>EX/tutorials/topic-16-queue-flush/</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-16-queue-flush/queue_flush_sender.csl</code> <span class="src">csl_programming</span></li>
+<li><code>EX/tutorials/topic-16-queue-flush/README.rst</code> <span class="src">csl_programming, report</span></li>
+<li><code>LIB</code> <span class="src">csl_programming</span></li>
+<li><code>LIB/collectives_2d</code> <span class="src">csl_programming</span></li>
+<li><code>LIB/runtime</code> <span class="src">csl_programming</span></li>
+<li><code>LIB/target</code> <span class="src">csl_programming</span></li>
+</ul>
+<!-- bib:end -->
+
+<h2 id="unverified">Unverified and second-hand figures</h2>
+<p>This list is generated, not written by hand. <code>course/tools/scan_tags.py</code> reads every course page in the order of the navigation, finds each static provenance tag, and takes the sentence (or table row) the tag follows as the claim. It flags every <span class="tag unv">Unverified</span> tag, and every tag whose label says the figure came via press, a forum, a search extract, a reprint or "secondary" reporting. The "why" and "what would settle it" columns come from rules in the script, keyed on the label and on what the claim is about. To regenerate after editing any chapter, run:</p>
+<pre><code>python3 course/tools/scan_tags.py           # rewrites the generated parts of this page
+python3 course/tools/scan_tags.py --check   # prints per-page counts only</code></pre>
+<p class="small">Tags drawn at run time by widget scripts (for example the readouts in Chapter 18's calculators) are not counted. Pages listed in the navigation but not yet written appear hatched in the chart.</p>
+
+<div class="widget" id="tc">
+<h4>Provenance tags by page</h4>
+<p class="hint">Toggle tag classes to show or hide them. Click a page's bar (or its row in the table) to filter the list below to that page; click it again to clear. The search box filters the list by claim text.</p>
+<div class="tc-chips" id="tc-chips" role="group" aria-label="Tag classes"></div>
+<div class="controls">
+<label>Sort <select id="tc-sort"><option value="order">course order</option><option value="total">most tags</option><option value="flag">most flagged</option></select></label>
+<label>Search claims <input id="tc-q" type="search" placeholder="e.g. NVLink" size="14"></label>
+<button type="button" class="btn secondary" id="tc-clear">Clear filters</button>
+</div>
+<div class="tc-rows" id="tc-rows" aria-label="Bar chart of tag counts per page"></div>
+<div class="rd small" id="tc-out" aria-live="polite"></div>
+<div class="table-wrap"><table class="mini" id="tc-table"></table></div>
+</div>
+
+<!-- scan:begin -->
+<p class="small" id="scan-stamp">Generated on <b>2026-11-02</b> by <code>python3 course/tools/scan_tags.py</code> from 15 pages: <b>992</b> static provenance tags, of which <b>18</b> are Unverified and <b>36</b> are vendor or other figures reached via secondary reporting. Pages listed in the course but not yet written: Ch 9, Ch 14, Ch 15, App A, App B, App C, App D.</p>
+<script type="application/json" id="scan-data">{"generated": "2026-11-02", "classes": ["vendor", "indep", "analyst", "sdk", "measured", "derived", "unv"], "pages": [{"href": "01-memory-wall.html", "short": "Ch 1", "title": "The memory wall", "missing": false, "c": {"vendor": 31, "indep": 4, "analyst": 8, "sdk": 3, "measured": 3, "derived": 39, "unv": 0, "via": 2}}, {"href": "02-the-wafer.html", "short": "Ch 2", "title": "One chip, one wafer", "missing": false, "c": {"vendor": 37, "indep": 10, "analyst": 5, "sdk": 10, "measured": 4, "derived": 27, "unv": 0, "via": 2}}, {"href": "03-processing-element.html", "short": "Ch 3", "title": "Inside a processing element", "missing": false, "c": {"vendor": 19, "indep": 7, "analyst": 0, "sdk": 21, "measured": 15, "derived": 10, "unv": 0, "via": 3}}, {"href": "04-fabric.html", "short": "Ch 4", "title": "The fabric: wavelets and colors", "missing": false, "c": {"vendor": 3, "indep": 7, "analyst": 0, "sdk": 30, "measured": 6, "derived": 9, "unv": 0, "via": 0}}, {"href": "05-tasks.html", "short": "Ch 5", "title": "Tasks: computing on arrival", "missing": false, "c": {"vendor": 2, "indep": 0, "analyst": 0, "sdk": 23, "measured": 9, "derived": 10, "unv": 0, "via": 1}}, {"href": "06-dsds.html", "short": "Ch 6", "title": "DSDs: loops as hardware", "missing": false, "c": {"vendor": 3, "indep": 0, "analyst": 0, "sdk": 24, "measured": 20, "derived": 10, "unv": 1, "via": 0}}, {"href": "07-host-io.html", "short": "Ch 7", "title": "Host I/O and memcpy", "missing": false, "c": {"vendor": 3, "indep": 0, "analyst": 0, "sdk": 33, "measured": 7, "derived": 14, "unv": 0, "via": 0}}, {"href": "08-systems.html", "short": "Ch 8", "title": "Systems: CS-3, MemoryX, SwarmX, CS-4", "missing": false, "c": {"vendor": 47, "indep": 4, "analyst": 2, "sdk": 1, "measured": 1, "derived": 30, "unv": 0, "via": 2}}, {"href": "09-model-to-tokens.html", "short": "Ch 9", "title": "From model to tokens", "missing": true, "c": {"vendor": 0, "indep": 0, "analyst": 0, "sdk": 0, "measured": 0, "derived": 0, "unv": 0, "via": 0}}, {"href": "10-csl-toolchain.html", "short": "Ch 10", "title": "CSL and the toolchain", "missing": false, "c": {"vendor": 3, "indep": 0, "analyst": 0, "sdk": 22, "measured": 29, "derived": 2, "unv": 0, "via": 0}}, {"href": "11-lab-first-programs.html", "short": "Ch 11", "title": "Lab 1: SAXPY and wavelet tasks", "missing": false, "c": {"vendor": 2, "indep": 0, "analyst": 0, "sdk": 12, "measured": 29, "derived": 3, "unv": 0, "via": 0}}, {"href": "12-lab-neighbours.html", "short": "Ch 12", "title": "Lab 2: reduce and broadcast", "missing": false, "c": {"vendor": 0, "indep": 0, "analyst": 0, "sdk": 3, "measured": 14, "derived": 5, "unv": 0, "via": 0}}, {"href": "13-lab-stencil.html", "short": "Ch 13", "title": "Lab 3: a heat stencil, measured", "missing": false, "c": {"vendor": 1, "indep": 1, "analyst": 0, "sdk": 3, "measured": 19, "derived": 5, "unv": 0, "via": 0}}, {"href": "14-lab-gemm.html", "short": "Ch 14", "title": "Lab 4: 2-D GEMM with SUMMA", "missing": true, "c": {"vendor": 0, "indep": 0, "analyst": 0, "sdk": 0, "measured": 0, "derived": 0, "unv": 0, "via": 0}}, {"href": "15-lab-cg.html", "short": "Ch 15", "title": "Lab 5: a conjugate-gradient solver", "missing": true, "c": {"vendor": 0, "indep": 0, "analyst": 0, "sdk": 0, "measured": 0, "derived": 0, "unv": 0, "via": 0}}, {"href": "16-tenstorrent.html", "short": "Ch 16", "title": "Tenstorrent, the middle path", "missing": false, "c": {"vendor": 72, "indep": 0, "analyst": 1, "sdk": 2, "measured": 0, "derived": 13, "unv": 0, "via": 1}}, {"href": "17-gpu.html", "short": "Ch 17", "title": "NVIDIA GPUs, the incumbent", "missing": false, "c": {"vendor": 20, "indep": 2, "analyst": 1, "sdk": 0, "measured": 1, "derived": 22, "unv": 13, "via": 10}}, {"href": "18-comparison.html", "short": "Ch 18", "title": "Head to head", "missing": false, "c": {"vendor": 74, "indep": 12, "analyst": 5, "sdk": 9, "measured": 10, "derived": 26, "unv": 4, "via": 15}}, {"href": "appendix-a-glossary.html", "short": "App A", "title": "Glossary and number formats", "missing": true, "c": {"vendor": 0, "indep": 0, "analyst": 0, "sdk": 0, "measured": 0, "derived": 0, "unv": 0, "via": 0}}, {"href": "appendix-b-cuda-to-csl.html", "short": "App B", "title": "CUDA to CSL, budgets and constants", "missing": true, "c": {"vendor": 0, "indep": 0, "analyst": 0, "sdk": 0, "measured": 0, "derived": 0, "unv": 0, "via": 0}}, {"href": "appendix-c-measuring.html", "short": "App C", "title": "Measuring and observing", "missing": true, "c": {"vendor": 0, "indep": 0, "analyst": 0, "sdk": 0, "measured": 0, "derived": 0, "unv": 0, "via": 0}}, {"href": "appendix-d-sdk-index.html", "short": "App D", "title": "SDK example index", "missing": true, "c": {"vendor": 0, "indep": 0, "analyst": 0, "sdk": 0, "measured": 0, "derived": 0, "unv": 0, "via": 0}}], "flagged": [{"page": "01-memory-wall.html", "short": "Ch 1", "cls": "vendor", "label": "Vendor, via forum", "claim": "CS-3 · off-wafer Ethernet · Bandwidth: 12 × 100 GbE ≈ 150 GB/s", "section": "Two numbers describe every accelerator", "why": "The vendor number reached the course through a forum post, not the vendor's own page.", "settle": "A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement."}, {"page": "01-memory-wall.html", "short": "Ch 1", "cls": "vendor", "label": "Vendor, via forum", "claim": "~23 GB/s per PE (21 PB/s ÷ 900,000) and RF+smem \"tens of TB/s\" [Derived] , and off-wafer ~150 GB/s (12 × 100 GbE)", "section": "Three answers to the same wall", "why": "The vendor number reached the course through a forum post, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "02-the-wafer.html", "short": "Ch 2", "cls": "indep", "label": "Secondary sources", "claim": "A custom connector lets the wafer expand thermally without cracking", "section": "Power, cooling and the edges", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement."}, {"page": "02-the-wafer.html", "short": "Ch 2", "cls": "indep", "label": "Secondary sources", "claim": "Layer roles from secondary summaries of the Hot Chips 2019 talk and the CS-3 \"engine block\"", "section": "Power, cooling and the edges", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement."}, {"page": "03-processing-element.html", "short": "Ch 3", "cls": "indep", "label": "Secondary source", "claim": "The WSE-3 datapath is 8-way SIMD for FP16/BF16 and 16-way for INT8 [Vendor, HC2024] , reportedly up from 4-wide FP16 on WSE-1/2", "section": "Compute", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement."}, {"page": "03-processing-element.html", "short": "Ch 3", "cls": "indep", "label": "Secondary source", "claim": "They share the single datapath, and the hardware interleaves them according to which one has operands ready", "section": "Compute", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "The primary document named in the chapter, or a measurement."}, {"page": "03-processing-element.html", "short": "Ch 3", "cls": "indep", "label": "Secondary", "claim": "FP16 SIMD lanes · Source: ", "section": "What changed per PE, WSE-2 → WSE-3", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement."}, {"page": "05-tasks.html", "short": "Ch 5", "cls": "vendor", "label": "SDK docs, via search extract", "claim": "The hardware \"picks the next task to run from those that have been activated and unblocked\"", "section": "The path from wire to code", "why": "The vendor number reached the course through a search-engine extract, not the vendor's own page.", "settle": "The primary document named in the chapter, or a measurement."}, {"page": "06-dsds.html", "short": "Ch 6", "cls": "unv", "label": "Unverified", "claim": "The library does not say how scale differs from mul, or what norm computes; check the SDK's builtin reference before using them", "section": "Builtins: the vector instruction set", "why": "No reachable primary source confirmed it.", "settle": "The primary document named in the chapter, or a measurement."}, {"page": "08-systems.html", "short": "Ch 8", "cls": "vendor", "label": "Vendor, via press", "claim": "May 2026 · Kimi K2.6 (~1T params, MoE) · 981 tok/s, 6.7× the fastest GPU cloud · Tag: [Indep] AA for speed; config", "section": "What the speed looks like, and why it changed", "why": "The vendor number reached the course through press coverage, not the vendor's own page.", "settle": "A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement."}, {"page": "08-systems.html", "short": "Ch 8", "cls": "vendor", "label": "Vendor, via press", "claim": "Kimi K2.6 is a mixture-of-experts model, so only about 32B of its parameters are read per token, though all of them must be resident", "section": "What the speed looks like, and why it changed", "why": "The vendor number reached the course through press coverage, not the vendor's own page.", "settle": "A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement."}, {"page": "16-tenstorrent.html", "short": "Ch 16", "cls": "vendor", "label": "Vendor, via press extracts", "claim": "Galaxy Blackhole, DeepSeek-R1 671B: ~350 tok/s per user (~308 at launch)", "section": "Performance and caveats", "why": "The vendor number reached the course through press coverage, not the vendor's own page.", "settle": "tt-isa-documentation, docs.tenstorrent.com spec pages, or a tt-metal tech report."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor, NVIDIA NVFP4 blog via reprint", "claim": "NVFP4 (Blackwell) is a 4-bit float (E2M1) stored in blocks of 16 values that share an FP8 (E4M3) scale, plus one FP32 scale per tensor: about 4.5 bits per value", "section": "Three generations", "why": "The vendor number reached the course through a reprint, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor, via secondary reporting, autumn 2026", "claim": "Specs are targets NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per GPU, down from the 22 and 3.6 it showed at announcement (an even earlier target was 13 TB/s)", "section": "Three generations", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified", "claim": "INT32/FP64 lane counts, LD/ST, SFU, texture and instruction-cache details are drawn from the whitepaper layout but were not re-checked this session", "section": "Inside an SM", "why": "No reachable primary source confirmed it.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor via secondary", "claim": "Each Hopper Tensor Core does 512 dense BF16 fused multiply-adds per clock, so an SM does 4 × 512 = 2,048 FMAs = 4,096 FLOP per clock", "section": "Inside an SM", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "not re-checked", "claim": "The 128 FP32 lanes per SM give only about 67 TF FP32 [Vendor]", "section": "Inside an SM", "why": "Reviewer could not reach the primary source.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified, PTX ISA", "claim": "A Hopper Tensor Core instruction (wgmma) is issued by a warpgroup of 4 warps, reads one operand from shared memory and accumulates a tile in registers", "section": "Inside an SM", "why": "No reachable primary source confirmed it.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified", "claim": "L1 and HBM cycle ranges are rough figures from secondary cheat sheets", "section": "The memory hierarchy", "why": "No reachable primary source confirmed it.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "bank width unverified", "claim": "Shared memory has 32 banks of 4 bytes, about 128 B/clk per SM, giving 132 × 128 B × 1.83 GHz ≈ 31 TB/s [Derived]", "section": "The memory hierarchy", "why": "No reachable primary source confirmed it.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor, NVIDIA developer blog via search", "claim": "Global memory moves in 32-byte sectors, four to a 128-byte cache line", "section": "SIMT: grids, blocks and warps", "why": "The vendor number reached the course through a search-engine extract, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified", "claim": "In CUTLASS's \"ping-pong\" variant the producer drops to 40 registers and the consumers rise to 232 (setmaxnreg)", "section": "Hopper: a kernel becomes a pipeline", "why": "No reachable primary source confirmed it.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified background", "claim": "Thread-block clusters group blocks on neighbouring SMs, which can read each other's shared memory (distributed shared memory), and TMA can multicast one tile into several SMs", "section": "Hopper: a kernel becomes a pipeline", "why": "Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified background, Colfax tutorials", "claim": "Blackwell moves the accumulator out of registers into a per-SM tensor memory (reported as 256 KB) and lets a single thread issue the MMA", "section": "Hopper: a kernel becomes a pipeline", "why": "Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified background", "claim": "That is 10–14 kernels per layer, around a thousand per token for 80 layers, so serving stacks fuse kernels and replay them with CUDA graphs to avoid launch overhead", "section": "One token, step by step", "why": "Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor, model config.json via search", "claim": "Llama-3.1-70B has 80 layers, 8 KV heads of dimension 128 and dmodel 8192", "section": "One token, step by step", "why": "The vendor number reached the course through a search-engine extract, not the vendor's own page.", "settle": "The primary document named in the chapter, or a measurement."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified background", "claim": "The 18 compute trays × 4 GPUs and 9 NVSwitch trays layout is", "section": "Scaling out", "why": "Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified background", "claim": "Communication patterns from Megatron-LM (Shoeybi et al. 2019; Narayanan et al. 2021)", "section": "Scaling out", "why": "Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor via secondary", "claim": "A GB200 NVL72 rack holds ~13.4 TB of HBM3e at 576 TB/s aggregate", "section": "Scaling out", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified, press report", "claim": "The widely quoted price of ~$20 billion comes from a CNBC report and was not confirmed by either company", "section": "Scaling out", "why": "Only press reports; the companies did not confirm.", "settle": "The benchmark organisation's results page or the vendor's price list."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor via secondary", "claim": "Each chip has about 500 MB of on-chip SRAM (512 MB in some reports) at ~150 TB/s, plus ~2.5 TB/s of scale-up bandwidth", "section": "Scaling out", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "The primary document named in the chapter, or a measurement."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor via secondary", "claim": "Most reports, and NVIDIA's own localised LPX pages, give 256 LPUs per rack (32 trays × 8), ~128 GB of SRAM and ~40 PB/s; one report says 128", "section": "Scaling out", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor via secondary", "claim": "NVIDIA calls the split Attention-FFN Disaggregation: Rubin GPUs do prefill and attention, which need the KV cache in HBM; LPUs run the decode FFN/MoE layers from SRAM; NVIDIA's Dynamo software routes work between them", "section": "Scaling out", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "vendor", "label": "Vendor via secondary", "claim": "NVIDIA claims 35× the throughput per megawatt of a Blackwell NVL72 for trillion-parameter models, a vendor projection", "section": "Scaling out", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "17-gpu.html", "short": "Ch 17", "cls": "unv", "label": "Unverified", "claim": "Rubin CPX, the GDDR7 prefill part announced in September 2025, was absent from the GTC 2026 roadmap, and supply-chain reports describe it as shelved. NVIDIA has not confirmed a cancellation", "section": "Scaling out", "why": "No reachable primary source confirmed it.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "unv", "label": "not verified here", "claim": "On-chip network · NVIDIA H100 / B200 (Ch. 17): crossbar to L2", "section": "Architecture and memory", "why": "Reviewer could not reach the primary source.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via secondary", "claim": "Off-device links · NVIDIA H100 / B200 (Ch. 17): NVLink 4: 900 GB/s (H100); NVLink 5: 1.8 TB/s (B200)", "section": "Architecture and memory", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor datasheets, via review web search", "claim": "Power · NVIDIA H100 / B200 (Ch. 17): H100 SXM up to 700 W; B200 up to 1,000 W (1,200 W liquid-cooled): max TDP per GPU module, not a system", "section": "Architecture and memory", "why": "The vendor number reached the course through a search-engine extract, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via press", "claim": "How a learner gets access · Tenstorrent: buy a board: QuietBox 2 (4 × Blackhole) at $9,999", "section": "Programming model", "why": "The vendor number reached the course through press coverage, not the vendor's own page.", "settle": "tt-isa-documentation, docs.tenstorrent.com spec pages, or a tt-metal tech report."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via secondary", "claim": "NVIDIA: 8 GPUs per HGX node (900 GB/s NVLink 4 per H100) or 72 in a GB200 NVL72 rack (~130 TB/s)", "section": "Scaling", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via secondary", "claim": "H100 · Off-device, per device: 900 GB/s NVLink 4", "section": "Scaling", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via secondary", "claim": "B200 · Off-device, per device: 1.8 TB/s NVLink 5", "section": "Scaling", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via secondary", "claim": "Groq 3 LPU (LP30) · Memory that holds the weights: ~150 TB/s SRAM, ~0.5 GB", "section": "Scaling", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via secondary", "claim": "Groq 3 LPU (LP30) · Off-device, per device: ~2.5 TB/s scale-up", "section": "Scaling", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "unv", "label": "Unverified", "claim": "Prefill · NVIDIA: The GDDR7 prefill part announced in 2025, Rubin CPX, was missing from the GTC 2026 roadmap and is reported shelved", "section": "One workload, three machines: Llama-70B decode", "why": "No reachable primary source confirmed it.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via secondary", "claim": "Decode · NVIDIA: From H2 2026, Attention-FFN Disaggregation: attention and KV cache on Rubin HBM, decode FFN/MoE layers on Groq 3 LPX SRAM chips", "section": "One workload, three machines: Llama-70B decode", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor via secondary", "claim": "Since GTC 2026 NVIDIA's own decode answer includes on-chip SRAM: the Groq 3 LPX rack of LP30 LPUs, ~0.5 GB and ~150 TB/s each, 256 per rack (some reports say 128)", "section": "One workload, three machines: Llama-70B decode", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "indep", "label": "Secondary", "claim": "Google TPU (Ironwood, TPU7x): systolic matrix units fed from HBM (192 GiB, ~7.4 TB/s per chip), joined by a direct ICI 3-D torus up to 9,216 chips", "section": "One workload, three machines: Llama-70B decode", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "indep", "label": "Secondary", "claim": "Groq (still independent, running GroqCloud): a deterministic, compiler-scheduled SRAM-only chip; NVIDIA's licensed descendant is the LP30 above", "section": "One workload, three machines: Llama-70B decode", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "indep", "label": "Secondary", "claim": "SambaNova SN40L: a dataflow \"RDU\" with three memory tiers per chip, ~520 MB SRAM, 64 GB HBM and up to 1.5 TB DDR (the datasheet says 768 GB), so it swaps experts and models from DDR instead of keeping them all in SRAM", "section": "One workload, three machines: Llama-70B decode", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "indep", "label": "Secondary", "claim": "AMD Instinct MI355X: an HBM-heavy GPU in the same class as NVIDIA's, 288 GB HBM3E at 8 TB/s per GPU", "section": "One workload, three machines: Llama-70B decode", "why": "The vendor number reached the course through secondary reporting, not the vendor's own page.", "settle": "NVIDIA's own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "unv", "label": "Unverified", "claim": "CS-4: \"4,400 tok/s, up to 30× vs GPUs\" · Tag: [Vendor]", "section": "What the evidence shows", "why": "No reachable primary source confirmed it.", "settle": "A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "unv", "label": "Unverified", "claim": "MLPerf results from Cerebras or Tenstorrent · Tag: none found", "section": "What the evidence shows", "why": "No reachable primary source confirmed it.", "settle": "tt-isa-documentation, docs.tenstorrent.com spec pages, or a tt-metal tech report."}, {"page": "18-comparison.html", "short": "Ch 18", "cls": "vendor", "label": "Vendor, via press", "claim": "unless the deployment does something cleverer; all experts must be resident even though only ~32B parameters are read per token", "section": "What the evidence shows", "why": "The vendor number reached the course through press coverage, not the vendor's own page.", "settle": "The primary document named in the chapter, or a measurement."}]}</script>
+<div class="table-wrap"><table class="mini flag-table" id="flag-static"><thead><tr><th>Page</th><th>Claim (text before the tag)</th><th>Tag</th><th>Why it is not verified</th><th>What would settle it</th></tr></thead><tbody>
+<tr data-page="01-memory-wall.html" data-cls="vendor"><td><a href="01-memory-wall.html">Ch 1</a></td><td>CS-3 · off-wafer Ethernet · Bandwidth: 12 × 100 GbE ≈ 150 GB/s</td><td><span class="tag vendor">Vendor, via forum</span></td><td>The vendor number reached the course through a forum post, not the vendor&#x27;s own page.</td><td>A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement.</td></tr>
+<tr data-page="01-memory-wall.html" data-cls="vendor"><td><a href="01-memory-wall.html">Ch 1</a></td><td>~23 GB/s per PE (21 PB/s ÷ 900,000) and RF+smem &quot;tens of TB/s&quot; [Derived] , and off-wafer ~150 GB/s (12 × 100 GbE)</td><td><span class="tag vendor">Vendor, via forum</span></td><td>The vendor number reached the course through a forum post, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="02-the-wafer.html" data-cls="indep"><td><a href="02-the-wafer.html">Ch 2</a></td><td>A custom connector lets the wafer expand thermally without cracking</td><td><span class="tag indep">Secondary sources</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement.</td></tr>
+<tr data-page="02-the-wafer.html" data-cls="indep"><td><a href="02-the-wafer.html">Ch 2</a></td><td>Layer roles from secondary summaries of the Hot Chips 2019 talk and the CS-3 &quot;engine block&quot;</td><td><span class="tag indep">Secondary sources</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement.</td></tr>
+<tr data-page="03-processing-element.html" data-cls="indep"><td><a href="03-processing-element.html">Ch 3</a></td><td>The WSE-3 datapath is 8-way SIMD for FP16/BF16 and 16-way for INT8 [Vendor, HC2024] , reportedly up from 4-wide FP16 on WSE-1/2</td><td><span class="tag indep">Secondary source</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement.</td></tr>
+<tr data-page="03-processing-element.html" data-cls="indep"><td><a href="03-processing-element.html">Ch 3</a></td><td>They share the single datapath, and the hardware interleaves them according to which one has operands ready</td><td><span class="tag indep">Secondary source</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>The primary document named in the chapter, or a measurement.</td></tr>
+<tr data-page="03-processing-element.html" data-cls="indep"><td><a href="03-processing-element.html">Ch 3</a></td><td>FP16 SIMD lanes · Source: </td><td><span class="tag indep">Secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement.</td></tr>
+<tr data-page="05-tasks.html" data-cls="vendor"><td><a href="05-tasks.html">Ch 5</a></td><td>The hardware &quot;picks the next task to run from those that have been activated and unblocked&quot;</td><td><span class="tag vendor">SDK docs, via search extract</span></td><td>The vendor number reached the course through a search-engine extract, not the vendor&#x27;s own page.</td><td>The primary document named in the chapter, or a measurement.</td></tr>
+<tr data-page="06-dsds.html" data-cls="unv"><td><a href="06-dsds.html">Ch 6</a></td><td>The library does not say how scale differs from mul, or what norm computes; check the SDK&#x27;s builtin reference before using them</td><td><span class="tag unv">Unverified</span></td><td>No reachable primary source confirmed it.</td><td>The primary document named in the chapter, or a measurement.</td></tr>
+<tr data-page="08-systems.html" data-cls="vendor"><td><a href="08-systems.html">Ch 8</a></td><td>May 2026 · Kimi K2.6 (~1T params, MoE) · 981 tok/s, 6.7× the fastest GPU cloud · Tag: [Indep] AA for speed; config</td><td><span class="tag vendor">Vendor, via press</span></td><td>The vendor number reached the course through press coverage, not the vendor&#x27;s own page.</td><td>A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement.</td></tr>
+<tr data-page="08-systems.html" data-cls="vendor"><td><a href="08-systems.html">Ch 8</a></td><td>Kimi K2.6 is a mixture-of-experts model, so only about 32B of its parameters are read per token, though all of them must be resident</td><td><span class="tag vendor">Vendor, via press</span></td><td>The vendor number reached the course through press coverage, not the vendor&#x27;s own page.</td><td>A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement.</td></tr>
+<tr data-page="16-tenstorrent.html" data-cls="vendor"><td><a href="16-tenstorrent.html">Ch 16</a></td><td>Galaxy Blackhole, DeepSeek-R1 671B: ~350 tok/s per user (~308 at launch)</td><td><span class="tag vendor">Vendor, via press extracts</span></td><td>The vendor number reached the course through press coverage, not the vendor&#x27;s own page.</td><td>tt-isa-documentation, docs.tenstorrent.com spec pages, or a tt-metal tech report.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>NVFP4 (Blackwell) is a 4-bit float (E2M1) stored in blocks of 16 values that share an FP8 (E4M3) scale, plus one FP32 scale per tensor: about 4.5 bits per value</td><td><span class="tag vendor">Vendor, NVIDIA NVFP4 blog via reprint</span></td><td>The vendor number reached the course through a reprint, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>Specs are targets NVIDIA&#x27;s Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per GPU, down from the 22 and 3.6 it showed at announcement (an even earlier target was 13 TB/s)</td><td><span class="tag vendor">Vendor, via secondary reporting, autumn 2026</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>INT32/FP64 lane counts, LD/ST, SFU, texture and instruction-cache details are drawn from the whitepaper layout but were not re-checked this session</td><td><span class="tag unv">Unverified</span></td><td>No reachable primary source confirmed it.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>Each Hopper Tensor Core does 512 dense BF16 fused multiply-adds per clock, so an SM does 4 × 512 = 2,048 FMAs = 4,096 FLOP per clock</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>The 128 FP32 lanes per SM give only about 67 TF FP32 [Vendor]</td><td><span class="tag unv">not re-checked</span></td><td>Reviewer could not reach the primary source.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>A Hopper Tensor Core instruction (wgmma) is issued by a warpgroup of 4 warps, reads one operand from shared memory and accumulates a tile in registers</td><td><span class="tag unv">Unverified, PTX ISA</span></td><td>No reachable primary source confirmed it.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>L1 and HBM cycle ranges are rough figures from secondary cheat sheets</td><td><span class="tag unv">Unverified</span></td><td>No reachable primary source confirmed it.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>Shared memory has 32 banks of 4 bytes, about 128 B/clk per SM, giving 132 × 128 B × 1.83 GHz ≈ 31 TB/s [Derived]</td><td><span class="tag unv">bank width unverified</span></td><td>No reachable primary source confirmed it.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>Global memory moves in 32-byte sectors, four to a 128-byte cache line</td><td><span class="tag vendor">Vendor, NVIDIA developer blog via search</span></td><td>The vendor number reached the course through a search-engine extract, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>In CUTLASS&#x27;s &quot;ping-pong&quot; variant the producer drops to 40 registers and the consumers rise to 232 (setmaxnreg)</td><td><span class="tag unv">Unverified</span></td><td>No reachable primary source confirmed it.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>Thread-block clusters group blocks on neighbouring SMs, which can read each other&#x27;s shared memory (distributed shared memory), and TMA can multicast one tile into several SMs</td><td><span class="tag unv">Unverified background</span></td><td>Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>Blackwell moves the accumulator out of registers into a per-SM tensor memory (reported as 256 KB) and lets a single thread issue the MMA</td><td><span class="tag unv">Unverified background, Colfax tutorials</span></td><td>Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>That is 10–14 kernels per layer, around a thousand per token for 80 layers, so serving stacks fuse kernels and replay them with CUDA graphs to avoid launch overhead</td><td><span class="tag unv">Unverified background</span></td><td>Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>Llama-3.1-70B has 80 layers, 8 KV heads of dimension 128 and dmodel 8192</td><td><span class="tag vendor">Vendor, model config.json via search</span></td><td>The vendor number reached the course through a search-engine extract, not the vendor&#x27;s own page.</td><td>The primary document named in the chapter, or a measurement.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>The 18 compute trays × 4 GPUs and 9 NVSwitch trays layout is</td><td><span class="tag unv">Unverified background</span></td><td>Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>Communication patterns from Megatron-LM (Shoeybi et al. 2019; Narayanan et al. 2021)</td><td><span class="tag unv">Unverified background</span></td><td>Background fact repeated from tutorials or secondary write-ups; not checked against a primary document in this course.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>A GB200 NVL72 rack holds ~13.4 TB of HBM3e at 576 TB/s aggregate</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>The widely quoted price of ~$20 billion comes from a CNBC report and was not confirmed by either company</td><td><span class="tag unv">Unverified, press report</span></td><td>Only press reports; the companies did not confirm.</td><td>The benchmark organisation&#x27;s results page or the vendor&#x27;s price list.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>Each chip has about 500 MB of on-chip SRAM (512 MB in some reports) at ~150 TB/s, plus ~2.5 TB/s of scale-up bandwidth</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>The primary document named in the chapter, or a measurement.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>Most reports, and NVIDIA&#x27;s own localised LPX pages, give 256 LPUs per rack (32 trays × 8), ~128 GB of SRAM and ~40 PB/s; one report says 128</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>NVIDIA calls the split Attention-FFN Disaggregation: Rubin GPUs do prefill and attention, which need the KV cache in HBM; LPUs run the decode FFN/MoE layers from SRAM; NVIDIA&#x27;s Dynamo software routes work between them</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="17-gpu.html" data-cls="vendor"><td><a href="17-gpu.html">Ch 17</a></td><td>NVIDIA claims 35× the throughput per megawatt of a Blackwell NVL72 for trillion-parameter models, a vendor projection</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="17-gpu.html" data-cls="unv"><td><a href="17-gpu.html">Ch 17</a></td><td>Rubin CPX, the GDDR7 prefill part announced in September 2025, was absent from the GTC 2026 roadmap, and supply-chain reports describe it as shelved. NVIDIA has not confirmed a cancellation</td><td><span class="tag unv">Unverified</span></td><td>No reachable primary source confirmed it.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="18-comparison.html" data-cls="unv"><td><a href="18-comparison.html">Ch 18</a></td><td>On-chip network · NVIDIA H100 / B200 (Ch. 17): crossbar to L2</td><td><span class="tag unv">not verified here</span></td><td>Reviewer could not reach the primary source.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>Off-device links · NVIDIA H100 / B200 (Ch. 17): NVLink 4: 900 GB/s (H100); NVLink 5: 1.8 TB/s (B200)</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>Power · NVIDIA H100 / B200 (Ch. 17): H100 SXM up to 700 W; B200 up to 1,000 W (1,200 W liquid-cooled): max TDP per GPU module, not a system</td><td><span class="tag vendor">Vendor datasheets, via review web search</span></td><td>The vendor number reached the course through a search-engine extract, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>How a learner gets access · Tenstorrent: buy a board: QuietBox 2 (4 × Blackhole) at $9,999</td><td><span class="tag vendor">Vendor via press</span></td><td>The vendor number reached the course through press coverage, not the vendor&#x27;s own page.</td><td>tt-isa-documentation, docs.tenstorrent.com spec pages, or a tt-metal tech report.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>NVIDIA: 8 GPUs per HGX node (900 GB/s NVLink 4 per H100) or 72 in a GB200 NVL72 rack (~130 TB/s)</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>H100 · Off-device, per device: 900 GB/s NVLink 4</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>B200 · Off-device, per device: 1.8 TB/s NVLink 5</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>Groq 3 LPU (LP30) · Memory that holds the weights: ~150 TB/s SRAM, ~0.5 GB</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>Groq 3 LPU (LP30) · Off-device, per device: ~2.5 TB/s scale-up</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="18-comparison.html" data-cls="unv"><td><a href="18-comparison.html">Ch 18</a></td><td>Prefill · NVIDIA: The GDDR7 prefill part announced in 2025, Rubin CPX, was missing from the GTC 2026 roadmap and is reported shelved</td><td><span class="tag unv">Unverified</span></td><td>No reachable primary source confirmed it.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>Decode · NVIDIA: From H2 2026, Attention-FFN Disaggregation: attention and KV cache on Rubin HBM, decode FFN/MoE layers on Groq 3 LPX SRAM chips</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>Since GTC 2026 NVIDIA&#x27;s own decode answer includes on-chip SRAM: the Groq 3 LPX rack of LP30 LPUs, ~0.5 GB and ~150 TB/s each, 256 per rack (some reports say 128)</td><td><span class="tag vendor">Vendor via secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="18-comparison.html" data-cls="indep"><td><a href="18-comparison.html">Ch 18</a></td><td>Google TPU (Ironwood, TPU7x): systolic matrix units fed from HBM (192 GiB, ~7.4 TB/s per chip), joined by a direct ICI 3-D torus up to 9,216 chips</td><td><span class="tag indep">Secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="indep"><td><a href="18-comparison.html">Ch 18</a></td><td>Groq (still independent, running GroqCloud): a deterministic, compiler-scheduled SRAM-only chip; NVIDIA&#x27;s licensed descendant is the LP30 above</td><td><span class="tag indep">Secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s LPX product page and GTC 2026 keynote, or an NVIDIA/Groq press release; an independent decode benchmark for the claims.</td></tr>
+<tr data-page="18-comparison.html" data-cls="indep"><td><a href="18-comparison.html">Ch 18</a></td><td>SambaNova SN40L: a dataflow &quot;RDU&quot; with three memory tiers per chip, ~520 MB SRAM, 64 GB HBM and up to 1.5 TB DDR (the datasheet says 768 GB), so it swaps experts and models from DDR instead of keeping them all in SRAM</td><td><span class="tag indep">Secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="indep"><td><a href="18-comparison.html">Ch 18</a></td><td>AMD Instinct MI355X: an HBM-heavy GPU in the same class as NVIDIA&#x27;s, 288 GB HBM3E at 8 TB/s per GPU</td><td><span class="tag indep">Secondary</span></td><td>The vendor number reached the course through secondary reporting, not the vendor&#x27;s own page.</td><td>NVIDIA&#x27;s own datasheet, architecture whitepaper or docs.nvidia.com (CUDA/PTX guides); for software patterns the cited paper.</td></tr>
+<tr data-page="18-comparison.html" data-cls="unv"><td><a href="18-comparison.html">Ch 18</a></td><td>CS-4: &quot;4,400 tok/s, up to 30× vs GPUs&quot; · Tag: [Vendor]</td><td><span class="tag unv">Unverified</span></td><td>No reachable primary source confirmed it.</td><td>A Cerebras primary document (Hot Chips deck, sdk.cerebras.ai, press release) or, for programming facts, a simulator measurement.</td></tr>
+<tr data-page="18-comparison.html" data-cls="unv"><td><a href="18-comparison.html">Ch 18</a></td><td>MLPerf results from Cerebras or Tenstorrent · Tag: none found</td><td><span class="tag unv">Unverified</span></td><td>No reachable primary source confirmed it.</td><td>tt-isa-documentation, docs.tenstorrent.com spec pages, or a tt-metal tech report.</td></tr>
+<tr data-page="18-comparison.html" data-cls="vendor"><td><a href="18-comparison.html">Ch 18</a></td><td>unless the deployment does something cleverer; all experts must be resident even though only ~32B parameters are read per token</td><td><span class="tag vendor">Vendor, via press</span></td><td>The vendor number reached the course through press coverage, not the vendor&#x27;s own page.</td><td>The primary document named in the chapter, or a measurement.</td></tr>
+</tbody></table></div>
+<!-- scan:end -->
+
+<h2 id="open">Open factual issues</h2>
+<p>These came out of the course's own measurements, not out of the press. Each one is a place where the simulator showed something that no reachable document explains. They are listed so that a reader with access to Cerebras documentation, or the time to run one more experiment, can close them. Chapter numbers are current; the review files that recorded them use the older numbering.</p>
+
+<div class="issue" id="iss-bank">
+<h3>1. The SRAM bank model</h3>
+<dl>
+<dt>Measured</dt><dd><code>cs_readelf --sym</code> lists the banks each symbol occupies with 16-bit granularity on both chips: a 2-byte variable at 0xcb0, 0xcb4, 0xcb8, 0xcbc lands in banks 0, 2, 4, 6, so bank = (byte address ÷ 2) mod 8, a 16-byte stripe <span class="tag sdk">SDK 2.10.1, cs_readelf</span>. The <code>cs_readelf</code> man page says the bank is "determined by bits [3:1] of the address" and that a 32-bit read "is broken into two 16-bit reads" <span class="tag sdk">SDK 2.10.1</span>. The single-tile-matvec benchmark pads rows to 16 B to avoid bank conflicts; <code>FIFO_MIN_ALIGNMENT</code> is 16 on WSE-3 and 8 on WSE-2 <span class="tag sdk">SDK 2.10.1</span>.</dd>
+<dt>The conflict</dt><dd>Academic descriptions say eight 6 KB banks, each 32 bits wide, with successive 32-bit words in successive banks, a 32-byte stripe <span class="tag indep">Secondary</span> (arXiv 2605.07954, 2209.15040, via search extracts). <a href="03-processing-element.html">Chapter 3</a> presents both models.</dd>
+<dt>Unknown</dt><dd>The physical bank width, and whether the SDK's 16-bit numbering is a logical view of 32-bit banks.</dd>
+<dt>Would settle it</dt><dd>A Cerebras hardware document, or a stride sweep in 2-byte steps that separates a 16-byte from a 32-byte stripe.</dd>
+</dl>
+</div>
+
+<div class="issue" id="iss-clash">
+<h3>2. The bank- and operand-clash rule</h3>
+<dl>
+<dt>Measured</dt><dd>Program 01's <code>@fmacs</code> costs 2 cycles per element when x and y sit back to back, and 1 per element after padding one word between them, on both chips (f32, N = 1,024: 2,063 → 1,039 cycles WSE-3, 2,062 → 1,038 WSE-2) <span class="tag measured">Measured, TSC</span> (<a href="11-lab-first-programs.html">Ch. 11</a>). Separately, <code>@fmacs</code> over 1,024 elements runs at half speed (2,064 vs 1,040 cycles, both chips) exactly when its two source streams start at addresses equal mod 4 words; <code>@fadds</code> shows no penalty in the same layouts <span class="tag measured">Measured</span> (<a href="06-dsds.html">Ch. 6</a>). At N = 64 the unpadded case conflicts on WSE-3 (143 cycles) but not on WSE-2 (78) <span class="tag measured">Measured</span>. Strides 4 and 8 cost differently although they touch the same banks.</dd>
+<dt>Unknown</dt><dd>The rule itself; why "mod 4 words" when there are 8 banks; why the chips differ at N = 64. The course says "pad and measure".</dd>
+<dt>Would settle it</dt><dd>A sweep of source offsets × strides × ops on both chips with the instruction trace on, or a vendor statement of the rule.</dd>
+</dl>
+</div>
+
+<div class="issue" id="iss-fadds">
+<h3>3. The WSE-2 <code>@fadds</code> rate</h3>
+<dl>
+<dt>Measured</dt><dd>Memory to memory, 1,024 f32 elements with operands 1,025 words apart: <code>@fadds</code> takes 1,039 cycles on WSE-2 (1 element/cycle) and 528 on WSE-3 (2/cycle) <span class="tag measured">Measured</span> (<a href="06-dsds.html">Ch. 6</a>). In Lab 3's kernel on WSE-2 the fadds-only slope is 0.5 cycles per cell (2/cycle), where both sources are offset views of one array <span class="tag measured">Measured</span> (<a href="13-lab-stencil.html">Ch. 13</a>).</dd>
+<dt>Unknown</dt><dd>Why the same op runs twice as fast in Lab 3. The operand pattern probably matters; no mechanism is known.</dd>
+<dt>Would settle it</dt><dd>Repeat the isolated test on WSE-2 with both sources as offset views of one array, then compare instruction traces.</dd>
+</dl>
+</div>
+
+<div class="issue" id="iss-hop">
+<h3>4. The WSE-2 hop-timing floor</h3>
+<dl>
+<dt>Measured</dt><dd>Pure router round trips with one wavelet: WSE-2 36 / 48 / 96 / 160 cycles at P = 2 / 8 / 32 / 64 (1.0 cycle/hop); WSE-3 44 / 68 / 164 / 292 (2.0 cycles/hop) <span class="tag measured">Measured</span> (<a href="04-fabric.html">Ch. 4</a>). With 64 wavelets WSE-2 stays near 160 cycles up to P = 32, about 2 cycles per wavelet. In Lab 2's chain the WSE-2 round trips have a ~90-cycle floor for P ≤ 8, so its hop cost is fitted from P ≥ 12 only <span class="tag measured">Measured</span> (<a href="12-lab-neighbours.html">Ch. 12</a>).</dd>
+<dt>Unknown</dt><dd>The cause of the floor and of the 2 cycles per streamed wavelet. "Each PE's clock starts one hop later" fits the numbers but is only <span class="tag derived">Derived</span>.</dd>
+<dt>Would settle it</dt><dd>An instruction trace (<code>SIMFABRIC_DEBUG=inst_trace</code>) of the round trip on WSE-2 at P = 4, 8 and 12.</dd>
+</dl>
+</div>
+
+<div class="issue" id="iss-ut">
+<h3>5. Do microthreads share one datapath?</h3>
+<dl>
+<dt>Known</dt><dd>A PE runs up to eight microthreads <span class="tag vendor">Vendor</span>, and the main thread's priority relative to them can be set <span class="tag sdk">SDK 2.10.1</span>. That they share a single datapath, interleaved by operand readiness, comes from one secondary source <span class="tag indep">Secondary</span> (<a href="03-processing-element.html">Ch. 3</a>).</dd>
+<dt>Measured</dt><dd>Nothing yet. An attempt during the Chapter 3 fixes stalled.</dd>
+<dt>Would settle it</dt><dd>Time two async <code>@fadds</code> on different microthreads with the TSC, against the same two run back to back. A total near the sum means one shared datapath.</dd>
+</dl>
+</div>
+
+<div class="issue" id="iss-index">
+<h3>6. The units of a DSD's <code>.index</code></h3>
+<dl>
+<dt>Known</dt><dd>The SDK's sparse examples pass <code>.index = 2*idx</code> for f32 data, so the unit is inferred to be 16-bit words <span class="tag derived">Derived</span> (<a href="06-dsds.html">Ch. 6</a>).</dd>
+<dt>Unknown</dt><dd>The builtin reference that states it was unreachable.</dd>
+<dt>Would settle it</dt><dd>The online builtin reference, or a one-PE test that writes with <code>.index = 1</code> on f32 data and checks which half-word moves.</dd>
+</dl>
+</div>
+
+<div class="issue" id="iss-scale">
+<h3>7. What <code>@fscales</code> and <code>@fnorms</code> compute</h3>
+<dl>
+<dt>Known</dt><dd>Both exist: <code>csl-libs/dsd_ops.csl</code> maps <code>scale</code> to <code>@fscaleh/@fscales</code> and <code>norm</code> to <code>@fnormh/@fnorms</code>, next to a separate <code>mul</code> → <code>@fmuls</code> <span class="tag sdk">SDK 2.10.1</span>. Chapter 6 tags their meaning <span class="tag unv">Unverified</span>.</dd>
+<dt>Unknown</dt><dd>Whether scale differs from <code>@fmuls</code> with a scalar operand, and what norm returns (a norm, or a normalisation).</dd>
+<dt>Would settle it</dt><dd>The builtin reference, or a simulator run on known inputs (e.g. [3, 4]).</dd>
+</dl>
+</div>
+
+<p class="small">Other items that are still open but not factual disagreements (per-wavelet task cost, back-pressure figures not re-run, csdb's CTF workflow, the task-picker tie rule) are tracked in the course's review backlog (reviews/phase3-backlog.md §5).</p>
+
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const dataEl = document.getElementById("scan-data");
+  if (!dataEl) return;
+  const D = JSON.parse(dataEl.textContent);
+  const NAMES = { vendor: "Vendor", indep: "Indep / Secondary", analyst: "Analyst", sdk: "SDK", measured: "Measured", derived: "Derived", unv: "Unverified" };
+  const on = new Set(D.classes);
+  let selPage = null;
+  const chips = $("#tc-chips"), rows = $("#tc-rows"), table = $("#tc-table"), out = $("#tc-out");
+  const q = $("#tc-q"), sortSel = $("#tc-sort");
+  const flagRows = Array.from(document.querySelectorAll("#flag-static tbody tr"));
+  const flagCount = {};
+  D.flagged.forEach(f => { flagCount[f.page] = (flagCount[f.page] || 0) + 1; });
+
+  D.classes.forEach(c => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "tc-chip"; b.setAttribute("aria-pressed", "true"); b.dataset.c = c;
+    b.innerHTML = `<i class="c-${c}"></i>${NAMES[c]}`;
+    b.onclick = () => { on.has(c) ? on.delete(c) : on.add(c); b.setAttribute("aria-pressed", on.has(c)); draw(); };
+    chips.appendChild(b);
+  });
+
+  function total(p) { return D.classes.reduce((s, c) => s + (on.has(c) ? p.c[c] : 0), 0); }
+  function ordered() {
+    const ps = D.pages.slice();
+    if (sortSel.value === "total") ps.sort((a, b) => total(b) - total(a));
+    if (sortSel.value === "flag") ps.sort((a, b) => (flagCount[b.href] || 0) - (flagCount[a.href] || 0));
+    return ps;
+  }
+  function pick(href) { selPage = selPage === href ? null : href; draw(); }
+
+  function draw() {
+    const ps = ordered();
+    const max = Math.max(1, ...D.pages.map(total));
+    rows.innerHTML = "";
+    ps.forEach(p => {
+      const r = document.createElement("div");
+      r.className = "tc-row" + (p.missing ? " missing" : "") + (selPage === p.href ? " sel" : "");
+      r.tabIndex = 0; r.setAttribute("role", "button");
+      r.setAttribute("aria-label", `${p.short} ${p.title}: ${p.missing ? "not written yet" : total(p) + " tags"}`);
+      r.title = p.title;
+      const bar = D.classes.filter(c => on.has(c) && p.c[c]).map(c =>
+        `<span class="c-${c}" style="width:${(100 * p.c[c] / max).toFixed(2)}%" title="${NAMES[c]}: ${p.c[c]}"></span>`).join("");
+      r.innerHTML = `<div class="lab">${p.short}</div><div class="bar">${bar}</div><div class="tot">${p.missing ? "–" : total(p)}</div>`;
+      r.onclick = () => pick(p.href);
+      r.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(p.href); } };
+      rows.appendChild(r);
+    });
+    // count table
+    const cols = D.classes.filter(c => on.has(c));
+    let h = `<thead><tr><th>Page</th>${cols.map(c => `<th>${NAMES[c]}</th>`).join("")}<th>via sec.</th><th>Total</th></tr></thead><tbody>`;
+    const sums = {}; let gsum = 0, vsum = 0;
+    ps.forEach(p => {
+      cols.forEach(c => { sums[c] = (sums[c] || 0) + p.c[c]; });
+      gsum += total(p); vsum += p.c.via;
+      h += `<tr data-href="${p.href}" class="${selPage === p.href ? "sel" : ""}"><td style="white-space:nowrap"><a href="${p.href}" title="${p.title}">${p.short}</a></td>` +
+        (p.missing ? `<td colspan="${cols.length + 2}" class="small" style="text-align:left">not written yet</td>` :
+          cols.map(c => `<td>${p.c[c] || ""}</td>`).join("") + `<td>${p.c.via || ""}</td><td><b>${total(p)}</b></td>`) + "</tr>";
+    });
+    h += `<tr><td><b>All pages</b></td>${cols.map(c => `<td><b>${sums[c] || 0}</b></td>`).join("")}<td><b>${vsum}</b></td><td><b>${gsum}</b></td></tr></tbody>`;
+    table.innerHTML = h;
+    table.querySelectorAll("tbody tr[data-href]").forEach(tr => {
+      tr.style.cursor = "pointer";
+      tr.onclick = e => { if (e.target.tagName !== "A") pick(tr.dataset.href); };
+    });
+    // filter the flagged list
+    const term = q.value.trim().toLowerCase();
+    let shown = 0;
+    flagRows.forEach(tr => {
+      const okPage = !selPage || tr.dataset.page === selPage;
+      const okCls = on.has(tr.dataset.cls) ;
+      const okQ = !term || tr.textContent.toLowerCase().includes(term);
+      const vis = okPage && okCls && okQ;
+      tr.style.display = vis ? "" : "none";
+      if (vis) shown++;
+    });
+    const sp = selPage ? D.pages.find(p => p.href === selPage) : null;
+    out.textContent = `${gsum} tags shown across ${ps.filter(p => !p.missing).length} written pages. ` +
+      `Flagged list below: ${shown} of ${flagRows.length} rows` + (sp ? ` (${sp.short}, ${sp.title})` : "") + (term ? `, matching "${q.value.trim()}"` : "") + ".";
+  }
+  sortSel.onchange = draw;
+  q.oninput = draw;
+  $("#tc-clear").onclick = () => {
+    selPage = null; q.value = ""; sortSel.value = "order";
+    D.classes.forEach(c => on.add(c));
+    chips.querySelectorAll(".tc-chip").forEach(b => b.setAttribute("aria-pressed", "true"));
+    draw();
+  };
+  draw();
+})();
+</script>
+</body>
+</html>
