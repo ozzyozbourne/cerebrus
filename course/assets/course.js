@@ -8,18 +8,30 @@ const CHAPTERS = [
   ["06-dsds.html", "DSDs: loops as hardware", "Part II · The machine"],
   ["07-host-io.html", "Host I/O and memcpy", "Part II · The machine"],
   ["08-systems.html", "Systems: CS-3, MemoryX, SwarmX, CS-4", "Part II · The machine"],
-  ["09-csl-toolchain.html", "CSL and the toolchain", "Part III · Programming"],
-  ["10-lab-first-programs.html", "Lab 1: SAXPY and wavelet tasks", "Part III · Programming"],
-  ["11-lab-neighbours.html", "Lab 2: reduce and broadcast", "Part III · Programming"],
-  ["12-lab-stencil.html", "Lab 3: a heat stencil, measured", "Part III · Programming"],
-  ["13-tenstorrent.html", "Tenstorrent, the middle path", "Part IV · Comparison"],
-  ["14-gpu.html", "NVIDIA GPUs, the incumbent", "Part IV · Comparison"],
-  ["15-comparison.html", "Head to head", "Part IV · Comparison"],
+  ["09-model-to-tokens.html", "From model to tokens", "Part II · The machine"],
+  ["10-csl-toolchain.html", "CSL and the toolchain", "Part III · Programming"],
+  ["11-lab-first-programs.html", "Lab 1: SAXPY and wavelet tasks", "Part III · Programming"],
+  ["12-lab-neighbours.html", "Lab 2: reduce and broadcast", "Part III · Programming"],
+  ["13-lab-stencil.html", "Lab 3: a heat stencil, measured", "Part III · Programming"],
+  ["14-lab-gemm.html", "Lab 4: 2-D GEMM with SUMMA", "Part III · Programming"],
+  ["15-lab-cg.html", "Lab 5: a conjugate-gradient solver", "Part III · Programming"],
+  ["16-tenstorrent.html", "Tenstorrent, the middle path", "Part IV · Comparison"],
+  ["17-gpu.html", "NVIDIA GPUs, the incumbent", "Part IV · Comparison"],
+  ["18-comparison.html", "Head to head", "Part IV · Comparison"],
+];
+const APPENDICES = [
+  ["appendix-a-glossary.html", "Glossary and number formats", "A"],
+  ["appendix-b-cuda-to-csl.html", "CUDA to CSL, budgets and constants", "B"],
+  ["appendix-c-measuring.html", "Measuring and observing", "C"],
+  ["appendix-d-sdk-index.html", "SDK example index", "D"],
+  ["appendix-e-sources.html", "Sources and unverified figures", "E"],
 ];
 
 (function () {
   const here = location.pathname.split("/").pop() || "index.html";
-  const idx = CHAPTERS.findIndex(c => c[0] === here);
+  const SEQ = CHAPTERS.map((c, i) => ({ href: c[0], title: c[1], label: `Chapter ${i + 1}` }))
+    .concat(APPENDICES.map(a => ({ href: a[0], title: a[1], label: `Appendix ${a[2]}` })));
+  const idx = SEQ.findIndex(c => c.href === here);
 
   // theme
   try { const t = localStorage.getItem("wsc-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
@@ -35,7 +47,7 @@ const CHAPTERS = [
   const bar = document.createElement("header");
   bar.className = "topbar";
   bar.innerHTML = `<div class="inner"><a class="brand" href="index.html">Wafer-Scale <span>Computing</span></a>
-    <div class="crumb">${idx >= 0 ? `Chapter ${idx + 1} of ${CHAPTERS.length} · ${CHAPTERS[idx][1]}` : "Course home"}</div>
+    <div class="crumb">${idx >= 0 ? (idx < CHAPTERS.length ? `Chapter ${idx + 1} of ${CHAPTERS.length}` : SEQ[idx].label) + ` · ${SEQ[idx].title}` : "Course home"}</div>
     <button type="button" aria-label="Toggle dark mode">◐</button></div>`;
   bar.querySelector("button").onclick = toggleTheme;
   document.body.prepend(bar);
@@ -45,11 +57,11 @@ const CHAPTERS = [
   if (idx >= 0 && main) {
     const pager = document.createElement("nav");
     pager.className = "pager";
-    const prev = idx > 0 ? CHAPTERS[idx - 1] : null;
-    const next = idx < CHAPTERS.length - 1 ? CHAPTERS[idx + 1] : null;
+    const prev = idx > 0 ? SEQ[idx - 1] : null;
+    const next = idx < SEQ.length - 1 ? SEQ[idx + 1] : null;
     pager.innerHTML =
-      (prev ? `<a class="prev" href="${prev[0]}"><small>← Chapter ${idx}</small>${prev[1]}</a>` : `<a class="prev" href="index.html"><small>←</small>Course home</a>`) +
-      (next ? `<a class="next" href="${next[0]}"><small>Chapter ${idx + 2} →</small>${next[1]}</a>` : `<a class="next" href="index.html"><small>→</small>Course home</a>`);
+      (prev ? `<a class="prev" href="${prev.href}"><small>← ${prev.label}</small>${prev.title}</a>` : `<a class="prev" href="index.html"><small>←</small>Course home</a>`) +
+      (next ? `<a class="next" href="${next.href}"><small>${next.label} →</small>${next.title}</a>` : `<a class="next" href="index.html"><small>→</small>Course home</a>`);
     main.appendChild(pager);
   }
 })();

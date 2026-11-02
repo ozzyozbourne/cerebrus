@@ -41,7 +41,7 @@
 </div>
 
 <h2>One instruction, a whole loop</h2>
-<p>In C you would write <code>for (i = 0; i &lt; N; i++) y[i] += x[i] * a;</code>. In CSL you describe <code>x</code> and <code>y</code> once and issue one instruction (Lab 1, program 01, run in Chapter 10):</p>
+<p>In C you would write <code>for (i = 0; i &lt; N; i++) y[i] += x[i] * a;</code>. In CSL you describe <code>x</code> and <code>y</code> once and issue one instruction (Lab 1, program 01, run in Chapter 11):</p>
 <div class="filename">course/programs/01-saxpy/pe_program.csl</div>
 <pre><code><span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> x[i] });
 <span class="k">const</span> y_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> y[i] });
@@ -50,7 +50,7 @@
   <span class="b">@fmacs</span>(y_dsd, y_dsd, x_dsd, a);   <span class="c">// y[i] = y[i] + x[i] * a   for all N</span>
   sys_mod.unblock_cmd_stream();     <span class="c">// tell the host this call is done (Chapter 7)</span>
 }</code></pre>
-<p class="note"><b>Reading CSL:</b> <code>@name</code> is a builtin, <code>.{ .a = 1 }</code> is an anonymous struct literal, and <code>|i|{N} -> x[i]</code> reads "for i in 0..N, element x[i]". Chapter 9 covers the language.</p>
+<p class="note"><b>Reading CSL:</b> <code>@name</code> is a builtin, <code>.{ .a = 1 }</code> is an anonymous struct literal, and <code>|i|{N} -> x[i]</code> reads "for i in 0..N, element x[i]". Chapter 10 covers the language.</p>
 <p>The descriptor is loaded into a <em>data-structure register</em> (DSR); a WSE-3 core has 48 of them <span class="tag vendor">Vendor, WSE-3 (HC2024)</span> (no WSE-2 count has been published). The datapath walks the descriptor, generating addresses and streaming operands through the arithmetic unit, with no per-element instruction fetch, loop counter or branch <span class="tag derived">Derived from SDK and vendor descriptions</span>. The <code>tensor_access</code> form names an induction variable, a bound and an affine index: <code>|i|{M} -> A[i*N]</code> means "M elements starting at A[0], stride N", which is a column of a row-major matrix.</p>
 
 <div class="widget" id="sv">
@@ -196,12 +196,12 @@
 <p>Three things follow.</p>
 <ul>
 <li><b>A fixed start-up of about 15–17 cycles per op</b>, then a fixed rate per element. <code>@fmacs</code> over 1 / 16 / 64 / 256 / 1,024 elements took 18 / 33 / 81 / 273 / 1,041 cycles on WSE-3 <span class="tag measured">Measured</span>. Vectors shorter than about 16 elements are dominated by start-up.</li>
-<li><b>f32 multiply-accumulate runs at one element per cycle on both chips</b>; WSE-3 doubled the rate of simple moves and adds but not of f32 FMAC <span class="tag measured">Measured</span>. That is why Lab 3 (f32) is a wash between the chips (Chapter 12). We know the rate, not the hardware reason; do not read an f32 lane count into it.</li>
+<li><b>f32 multiply-accumulate runs at one element per cycle on both chips</b>; WSE-3 doubled the rate of simple moves and adds but not of f32 FMAC <span class="tag measured">Measured</span>. That is why Lab 3 (f32) is a wash between the chips (Chapter 13). We know the rate, not the hardware reason; do not read an f32 lane count into it.</li>
 <li><b>Precision is where SIMD width pays off.</b> f16 FMAC runs at about 2 per cycle on WSE-2 and about 3.2–4 per cycle on WSE-3, depending on layout <span class="tag measured">Measured</span>, against vendor SIMD widths of 4 and 8 for FP16 <span class="tag vendor">Vendor</span>. In a full f16 matvec (the SDK benchmark, N = 64) we measured 2,165 cycles on WSE-2 and 1,335 on WSE-3, against 4,216 and 4,214 in f32 <span class="tag measured">Measured, simulator</span>. The SIMD width is a ceiling, not a rate: each FMAC element reads y, reads A and writes y, so memory traffic, not arithmetic, appears to set the f16 speed <span class="tag derived">Derived</span>.</li>
 </ul>
 <div class="callout key">
 <strong>Lab 3's 2.5 cycles per cell, explained</strong>
-Each stencil step runs one <code>@fadds</code> and two <code>@fmacs</code> over n cells. On WSE-3 that is 0.5 + 1 + 1 = 2.5 cycles per cell, which is the slope Chapter 12 measures (per-step cost ≈ 90 + 2.5·n cycles) <span class="tag derived">Derived from the measured rates</span>. The fixed ~90 cycles is the halo exchange, the completion tasks and the start-up of each instruction. One caveat: in Chapter 12's kernel, where both <code>@fadds</code> sources are offset views of the same array, WSE-2 also streams the add at 2 elements per cycle (0.5 cycles per cell) instead of the 1 per cycle measured here with three separate arrays <span class="tag measured">Measured, Chapter 12</span>. Operand placement changes the rate on WSE-2; the reason is not documented.
+Each stencil step runs one <code>@fadds</code> and two <code>@fmacs</code> over n cells. On WSE-3 that is 0.5 + 1 + 1 = 2.5 cycles per cell, which is the slope Chapter 13 measures (per-step cost ≈ 90 + 2.5·n cycles) <span class="tag derived">Derived from the measured rates</span>. The fixed ~90 cycles is the halo exchange, the completion tasks and the start-up of each instruction. One caveat: in Chapter 13's kernel, where both <code>@fadds</code> sources are offset views of the same array, WSE-2 also streams the add at 2 elements per cycle (0.5 cycles per cell) instead of the 1 per cycle measured here with three separate arrays <span class="tag measured">Measured, Chapter 13</span>. Operand placement changes the rate on WSE-2; the reason is not documented.
 </div>
 
 <div class="callout">
@@ -229,7 +229,7 @@ The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE
 </div>
 
 <h3>Where the descriptor lives: DSRs, <code>@load_to_dsr</code> and <code>@map</code></h3>
-<p>Normally the compiler loads each DSD into a DSR before the instruction that uses it, and a DSD that is not known at compile time costs DSRs (<code>cslc --dump-dsr-alloc-graph</code> shows the allocation) <span class="tag sdk">SDK 2.10.1, topic-15; Chapter 9</span>. DSRs come in three roles, destination, source 0 and source 1, and you can load them yourself. With <code>.save_address = true</code> the register keeps its end address after an op, so the next op continues where the last one stopped. The SDK matvec uses this so that the whole outer loop becomes one <code>@map</code> over x:</p>
+<p>Normally the compiler loads each DSD into a DSR before the instruction that uses it, and a DSD that is not known at compile time costs DSRs (<code>cslc --dump-dsr-alloc-graph</code> shows the allocation) <span class="tag sdk">SDK 2.10.1, topic-15; Chapter 10</span>. DSRs come in three roles, destination, source 0 and source 1, and you can load them yourself. With <code>.save_address = true</code> the register keeps its end address after an op, so the next op continues where the last one stopped. The SDK matvec uses this so that the whole outer loop becomes one <code>@map</code> over x:</p>
 <div class="filename">SDK benchmarks/single-tile-matvec/src/pe_matvec.csl (condensed)</div>
 <pre><code><span class="k">const</span> y_dest_dsr = <span class="b">@get_dsr</span>(dsr_dest, 0);
 <span class="k">const</span> y_src0_dsr = <span class="b">@get_dsr</span>(dsr_src0, 0);
@@ -249,7 +249,7 @@ The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE
 <p class="note">Cycles <span class="tag measured">Measured, simulator, SDK 2.10.1, TSC around compute()</span>. The <code>@map</code> version costs about N + 2 cycles per column; the scalar loop costs about N + 35 for N = 32–64 <span class="tag derived">Derived from the table</span>. At N = 8 half of the loop version's time is loop overhead: for short vectors the scalar code around the instruction costs more than the instruction.</p>
 
 <h2>Fabric DSDs: communication is an operand</h2>
-<p>A <code>fabin_dsd</code> describes "the next <em>extent</em> wavelets arriving on this input queue"; a <code>fabout_dsd</code> describes "send <em>extent</em> wavelets out of this output queue". Plug them into the same builtins and data is moved and computed on in one step. Here is how Lab 2's row reduction (program 03, Chapter 11) declares them:</p>
+<p>A <code>fabin_dsd</code> describes "the next <em>extent</em> wavelets arriving on this input queue"; a <code>fabout_dsd</code> describes "send <em>extent</em> wavelets out of this output queue". Plug them into the same builtins and data is moved and computed on in one step. Here is how Lab 2's row reduction (program 03, Chapter 12) declares them:</p>
 <div class="filename">course/programs/03-row-reduce/pe_program.csl</div>
 <pre><code><span class="k">const</span> oq: <span class="n">output_queue</span> = <span class="b">@get_output_queue</span>(2);
 <span class="k">const</span> iq: <span class="n">input_queue</span>  = <span class="b">@get_input_queue</span>(2);
@@ -347,7 +347,7 @@ If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD 
 <tr><td>Async fabric op runs on microthread</td><td>= the ID of its fabric DSD's queue, always</td><td><code>.ut_id = @get_ut_id(k)</code> if given; otherwise the queue ID</td></tr>
 <tr><td>Consequence</td><td>pick distinct queue IDs for concurrent ops</td><td>distinct queue IDs, or distinct explicit <code>.ut_id</code>s (topic-15 sends on queue 2 with microthread 4)</td></tr>
 </table></div>
-<p class="note">Both rows <span class="tag sdk">SDK 2.10.1, topic-15-wse3-microthreads</span>. Lab 3's first version broke this rule: input and output queues 2/3 collided, and the simulator reported a fatal microthread error on both chips (Chapter 12) <span class="tag measured">Measured</span>.</p>
+<p class="note">Both rows <span class="tag sdk">SDK 2.10.1, topic-15-wse3-microthreads</span>. Lab 3's first version broke this rule: input and output queues 2/3 collided, and the simulator reported a fatal microthread error on both chips (Chapter 13) <span class="tag measured">Measured</span>.</p>
 
 <h3>FIFOs extend the tiny hardware queues</h3>
 <p>Hardware queues hold only a handful of wavelets. In SDK pipeline-01, where a single PE loops memcpy input straight back out, the program "stalls when size exceeds 14", and the capacity is architecture-dependent <span class="tag sdk">SDK 2.10.1, pipeline-01/02</span>. That 14 is the capacity of that I/O path, not a published depth for one queue.</p>
@@ -372,7 +372,7 @@ If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD 
 </table></div>
 
 <h2>Lab 3's whole update, in three instructions</h2>
-<p>The stencil keeps ghost cells at both ends of its array so that three overlapping DSDs see the left neighbour, the cell itself, and the right neighbour of every cell (program 04, Chapter 12):</p>
+<p>The stencil keeps ghost cells at both ends of its array so that three overlapping DSDs see the left neighbour, the cell itself, and the right neighbour of every cell (program 04, Chapter 13):</p>
 <div class="filename">course/programs/04-heat-stencil/pe_program.csl</div>
 <pre><code><span class="k">const</span> left  = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i] });
 <span class="k">const</span> mid   = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{n} -> u[i + 1] });

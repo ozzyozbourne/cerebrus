@@ -129,7 +129,7 @@
 
 <div class="widget" id="journey">
 <h4>One wavelet's journey through a PE</h4>
-<p class="hint">Lab 2 (Chapter 11) sums a vector along a row of PEs from west to east. A middle PE runs one instruction, <code>@fadds(out_dsd, in_dsd, v_dsd, .{ .async = true, .activate = exit_id })</code>: "add what arrives from the west to my <code>v</code>, and send the sum east". Step through it; the parts involved light up in the diagram above.</p>
+<p class="hint">Lab 2 (Chapter 12) sums a vector along a row of PEs from west to east. A middle PE runs one instruction, <code>@fadds(out_dsd, in_dsd, v_dsd, .{ .async = true, .activate = exit_id })</code>: "add what arrives from the west to my <code>v</code>, and send the sum east". Step through it; the parts involved light up in the diagram above.</p>
 <div class="controls">
 <button class="btn secondary" type="button" id="j-prev">◀ Back</button>
 <button class="btn" type="button" id="j-next">Next step ▶</button>
@@ -241,7 +241,7 @@
 
 <div class="widget" id="utw">
 <h4>Microthread occupancy timeline</h4>
-<p class="hint">A toy PE step: receive 8 blocks from the west (they arrive one every few steps), compute 10 blocks locally, send 8 blocks east. Each block needs the one datapath for one step. Compare running the three operations one after another with running them as async ops on three microthreads. The third preset puts two ops on one microthread, as the first version of this course's heat-stencil lab (Chapter 12) did.</p>
+<p class="hint">A toy PE step: receive 8 blocks from the west (they arrive one every few steps), compute 10 blocks locally, send 8 blocks east. Each block needs the one datapath for one step. Compare running the three operations one after another with running them as async ops on three microthreads. The third preset puts two ops on one microthread, as the first version of this course's heat-stencil lab (Chapter 13) did.</p>
 <div class="controls">
 <span class="seg" role="group" aria-label="Execution mode"><button type="button" data-u="serial" class="on">one at a time</button><button type="button" data-u="async">async, 3 microthreads</button><button type="button" data-u="clash">two ops, one microthread</button></span>
 <label>wavelet arrival every <input type="range" id="ut-arr" min="1" max="4" value="2" aria-describedby="ut-out"> <span id="ut-arrv" class="mono"></span> steps</label>
@@ -250,7 +250,7 @@
 <div class="readout" id="ut-out" aria-live="polite"></div>
 <p class="hint" style="margin:8px 0 0">An illustrative model <span class="tag derived">Derived</span>: the real arbiter's policy and timings are not published. It shows the shape of the effect, not cycle counts.</p>
 </div>
-<p>On WSE-2 an async fabric operation always runs on the microthread whose ID matches its queue. WSE-3 exposes microthread IDs: you can pick one with <code>.ut_id</code>, and if you do not, it defaults to the queue ID. Either way, two operations must never use one microthread at the same time <span class="tag sdk">SDK 2.10.1, topic-15</span>. Nothing checks this at build time. This course's own heat-stencil program broke the rule: rebuilt with input queues 2 and 3 next to output queues 2 and 3, it fails on both chips with <code>trying to term ut_instr[3], but it's not ours</code> in <code>sim.log</code> at about cycle 2,123 (WSE-3) and 2,125 (WSE-2), and the host then waits forever <span class="tag measured">Measured, simulator</span>. Chapter 5 tells the story and has a collision explorer; Chapter 12 measures the fixed program.</p>
+<p>On WSE-2 an async fabric operation always runs on the microthread whose ID matches its queue. WSE-3 exposes microthread IDs: you can pick one with <code>.ut_id</code>, and if you do not, it defaults to the queue ID. Either way, two operations must never use one microthread at the same time <span class="tag sdk">SDK 2.10.1, topic-15</span>. Nothing checks this at build time. This course's own heat-stencil program broke the rule: rebuilt with input queues 2 and 3 next to output queues 2 and 3, it fails on both chips with <code>trying to term ut_instr[3], but it's not ours</code> in <code>sim.log</code> at about cycle 2,123 (WSE-3) and 2,125 (WSE-2), and the host then waits forever <span class="tag measured">Measured, simulator</span>. Chapter 5 tells the story and has a collision explorer; Chapter 13 measures the fixed program.</p>
 <div class="table-wrap"><table>
 <tr><th>Microthreads and queues</th><th>WSE-2</th><th>WSE-3</th></tr>
 <tr><td>microthreads</td><td>8</td><td>8 (IDs 0–7)</td></tr>

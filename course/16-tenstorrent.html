@@ -23,7 +23,7 @@
 </head>
 <body>
 <main>
-<div class="kicker">Chapter 13 · Part IV · Comparison</div>
+<div class="kicker">Chapter 16 · Part IV · Comparison</div>
 <h1>Tenstorrent, the middle path</h1>
 <p class="lede">Tenstorrent builds conventional-size chips out of a grid of "Tensix" cores. Each core has about 1.5 MiB of SRAM (1,464 KiB on Wormhole, 1,536 KiB on Blackhole) and five small RISC-V processors that steer a matrix engine. Cheap GDDR6 sits beside the chip. Ethernet ports built into the die (on Wormhole and most Blackhole products) link chips into meshes. Tenstorrent shares the wafer's idea of spatial, explicitly scheduled data movement, but at a very different scale and price.</p>
 
@@ -435,7 +435,7 @@ cb_push_back(cb_in0, block_tiles);
 
 <h3>CSL ↔ Metalium, concept by concept</h3>
 <div class="table-wrap"><table>
-<tr><th>In CSL (Chapters 4–12)</th><th>In TT-Metalium</th></tr>
+<tr><th>In CSL (Chapters 4–13)</th><th>In TT-Metalium</th></tr>
 <tr><td>color + route set in <code>layout.csl</code> (static path)</td><td>destination NoC x/y in each packet; the path follows from NoC 0/1 routing</td></tr>
 <tr><td>wavelet (32 bits)</td><td>flit (32/64 B) inside a packet carrying one or more 2 KiB tiles</td></tr>
 <tr><td>data task activated when a wavelet arrives</td><td>kernel loop that blocks in <code>cb_wait_front</code> or <code>noc_semaphore_wait</code></td></tr>

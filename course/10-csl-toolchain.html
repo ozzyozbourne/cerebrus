@@ -88,7 +88,7 @@
 </head>
 <body>
 <main>
-<div class="kicker">Chapter 9 · Part III · Programming</div>
+<div class="kicker">Chapter 10 · Part III · Programming</div>
 <h1>CSL and the toolchain</h1>
 <p class="lede">CSL, the Cerebras Software Language, looks like Zig. Its real content is a type system for hardware resources: colors, queues, tasks and descriptors. This chapter covers the three files every program has and how their names must match, the language, what <code>cslc</code> actually builds, how to read the outputs and decode the errors, the Python alternative (SdkLayout), and how to set the SDK up.</p>
 
@@ -148,7 +148,7 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 <p class="legend">Numbers in the notes: 48 KB per PE <span class="tag vendor">Vendor</span>; memcpy colors, task IDs, queues and out_rpc.json IDs <span class="tag sdk">SDK 2.10.1</span>; cycle counts and timings <span class="tag measured">Measured</span>.</p>
 </div>
 
-<p>SAXPY has no routes, because it has one PE. This is what a route looks like, from program 03 (<a href="11-lab-neighbours.html">Lab 2</a>): the layout tells the router of each PE where a color comes from (<code>rx</code>) and where it goes (<code>tx</code>).</p>
+<p>SAXPY has no routes, because it has one PE. This is what a route looks like, from program 03 (<a href="12-lab-neighbours.html">Lab 2</a>): the layout tells the router of each PE where a color comes from (<code>rx</code>) and where it goes (<code>tx</code>).</p>
 <div class="filename">course/programs/03-row-reduce/layout.csl (excerpt)</div>
 <pre><code><span class="k">if</span> (role != 2) <span class="c">// everyone but the last PE: CE -> RAMP -> router -> EAST</span>
   <span class="b">@set_color_config</span>(x, 0, send_c, .{ .routes = .{ .rx = .{RAMP}, .tx = .{EAST} } });
@@ -251,7 +251,7 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 Every bug we hit while writing this course's programs was about a resource, not arithmetic:
 <ul>
 <li>an export's mutability flag (<code>true</code> in the layout, a <code>const</code> pointer on the device; program 02): a compile error, decoded below;</li>
-<li>a race where the host read results before the last data task ran (<a href="07-host-io.html">Chapter 7</a>, copy vs streaming; program 02 in <a href="10-lab-first-programs.html">Lab 1</a>);</li>
+<li>a race where the host read results before the last data task ran (<a href="07-host-io.html">Chapter 7</a>, copy vs streaming; program 02 in <a href="11-lab-first-programs.html">Lab 1</a>);</li>
 <li>two asynchronous DSD operations on the same microthread, which collide or stall (<a href="05-tasks.html">Chapter 5</a>, <a href="06-dsds.html">Chapter 6</a>; the Lab 3 rebuild with queues 2/3 aborts with "trying to term ut_instr[3], but it's not ours").</li>
 </ul>
 The scalar language is the easy part.
@@ -431,7 +431,7 @@ cs_python run.py --name out</code></pre>
 <ul>
 <li><b>Idle stop.</b> The simulator stops after an idle window once the host has stopped; <code>simconfig.json</code> has <code>"sunsetCount": 50</code>, and most runs stopped after exactly 50 idle cycles <span class="tag measured">Measured</span>.</li>
 <li><b>A deadlock and a success can both end "Stopped due to idleness".</b> Only your host-side check (the <code>assert_allclose</code>) tells you which.</li>
-<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2) every time. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. The Chapter 10 review saw +1.4 % to +2.3 % for program 01 in parallel runs and up to about 4× on one variant, while in-kernel timestamps did not move <span class="tag measured">Measured</span>. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
+<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2) every time. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. The Chapter 11 review saw +1.4 % to +2.3 % for program 01 in parallel runs and up to about 4× on one variant, while in-kernel timestamps did not move <span class="tag measured">Measured</span>. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
 <li><b>To time a kernel</b>, read the PE's own timestamp counter with <code>&lt;time&gt;</code> (topic-02), which stays stable under load, or difference two runs as Lab 3 does. Do not read a single <code>cycle_count</code>.</li>
 <li>A fatal stop writes no <code>sim_stats.json</code> at all <span class="tag measured">Measured</span>. <code>sim.log</code> names the chip internally: FYN = WSE-2, SDR = WSE-3.</li>
 </ul>
@@ -451,7 +451,7 @@ cs_python run.py --name out</code></pre>
 <tr><td>delete <code>@export_symbol(saxpy)</code></td><td><b>run time</b> (compiles cleanly; <code>saxpy</code> is simply missing from <code>out_rpc.json</code>)</td><td><code>FATAL: Error: the function saxpy does not exist</code></td><td>export it</td></tr>
 <tr><td>delete <code>sys_mod.unblock_cmd_stream()</code></td><td><b>run time</b>, at the next memcpy after <code>launch</code></td><td><code>the received length (0 bytes) is not expected (256 bytes), could be a kernel stall</code>; <code>cs_python</code> aborts after about 4 s; <code>sim.log</code> is cut off; no <code>sim_stats.json</code></td><td>unblock at the end of every RPC</td></tr>
 </table></div>
-<p class="legend">"256 bytes" is the D2H copy of 64 f32 that never arrived. Under heavy host load a correct program can also abort with "could be a kernel stall": 5 of 32 parallel runs did in the Chapter 10 review <span class="tag measured">Measured</span>. Rerun it alone before you hunt.</p>
+<p class="legend">"256 bytes" is the D2H copy of 64 f32 that never arrived. Under heavy host load a correct program can also abort with "could be a kernel stall": 5 of 32 parallel runs did in the Chapter 11 review <span class="tag measured">Measured</span>. Rerun it alone before you hunt.</p>
 
 <h3>When it hangs: a four-step procedure</h3>
 <ol>

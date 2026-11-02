@@ -13,7 +13,7 @@
 </head>
 <body>
 <main>
-<div class="kicker">Chapter 12 · Part III · Programming</div>
+<div class="kicker">Chapter 13 · Part III · Programming</div>
 <h1>Lab 3: a heat stencil, measured</h1>
 <p class="lede">The capstone program simulates heat flowing along a rod split across a row of PEs. It needs everything from Part II: two-way neighbour traffic on four colors, asynchronous transfers, completion tasks counted into a step, and an iterative state machine. Then we time each step inside the kernel and take the cost apart, cycle by cycle.</p>
 
@@ -177,7 +177,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <li>Going from four transfers to two (P = 2) saves 29.2, so each <strong>async transfer costs ≈14.6 cycles</strong> including its completion task and <code>op_done()</code>. Four of them make 58.4, which leaves <strong>≈13 cycles of step bookkeeping</strong> (the <code>update()</code>/<code>start_step()</code> call chain and the branch).</li>
 <li>The compute at n = 16 is 130.2 − 71.2 = 59 = 40 (2.5·16 streaming) + <strong>≈19 of start-up</strong>, about 6 per vector instruction. Keeping one instruction at a time confirms it: <code>@fadds</code> alone adds 8 + 6 cycles at n = 16 and one <code>@fmacs</code> adds 16 + 6 <span class="tag measured">Measured</span>. About a fifth of the "fixed" cost is therefore compute start-up, not communication. (<a href="06-dsds.html">Chapter 6</a> measured about 17 cycles to start an isolated op; inside this task the three consecutive instructions start faster. We have not isolated why.)</li>
 </ul>
-<p>Almost none of this is wire time: a pure router hop costs 2.0 cycles on WSE-3 and 1.0 on WSE-2 (Chapter 4), and the halo here travels exactly one hop. (A hop that passes <em>through</em> a PE's program, receive + add + send, costs ≈9.2 / 6.0 cycles, Chapter 11; this lab has none.) The cost is the CE running a task for each transfer that finishes, one at a time, plus a few cycles to start each vector instruction. Halo width confirms it: sending 4 or 16 wavelets per direction instead of 1 costs only about 1 cycle per extra word, against ≈14.6 per extra message <span class="tag measured">Measured</span> (review measurements, TSC). <em>Fewer, larger messages and fewer, longer instructions</em> are the levers.</p>
+<p>Almost none of this is wire time: a pure router hop costs 2.0 cycles on WSE-3 and 1.0 on WSE-2 (Chapter 4), and the halo here travels exactly one hop. (A hop that passes <em>through</em> a PE's program, receive + add + send, costs ≈9.2 / 6.0 cycles, Chapter 12; this lab has none.) The cost is the CE running a task for each transfer that finishes, one at a time, plus a few cycles to start each vector instruction. Halo width confirms it: sending 4 or 16 wavelets per direction instead of 1 costs only about 1 cycle per extra word, against ≈14.6 per extra message <span class="tag measured">Measured</span> (review measurements, TSC). <em>Fewer, larger messages and fewer, longer instructions</em> are the levers.</p>
 
 <div class="widget" id="model">
 <h4>Use the model</h4>

@@ -20,13 +20,14 @@
 </figure>
 
 <div class="stat-row">
-  <div class="stat"><div class="v">15</div><div class="l">chapters, each with diagrams</div></div>
+  <div class="stat"><div class="v">18 + 5</div><div class="l">chapters and appendices, each with diagrams</div></div>
   <div class="stat"><div class="v">69</div><div class="l">interactive widgets</div></div>
-  <div class="stat"><div class="v">5 / 5</div><div class="l">programs pass on WSE-3 and WSE-2 <span class="tag measured">Measured</span></div></div>
+  <div class="stat"><div class="v">7 / 7</div><div class="l">programs pass on WSE-3 and WSE-2 <span class="tag measured">Measured</span></div></div>
   <div class="stat"><div class="v">4</div><div class="l">real problems hit while writing the programs, explained</div></div>
 </div>
 
 <div id="toc"></div>
+<div id="appx"></div>
 
 <h2>How to use this course</h2>
 <ul>
@@ -48,10 +49,13 @@
     "Data structure descriptors: one instruction, a whole loop; measured rates and bank clashes.",
     "memcpy halos, copy vs streaming, the command stream, a real race.",
     "Weight streaming, MemoryX/SwarmX, inference across wafers, CS-4.",
+    "The compile path, decode latency budget, speculative decoding, MoE.",
     "Language, program anatomy, cslc, the simulator, debugging, setup.",
     "SAXPY and wavelet-triggered tasks, step by step, with on-chip timing and a real race.",
     "Row reduction and multicast broadcast; measured hop costs and streaming vs store-and-forward.",
     "1-D heat equation with halo exchange; 90 + 2.5·n cycles per step, explained piece by piece.",
+    "SUMMA matrix multiply on a 2-D grid with &lt;collectives_2d&gt;, measured.",
+    "Composing modules: CG with allreduce, a multi-phase solver loop.",
     "Tensix cores, five RISC-Vs, NoCs, reader/compute/writer kernels.",
     "SMs, HBM, SIMT, occupancy; SAXPY in CUDA vs CSL.",
     "Architecture, programming, scaling, evidence, and when to choose which.",
@@ -65,18 +69,23 @@
     a.innerHTML = `<div class="num">${String(i + 1).padStart(2, "0")}</div><h3>${title}</h3><p>${blurbs[i]}</p>`;
     grid.appendChild(a);
   });
+  const ax = document.getElementById("appx"); const ah = document.createElement("div"); ah.className = "part-title"; ah.textContent = "Appendices"; ax.appendChild(ah);
+  const ag = document.createElement("div"); ag.className = "cards"; ax.appendChild(ag);
+  const ablurbs = ["Every term and number format used in the course.", "CUDA concepts mapped to CSL, resource budget card, measured cost constants.", "sim_stats vs on-tile timers vs instruction traces; profiling on all three machines.", "Every SDK tutorial, benchmark and library mapped to the chapter that explains it.", "Where each number comes from, and the live list of unverified figures."];
+  APPENDICES.forEach(([href, title, L], i) => { const a = document.createElement("a"); a.className = "card"; a.href = href;
+    a.innerHTML = `<div class="num">${L}</div><h3>${title}</h3><p>${ablurbs[i]}</p>`; ag.appendChild(a); });
   const map = $("#map");
-  const parts = [["I · Why", 0, 2, "--amber"], ["II · The machine", 2, 8, "--accent"], ["III · Programming", 8, 12, "--blue"], ["IV · Comparison", 12, 15, "--green"]];
+  const parts = [["I · Why", 0, 2, "--amber"], ["II · The machine", 2, 9, "--accent"], ["III · Programming", 9, 15, "--blue"], ["IV · Comparison", 15, 18, "--green"]];
   parts.forEach(([n, a, b, c]) => {
-    el("rect", { x: 10 + a * 64, y: 20, width: (b - a) * 64 - 6, height: 26, rx: 6, fill: cssVar(c), opacity: .9 }, map);
-    el("text", { x: 10 + a * 64 + 8, y: 38, "font-size": 12, "font-weight": 700, fill: "#fff" }, map).textContent = n;
+    el("rect", { x: 10 + a * 53, y: 20, width: (b - a) * 53 - 6, height: 26, rx: 6, fill: cssVar(c), opacity: .9 }, map);
+    el("text", { x: 10 + a * 53 + 8, y: 38, "font-size": 12, "font-weight": 700, fill: "#fff" }, map).textContent = n;
   });
   CHAPTERS.forEach(([href, title], i) => {
     const g = el("a", { href }, map);
-    el("rect", { x: 10 + i * 64, y: 60, width: 58, height: 58, rx: 8, class: "box", "stroke-width": 1.2 }, g);
-    el("text", { x: 39 + i * 64, y: 96, "text-anchor": "middle", "font-size": 18, "font-weight": 700 }, g).textContent = i + 1;
-    const short = ["Memory wall", "The wafer", "The PE", "Fabric", "Tasks", "DSDs", "Host I/O", "Systems", "CSL", "Lab 1", "Lab 2", "Lab 3", "Tenstorrent", "GPUs", "Compare"][i];
-    el("text", { x: 39 + i * 64, y: 136, "text-anchor": "middle", "font-size": 10, class: "muted" }, g).textContent = short;
+    el("rect", { x: 10 + i * 53, y: 60, width: 48, height: 58, rx: 8, class: "box", "stroke-width": 1.2 }, g);
+    el("text", { x: 34 + i * 53, y: 96, "text-anchor": "middle", "font-size": 18, "font-weight": 700 }, g).textContent = i + 1;
+    const short = ["Memory wall", "The wafer", "The PE", "Fabric", "Tasks", "DSDs", "Host I/O", "Systems", "Serving", "CSL", "Lab 1", "Lab 2", "Lab 3", "Lab 4", "Lab 5", "Tenstorr.", "GPUs", "Compare"][i];
+    el("text", { x: 34 + i * 53, y: 136, "text-anchor": "middle", "font-size": 10, class: "muted" }, g).textContent = short;
   });
 })();
 </script>

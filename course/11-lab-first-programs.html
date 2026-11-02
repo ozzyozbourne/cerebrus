@@ -31,7 +31,7 @@
 </head>
 <body>
 <main>
-<div class="kicker">Chapter 10 · Part III · Programming</div>
+<div class="kicker">Chapter 11 · Part III · Programming</div>
 <h1>Lab 1: SAXPY and wavelet tasks</h1>
 <p class="lede">Two single-PE programs. The first uses the host-driven style: copy data in, call a function, copy results out. The second uses the dataflow style: the host streams values, and each arriving wavelet runs a task. Both were compiled and run on the SDK 2.10.1 simulator for WSE-3 and WSE-2 <span class="tag measured">Measured</span>; the code below is the exact validated source. Then we look inside both runs, cycle by cycle.</p>
 
@@ -58,12 +58,85 @@ python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"
 </div>
 
 <h2>Program 01 · SAXPY: y ← a·x + y</h2>
-<p>The layout places one PE, exports two arrays and one function. Because the function takes an argument, its exported type is <code>fn(f32)void</code>. Chapter 9 walks through these three files line by line; here we build them, run them and look inside.</p>
-<p>First the build-and-run script. The flags were explained in Chapter 9: an 8 × 3 fabric leaves room for memcpy's columns west and east of your code, and your 1 × 1 rectangle sits at offset (4,1), so your PE appears as <code>P4.1</code> in traces. <code>--params=N:64</code> sets the compile-time vector length; <code>--memcpy --channels 1</code> adds the host-transfer framework (Chapter 7).</p>
-{{code:programs/01-saxpy/commands.sh}}
-{{code:programs/01-saxpy/layout.csl}}
-{{code:programs/01-saxpy/pe_program.csl}}
-{{code:programs/01-saxpy/run.py}}
+<p>The layout places one PE, exports two arrays and one function. Because the function takes an argument, its exported type is <code>fn(f32)void</code>. Chapter 10 walks through these three files line by line; here we build them, run them and look inside.</p>
+<p>First the build-and-run script. The flags were explained in Chapter 10: an 8 × 3 fabric leaves room for memcpy's columns west and east of your code, and your 1 × 1 rectangle sits at offset (4,1), so your PE appears as <code>P4.1</code> in traces. <code>--params=N:64</code> sets the compile-time vector length; <code>--memcpy --channels 1</code> adds the host-transfer framework (Chapter 7).</p>
+<div class="filename">course/programs/01-saxpy/commands.sh</div>
+<pre><code>#!/usr/bin/env bash
+set -e
+cslc --arch=${ARCH:-wse3} ./<span class="k">layout</span>.csl --fabric-dims=8,3 --fabric-offsets=4,1 --params=N:64 -o out --memcpy --channels 1
+cs_python run.py --name out</code></pre>
+<div class="filename">course/programs/01-saxpy/layout.csl</div>
+<pre><code><span class="c">// 01-saxpy: y = a*x + y on a single PE.</span>
+<span class="c">// Teaches: layout block, memcpy params, exported symbols, host-callable RPC.</span>
+<span class="k">param</span> N: <span class="n">i16</span>;      <span class="c">// vector length (compile-time)</span>
+
+<span class="k">const</span> memcpy = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/get_params&gt;&quot;</span>, .{ .width = 1, .height = 1 });
+
+<span class="k">layout</span> {
+  <span class="b">@set_rectangle</span>(1, 1);                         <span class="c">// 1 column x 1 row of PEs</span>
+  <span class="b">@set_tile_code</span>(0, 0, <span class="s">&quot;pe_program.csl&quot;</span>, .{ .memcpy_params = memcpy.get_params(0), .N = N });
+
+  <span class="b">@export_name</span>(<span class="s">&quot;x&quot;</span>, [*]<span class="n">f32</span>, true);              <span class="c">// host may write and read</span>
+  <span class="b">@export_name</span>(<span class="s">&quot;y&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;saxpy&quot;</span>, <span class="k">fn</span>(<span class="n">f32</span>)<span class="n">void</span>);           <span class="c">// RPC taking the scalar a</span>
+}</code></pre>
+<div class="filename">course/programs/01-saxpy/pe_program.csl</div>
+<pre><code><span class="k">param</span> memcpy_params;
+<span class="k">param</span> N: <span class="n">i16</span>;
+
+<span class="k">const</span> sys_mod = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/memcpy&gt;&quot;</span>, memcpy_params);
+
+<span class="c">// Both vectors live in this PE&#x27;s 48 KB SRAM. There is no other memory.</span>
+<span class="k">var</span> x: [N]<span class="n">f32</span>;
+<span class="k">var</span> y: [N]<span class="n">f32</span>;
+<span class="k">var</span> x_ptr: [*]<span class="n">f32</span> = &amp;x;
+<span class="k">var</span> y_ptr: [*]<span class="n">f32</span> = &amp;y;
+
+<span class="c">// A DSD is a hardware loop descriptor: base address + length (+ stride).</span>
+<span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -&gt; x[i] });
+<span class="k">const</span> y_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -&gt; y[i] });
+
+<span class="k">fn</span> saxpy(a: <span class="n">f32</span>) <span class="n">void</span> {
+  <span class="c">// One instruction walks all N elements: y[i] = y[i] + x[i] * a</span>
+  <span class="b">@fmacs</span>(y_dsd, y_dsd, x_dsd, a);
+  <span class="c">// Tell memcpy this RPC is finished so the host&#x27;s next command can run.</span>
+  sys_mod.unblock_cmd_stream();
+}
+
+<span class="k">comptime</span> {
+  <span class="b">@export_symbol</span>(x_ptr, <span class="s">&quot;x&quot;</span>);
+  <span class="b">@export_symbol</span>(y_ptr, <span class="s">&quot;y&quot;</span>);
+  <span class="b">@export_symbol</span>(saxpy);
+}</code></pre>
+<div class="filename">course/programs/01-saxpy/run.py</div>
+<pre><code>#!/usr/bin/env cs_python
+<span class="k">import</span> argparse, json
+<span class="k">import</span> numpy as np
+<span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder  <span class="c"># pylint: disable=no-name-in-module</span>
+
+p = argparse.ArgumentParser(); p.add_argument(&#x27;--name&#x27;); p.add_argument(&#x27;--cmaddr&#x27;)
+args = p.parse_args()
+N = int(json.load(open(f<span class="s">&quot;{args.name}/out.json&quot;</span>))[&#x27;params&#x27;][&#x27;N&#x27;])
+
+rng = np.random.default_rng(0)
+x = rng.standard_normal(N).astype(np.float32)
+y = rng.standard_normal(N).astype(np.float32)
+a = np.float32(2.5)
+
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr)
+xs, ys = rt.get_id(&#x27;x&#x27;), rt.get_id(&#x27;y&#x27;)
+rt.load(); rt.run()
+kw = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
+rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)        <span class="c"># (x0, y0, width, height, elems per PE)</span>
+rt.memcpy_h2d(ys, y, 0, 0, 1, 1, N, **kw)
+rt.launch(&#x27;saxpy&#x27;, a, nonblock=<span class="k">False</span>)
+out = np.zeros(N, dtype=np.float32)
+rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)
+rt.stop()
+
+np.testing.assert_allclose(out, a * x + y, rtol=1e-6, atol=1e-6)
+print(<span class="s">&quot;first 4:&quot;</span>, out[:4], <span class="s">&quot; expected:&quot;</span>, (a * x + y)[:4])
+print(<span class="s">&quot;SUCCESS!&quot;</span>)</code></pre>
 <p>The memcpy calls in <code>run.py</code> take the same arguments every time <span class="tag sdk">SDK 2.10.1, gemv-03</span>:</p>
 <div class="table-wrap"><table>
 <tr><th>argument</th><th>here</th><th>meaning</th></tr>
@@ -77,7 +150,10 @@ python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"
 <p>The compiler also writes <code>out/bin/out_rpc.json</code>, the table the host uses to find your symbols. Its entry for the RPC says <code>"name": "saxpy", "id": 3, "inputs": [{"name": "a", "type": "f32"}]</code>; <code>x</code> and <code>y</code> are ids 1 and 2 with <code>"immutable": 0</code> (the host may write them) <span class="tag measured">Measured</span>. That id 3 travels with every <code>launch('saxpy', …)</code>, as the step-through below shows.</p>
 
 <h3>The output, and why one digit differs</h3>
-{{out:programs/01-saxpy/expected_output.txt}}
+<div class="filename">course/programs/01-saxpy/expected_output.txt</div>
+<pre class="output"><code>first 4: [ 0.64329517 -0.5888347   3.1845295   1.5826113 ]  expected: [ 0.64329517 -0.5888347   3.1845293   1.5826113 ]
+SUCCESS!
+[7740 simulated cycles, WSE-3]</code></pre>
 <p class="muted">The last line is not printed by <code>run.py</code>. It is the <code>cycle_count</code> from <code>sim_stats.json</code>, which the one-liner in the setup box prints. Your count may differ by a few cycles, or by much more on a busy machine (see <a href="#noise">below</a>).</p>
 <div class="table-wrap"><table class="num">
 <tr><th>i</th><th class="r">device</th><th class="r">numpy <code>a*x + y</code></th><th class="r">one-rounding FMA</th></tr>
@@ -140,7 +216,7 @@ python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"
 <tr><td><code>memcpy_d2h(y)</code></td><td class="r">3,252–7,689</td><td class="r">57%</td><td>decode (~520), then 64 × (data + control wavelet)</td></tr>
 <tr><td>idle tail</td><td class="r">7,690–7,740</td><td class="r">1%</td><td>the simulator stops after 50 idle cycles</td></tr>
 </table></div>
-<p>So the <code>@fmacs</code> is about 130 cycles of 7,740, under 2% <span class="tag measured">Measured</span>, and copying y back costs more than everything else together. Lab 3 keeps host I/O out of its numbers the same way this lab's <code>timed/</code> variant does: it reads the on-tile timestamp counter at the start and end of the kernel on one PE. Subtracting whole-run totals for two step counts also works, but it is noisier (Chapter 12 explains why).</p>
+<p>So the <code>@fmacs</code> is about 130 cycles of 7,740, under 2% <span class="tag measured">Measured</span>, and copying y back costs more than everything else together. Lab 3 keeps host I/O out of its numbers the same way this lab's <code>timed/</code> variant does: it reads the on-tile timestamp counter at the start and end of the kernel on one PE. Subtracting whole-run totals for two step counts also works, but it is noisier (Chapter 13 explains why).</p>
 
 <h3>Cycles versus N</h3>
 <p>Running the unmodified program at several sizes (one run at a time, on an idle machine) gives a straight line <span class="tag measured">Measured</span>:</p>
@@ -167,9 +243,50 @@ python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"
 
 <h3>Measure the kernel itself: f32 vs f16, WSE-2 vs WSE-3</h3>
 <p>The standard SDK idiom (topic-02, bandwidth-test) reads the PE's 48-bit timestamp counter just before and after the code you care about. The SDK explains why this beats host-side timing: "the runtime may not send the command right after the user issues it" <span class="tag sdk">SDK 2.10.1, bandwidth-test README</span>. The variant in <code>01-saxpy/timed/</code> does this around the single DSD op, and can switch to f16 (<code>@fmach</code>) and insert padding between x and y:</p>
-{{code:programs/01-saxpy/timed/pe_program.csl}}
+<div class="filename">course/programs/01-saxpy/timed/pe_program.csl</div>
+<pre><code><span class="k">param</span> memcpy_params;
+<span class="k">param</span> N: <span class="n">i16</span>;
+<span class="k">param</span> HALF: <span class="n">i16</span>;
+<span class="k">param</span> PAD: <span class="n">i16</span>;
+
+<span class="k">const</span> sys_mod = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/memcpy&gt;&quot;</span>, memcpy_params);
+<span class="k">const</span> tsc = <span class="b">@import_module</span>(<span class="s">&quot;&lt;time&gt;&quot;</span>);          <span class="c">// the PE&#x27;s 48-bit timestamp counter</span>
+<span class="k">const</span> T: type = <span class="k">if</span> (HALF != 0) <span class="n">f16</span> <span class="k">else</span> <span class="n">f32</span>;
+
+<span class="c">// x and y are contiguous; PAD extra words at the end of x shift where y starts.</span>
+<span class="k">var</span> x: [N + PAD]T;
+<span class="k">var</span> y: [N]T;
+<span class="k">var</span> x_ptr: [*]T = &amp;x;
+<span class="k">var</span> y_ptr: [*]T = &amp;y;
+<span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -&gt; x[i] });
+<span class="k">const</span> y_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -&gt; y[i] });
+
+<span class="k">var</span> ts = <span class="b">@zeros</span>([6]<span class="n">u16</span>);                       <span class="c">// [t0 (3 x u16), t1 (3 x u16)]</span>
+<span class="k">const</span> ts_ptr: [*]<span class="n">u16</span> = &amp;ts;
+<span class="k">var</span> t0 = <span class="b">@zeros</span>([3]<span class="n">u16</span>);
+<span class="k">var</span> t1 = <span class="b">@zeros</span>([3]<span class="n">u16</span>);
+
+<span class="k">fn</span> saxpy(a: <span class="n">f32</span>) <span class="n">void</span> {
+  tsc.enable_tsc();
+  tsc.get_timestamp(&amp;t0);
+  <span class="k">if</span> (HALF != 0) { <span class="b">@fmach</span>(y_dsd, y_dsd, x_dsd, <span class="b">@as</span>(<span class="n">f16</span>, a)); }
+  <span class="k">else</span>           { <span class="b">@fmacs</span>(y_dsd, y_dsd, x_dsd, a); }
+  tsc.get_timestamp(&amp;t1);
+  <span class="k">for</span> (<span class="b">@range</span>(<span class="n">i16</span>, 3)) |i| { ts[i] = t0[i]; ts[3 + i] = t1[i]; }
+  sys_mod.unblock_cmd_stream();
+}
+
+<span class="k">comptime</span> {
+  <span class="b">@export_symbol</span>(x_ptr, <span class="s">&quot;x&quot;</span>);
+  <span class="b">@export_symbol</span>(y_ptr, <span class="s">&quot;y&quot;</span>);
+  <span class="b">@export_symbol</span>(ts_ptr, <span class="s">&quot;ts&quot;</span>);
+  <span class="b">@export_symbol</span>(saxpy);
+}</code></pre>
 <p>The host reads <code>ts</code> as six 16-bit words and joins each three into a 48-bit count (the end of <code>timed/run.py</code>). Run it with <code>bash commands.sh N HALF PAD</code>, for example <code>bash commands.sh 1024 1 0</code>:</p>
-{{out:programs/01-saxpy/timed/expected_output.txt}}
+<div class="filename">course/programs/01-saxpy/timed/expected_output.txt</div>
+<pre class="output"><code>N=64 f32 @fmacs PAD=0: kernel 143 cycles (TSC)
+SUCCESS!
+[11010 simulated cycles, WSE-3]</code></pre>
 <p>TSC cycles for the one DSD op, including about 10 cycles for the two timestamp reads <span class="tag measured">Measured</span>:</p>
 <div class="table-wrap"><table class="num">
 <tr><th class="r">N</th><th class="r">f32 WSE-3</th><th class="r">f32 WSE-3, PAD 1</th><th class="r">f32 WSE-2</th><th class="r">f32 WSE-2, PAD 1</th><th class="r">f16 WSE-3</th><th class="r">f16 WSE-2</th></tr>
@@ -195,7 +312,35 @@ grep "P4.1: .*EX OP.*FMACS" sim.log | head -2</code></pre>
 @3250 P4.1: Seq: 63, [EX OP] | 0x013a: T01 FMACS  Dest:bf7b380d Src0:3e8453ed Src1:befde803 Src2:40200000
 @3251 P4.1: Seq: 0,  [EX OP] | 0x013c: T01 UBLK   Src1:0001</code></pre>
 <p>A small helper groups the trace into runs of one task. It is how every cycle stamp on this page was produced:</p>
-{{code:programs/01-saxpy/trace_tasks.py}}
+<div class="filename">course/programs/01-saxpy/trace_tasks.py</div>
+<pre><code>#!/usr/bin/env python3
+<span class="s">&quot;&quot;</span>&quot;Group the simulator&#x27;s instruction trace into runs of one <span class="k">task</span> on one PE.
+
+Run the program with the trace on:
+    SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace cs_python run.py --name out
+then:
+    python3 trace_tasks.py sim.log P4.1        <span class="c"># P4.1 = your PE at fabric offset (4,1)</span>
+Each output line is one run of consecutive instructions <span class="k">from</span> one <span class="k">task</span>:
+    <span class="k">task</span>  first-last cycle  (length, instructions)  notable opcodes
+<span class="s">&quot;&quot;</span>&quot;
+<span class="k">import</span> re, sys
+
+NOTABLE = (<span class="s">&quot;FMAC&quot;</span>, <span class="s">&quot;FMUL&quot;</span>, <span class="s">&quot;FADD&quot;</span>, <span class="s">&quot;FMOV&quot;</span>, <span class="s">&quot;MOV32&quot;</span>, <span class="s">&quot;BLK&quot;</span>, <span class="s">&quot;UBLK&quot;</span>, <span class="s">&quot;ACTVT&quot;</span>, <span class="s">&quot;OQ&quot;</span>)
+log, pe = sys.argv[1], sys.argv[2]
+pat = re.compile(r<span class="s">&quot;^@(\d+) &quot;</span> + re.escape(pe) + r<span class="s">&quot;: .*\[EX OP\] . 0x[0-9a-f]+: (T\d+)\s+(?:\S+\?\s+)?(\S+)&quot;</span>)
+runs = []                                   <span class="c"># [task, first, last, count, opcodes]</span>
+<span class="k">for</span> line in open(log, errors=<span class="s">&quot;replace&quot;</span>):
+    m = pat.match(line)
+    <span class="k">if</span> not m:
+        continue
+    cyc, <span class="k">task</span>, op = int(m.group(1)), m.group(2), m.group(3)
+    <span class="k">if</span> runs and runs[-1][0] == <span class="k">task</span> and cyc - runs[-1][2] &lt; 40:
+        r = runs[-1]; r[2] = cyc; r[3] += 1; r[4].add(op)
+    <span class="k">else</span>:
+        runs.append([<span class="k">task</span>, cyc, cyc, 1, {op}])
+<span class="k">for</span> <span class="k">task</span>, a, b, n, ops in runs:
+    key = <span class="s">&quot; &quot;</span>.join(sorted(o <span class="k">for</span> o in ops <span class="k">if</span> o.startswith(NOTABLE)))
+    print(f<span class="s">&quot;{<span class="k">task</span>:4} {a:6}-{b:&lt;6} ({b - a + 1:5} cyc, {n:4} instr) {key}&quot;</span>)</code></pre>
 <div class="table-wrap"><table>
 <tr><th>task id in the trace</th><th>what it is <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span> <span class="tag measured">Measured</span></th></tr>
 <tr><td><code>T01</code></td><td>memcpy's command task (input queue 1, color 22); your RPC runs inside it</td></tr>
@@ -226,21 +371,126 @@ grep "P4.1: .*EX OP.*FMACS" sim.log | head -2</code></pre>
 <h2>Program 02 · A task per wavelet</h2>
 <p>Now the host does not write into an array. It <em>streams</em>: each of the N values becomes one 32-bit wavelet sent on a memcpy color. On the PE, that color is bound to input queue 2 and the queue is bound to a data task, so <strong>each arriving value runs <code>on_value()</code> once</strong>, with the value as its argument.</p>
 <p>The script has one extra parameter: <code>--params=MEMCPYH2D_DATA_1_ID:0</code> picks color 0 for the stream. <code>run.py</code> reads the same value back from <code>out/out.json</code>, so host and device agree.</p>
-{{code:programs/02-wavelet-tasks/commands.sh}}
-{{code:programs/02-wavelet-tasks/layout.csl}}
-{{code:programs/02-wavelet-tasks/pe_program.csl}}
+<div class="filename">course/programs/02-wavelet-tasks/commands.sh</div>
+<pre><code>#!/usr/bin/env bash
+set -e
+cslc --arch=${ARCH:-wse3} ./<span class="k">layout</span>.csl --fabric-dims=8,3 --fabric-offsets=4,1 \
+  --params=N:100 --params=MEMCPYH2D_DATA_1_ID:0 -o out --memcpy --channels 1
+cs_python run.py --name out</code></pre>
+<div class="filename">course/programs/02-wavelet-tasks/layout.csl</div>
+<pre><code><span class="c">// 02-wavelet-tasks: the host streams N numbers into one PE. Every arriving</span>
+<span class="c">// 32-bit wavelet triggers a *data task* that updates running statistics.</span>
+<span class="c">// Teaches: streaming memcpy, input queues, data tasks (wavelet-triggered tasks).</span>
+<span class="k">param</span> N: <span class="n">i16</span>;
+<span class="k">param</span> MEMCPYH2D_DATA_1_ID: <span class="n">i16</span>;    <span class="c">// which color memcpy uses for our stream</span>
+
+<span class="k">const</span> memcpy = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/get_params&gt;&quot;</span>, .{
+  .width = 1, .height = 1, .MEMCPYH2D_1 = MEMCPYH2D_DATA_1_ID });
+
+<span class="k">layout</span> {
+  <span class="b">@set_rectangle</span>(1, 1);
+  <span class="b">@set_tile_code</span>(0, 0, <span class="s">&quot;pe_program.csl&quot;</span>, .{ .memcpy_params = memcpy.get_params(0), .N = N });
+  <span class="b">@export_name</span>(<span class="s">&quot;stats&quot;</span>, [*]<span class="n">f32</span>, false);      <span class="c">// false = host may read but not write</span>
+  <span class="b">@export_name</span>(<span class="s">&quot;count&quot;</span>, [*]<span class="n">u32</span>, false);
+  <span class="b">@export_name</span>(<span class="s">&quot;wait_done&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);   <span class="c">// barrier RPC</span>
+}</code></pre>
+<div class="filename">course/programs/02-wavelet-tasks/pe_program.csl</div>
+<pre><code><span class="k">param</span> memcpy_params;
+<span class="k">param</span> N: <span class="n">i16</span>;
+
+<span class="k">const</span> sys_mod = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/memcpy&gt;&quot;</span>, memcpy_params);
+
+<span class="c">// stats = [sum, sum of squares, max, min]</span>
+<span class="k">var</span> stats = [4]<span class="n">f32</span> { 0.0, 0.0, -1.0e30, 1.0e30 };
+<span class="k">var</span> count = [1]<span class="n">u32</span> { 0 };
+<span class="k">const</span> stats_ptr: [*]<span class="n">f32</span> = &amp;stats;
+<span class="k">const</span> count_ptr: [*]<span class="n">u32</span> = &amp;count;
+<span class="k">var</span> host_waiting: <span class="n">bool</span> = false;   <span class="c">// set by wait_done() if it runs before the last task</span>
+
+<span class="c">// The color memcpy streams on is chosen by the host side (a param).</span>
+<span class="k">const</span> h2d_color: <span class="n">color</span> = <span class="b">@get_color</span>(<span class="b">@bitcast</span>(<span class="n">u16</span>, sys_mod.MEMCPYH2D_1));
+<span class="c">// On WSE-3 a wavelet lands in an *input queue*; the data task is bound to the queue.</span>
+<span class="c">// (Queues 0 and 1 are reserved by memcpy on WSE-3, so we use 2.)</span>
+<span class="k">const</span> h2d_iq: <span class="n">input_queue</span> = <span class="b">@get_input_queue</span>(2);
+<span class="k">const</span> recv_task_id: <span class="n">data_task_id</span> =
+  <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">&quot;wse2&quot;</span>)) <span class="b">@get_data_task_id</span>(h2d_color)   <span class="c">// WSE-2: task ID == color</span>
+  <span class="k">else</span> <span class="b">@get_data_task_id</span>(h2d_iq);                      <span class="c">// WSE-3: task ID == input queue</span>
+
+<span class="c">// Runs once per wavelet; the 32-bit payload arrives as the argument.</span>
+<span class="k">task</span> on_value(v: <span class="n">f32</span>) <span class="n">void</span> {
+  stats[0] += v;
+  stats[1] += v * v;
+  <span class="k">if</span> (v &gt; stats[2]) stats[2] = v;
+  <span class="k">if</span> (v &lt; stats[3]) stats[3] = v;
+  count[0] += 1;
+  <span class="c">// Last value processed: if the host is waiting in wait_done(), release it.</span>
+  <span class="k">if</span> (count[0] == <span class="b">@as</span>(<span class="n">u32</span>, N) and host_waiting) sys_mod.unblock_cmd_stream();
+}
+
+<span class="c">// RPC the host calls after streaming. A streaming memcpy_h2d &quot;completes&quot; as</span>
+<span class="c">// soon as all wavelets are injected -- NOT when the data tasks have consumed</span>
+<span class="c">// them. Without this barrier the host reads half-finished statistics.</span>
+<span class="k">fn</span> wait_done() <span class="n">void</span> {
+  <span class="k">if</span> (count[0] == <span class="b">@as</span>(<span class="n">u32</span>, N)) {
+    sys_mod.unblock_cmd_stream();     <span class="c">// all done already</span>
+  } <span class="k">else</span> {
+    host_waiting = true;              <span class="c">// leave the command stream blocked;</span>
+  }                                   <span class="c">// on_value() unblocks it later</span>
+}
+
+<span class="k">comptime</span> {
+  <span class="b">@bind_data_task</span>(on_value, recv_task_id);
+  <span class="c">// WSE-3 only: connect the color to input queue 2 (WSE-2 binds the color directly).</span>
+  <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">&quot;wse3&quot;</span>)) <span class="b">@initialize_queue</span>(h2d_iq, .{ .<span class="n">color</span> = h2d_color });
+  <span class="b">@export_symbol</span>(stats_ptr, <span class="s">&quot;stats&quot;</span>);
+  <span class="b">@export_symbol</span>(count_ptr, <span class="s">&quot;count&quot;</span>);
+  <span class="b">@export_symbol</span>(wait_done);
+}</code></pre>
 
 <h3>Reading program 02</h3>
 <ul>
 <li><b>Color.</b> memcpy owns the stream's color; the host chose its number (0) with a compile parameter, and <code>@get_color(@bitcast(u16, sys_mod.MEMCPYH2D_1))</code> turns it into a <code>color</code> value.</li>
 <li><b>Queue.</b> On WSE-3 a color reaches the core only through an input queue; <code>@initialize_queue(h2d_iq, .{ .color = h2d_color })</code> connects them. Queue 2, because memcpy uses queues 0 and 1 on WSE-3 (Chapter 7). On WSE-2 the call is skipped (<code>if (@is_arch("wse3"))</code>, as in SDK topic-03) because there the task binds to the color directly.</li>
 <li><b>Task ID.</b> A <code>task</code> is a hardware entry point, not a function you call. <code>@bind_data_task</code> attaches it to an ID: the color on WSE-2, the input queue on WSE-3 (Chapter 5). <code>@is_arch</code> is evaluated at compile time, so each binary contains only one branch. If you add your own local tasks, use IDs 8–20; never bind task 29, which memcpy uses for teardown.</li>
-<li><b>Exports.</b> <code>stats</code> and <code>count</code> are exported with mutability <code>false</code>: the host may read but not write them (<code>"immutable": 1</code> in <code>out_rpc.json</code>). Program 01's arrays use <code>true</code> because the host writes them. Here the device-side pointers are also declared <code>const</code>. Chapter 9 tells how we got this wrong once.</li>
+<li><b>Exports.</b> <code>stats</code> and <code>count</code> are exported with mutability <code>false</code>: the host may read but not write them (<code>"immutable": 1</code> in <code>out_rpc.json</code>). Program 01's arrays use <code>true</code> because the host writes them. Here the device-side pointers are also declared <code>const</code>. Chapter 10 tells how we got this wrong once.</li>
 <li><b>The barrier flag.</b> <code>host_waiting</code> records that <code>wait_done()</code> ran before the last task, so that task knows it must release the host.</li>
 <li><b>Initial values.</b> max starts at −1e30 and min at +1e30, so the first value replaces both.</li>
 </ul>
-{{code:programs/02-wavelet-tasks/run.py}}
-{{out:programs/02-wavelet-tasks/expected_output.txt}}
+<div class="filename">course/programs/02-wavelet-tasks/run.py</div>
+<pre><code>#!/usr/bin/env cs_python
+<span class="k">import</span> argparse, json
+<span class="k">import</span> numpy as np
+<span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder  <span class="c"># pylint: disable=no-name-in-module</span>
+
+p = argparse.ArgumentParser(); p.add_argument(&#x27;--name&#x27;); p.add_argument(&#x27;--cmaddr&#x27;)
+args = p.parse_args()
+params = json.load(open(f<span class="s">&quot;{args.name}/out.json&quot;</span>))[&#x27;params&#x27;]
+N, H2D = int(params[&#x27;N&#x27;]), int(params[&#x27;MEMCPYH2D_DATA_1_ID&#x27;])
+
+data = np.random.default_rng(1).uniform(-10, 10, N).astype(np.float32)
+
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr)
+s_sym, c_sym = rt.get_id(&#x27;stats&#x27;), rt.get_id(&#x27;count&#x27;)
+rt.load(); rt.run()
+<span class="c"># streaming=True: pass the *color id* instead of a symbol; each element becomes a wavelet.</span>
+rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>,
+              order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
+rt.launch(&#x27;wait_done&#x27;, nonblock=<span class="k">False</span>)   <span class="c"># barrier: wait until every task has run</span>
+kw = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
+stats = np.zeros(4, dtype=np.float32); count = np.zeros(1, dtype=np.uint32)
+rt.memcpy_d2h(stats, s_sym, 0, 0, 1, 1, 4, **kw)
+rt.memcpy_d2h(count, c_sym, 0, 0, 1, 1, 1, **kw)
+rt.stop()
+
+expected = np.array([data.sum(dtype=np.float32), (data * data).sum(dtype=np.float32), data.max(), data.min()], dtype=np.float32)
+print(<span class="s">&quot;tasks fired:&quot;</span>, count[0], <span class="s">&quot; stats:&quot;</span>, stats, <span class="s">&quot; expected:&quot;</span>, expected)
+assert count[0] == N
+np.testing.assert_allclose(stats, expected, rtol=1e-4)
+print(<span class="s">&quot;SUCCESS!&quot;</span>)</code></pre>
+<div class="filename">course/programs/02-wavelet-tasks/expected_output.txt</div>
+<pre class="output"><code>tasks fired: 100  stats: [  26.137941 3302.5337      9.614744   -9.883508]  expected: [  26.13794  3302.5327      9.614744   -9.883508]
+SUCCESS!
+[7021 simulated cycles, WSE-3]</code></pre>
 <p class="muted">As before, the last line is <code>cycle_count</code> from <code>sim_stats.json</code>; for this program it varies by a few hundred cycles between runs (WSE-2: about 5,400–5,530) <span class="tag measured">Measured</span>.</p>
 <div class="table-wrap"><table class="num">
 <tr><th>stat</th><th class="r">device</th><th class="r">numpy</th><th class="r">sequential f32 sum (<code>np.cumsum</code>)</th></tr>
@@ -354,7 +604,7 @@ grep "P4.1: .*EX OP.*FMACS" sim.log | head -2</code></pre>
 <li><code>the received length (0 bytes) is not expected … could be a kernel stall</code>: an RPC never called <code>unblock_cmd_stream()</code>, or a barrier never released. On a busy machine it can also be a host-side timeout; rerun alone before debugging.</li>
 <li><code>AssertionError: Not equal to tolerance</code>: compare with the expected output above; for streaming programs, suspect reading results too early.</li>
 <li>Cycle counts that disagree with this page: see <a href="#noise">Cycle totals are approximate</a>.</li>
-<li>Under <code>run_all.sh</code>, read <code>&lt;program&gt;/run.log</code>. For a hang or stall, look at the end of <code>sim.log</code> and at <code>sim_stop_cause</code> in <code>sim_stats.json</code> (Chapter 9's debugging table).</li>
+<li>Under <code>run_all.sh</code>, read <code>&lt;program&gt;/run.log</code>. For a hang or stall, look at the end of <code>sim.log</code> and at <code>sim_stop_cause</code> in <code>sim_stats.json</code> (Chapter 10's debugging table).</li>
 <li>Clutter: each run leaves <code>out/</code>, <code>sim.log</code>, <code>sim_stats.json</code>, <code>simfab_traces/</code> and <code>wio_flows_tmpdir.*</code> behind. Delete them freely; <code>commands.sh</code> rebuilds everything.</li>
 </ul>
 </div>

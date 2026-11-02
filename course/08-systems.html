@@ -227,7 +227,7 @@
 
 <div class="callout warn">
 <strong>Fast per user is not the same as cheap per token</strong>
-Pinning weights makes each user's decode fast. But a wafer serves relatively few concurrent sequences compared with a GPU running large batches <span class="tag analyst">Analyst</span>, because each one's KV cache must fit in the SRAM the weights leave free. Analysts put batched H100 serving at ~$0.10–0.25 per million tokens <span class="tag analyst">Analyst</span>, against Cerebras's launch list price of $0.60 for Llama 3.1-70B <span class="tag vendor">Vendor</span>. Fast decode also does not shorten prefill. Chapter 15 returns to this.
+Pinning weights makes each user's decode fast. But a wafer serves relatively few concurrent sequences compared with a GPU running large batches <span class="tag analyst">Analyst</span>, because each one's KV cache must fit in the SRAM the weights leave free. Analysts put batched H100 serving at ~$0.10–0.25 per million tokens <span class="tag analyst">Analyst</span>, against Cerebras's launch list price of $0.60 for Llama 3.1-70B <span class="tag vendor">Vendor</span>. Fast decode also does not shorten prefill. Chapter 18 returns to this.
 </div>
 
 <h2>CS-4 and the roadmap</h2>
@@ -246,7 +246,7 @@ Pinning weights makes each user's decode fast. But a wafer serves relatively few
 
 <div class="callout">
 <strong>Where this sits for a CSL programmer</strong>
-Weight streaming and multi-wafer inference are run by Cerebras's machine-learning stack, not by programs you write with the SDK. That stack compiles a PyTorch graph into per-layer kernels and runs the same mapping on every system <span class="tag vendor">Vendor</span>. The CSL SDK that the rest of this course teaches is a separate, lower-level path for custom kernels on one wafer (or the simulator), and its host path is the memcpy runtime of Chapter 7. The labs in Chapters 10–12 build the pieces such a mapping needs: data-triggered FMACs, broadcast along rows and columns, and reductions.
+Weight streaming and multi-wafer inference are run by Cerebras's machine-learning stack, not by programs you write with the SDK. That stack compiles a PyTorch graph into per-layer kernels and runs the same mapping on every system <span class="tag vendor">Vendor</span>. The CSL SDK that the rest of this course teaches is a separate, lower-level path for custom kernels on one wafer (or the simulator), and its host path is the memcpy runtime of Chapter 7. The labs in Chapters 11–13 build the pieces such a mapping needs: data-triggered FMACs, broadcast along rows and columns, and reductions.
 </div>
 
 <div class="quiz">

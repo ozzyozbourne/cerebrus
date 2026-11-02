@@ -22,7 +22,7 @@ dl.gloss dd { margin: 0; }
 </head>
 <body>
 <main>
-<div class="kicker">Chapter 14 · Part IV · Comparison</div>
+<div class="kicker">Chapter 17 · Part IV · Comparison</div>
 <h1>NVIDIA GPUs, the incumbent</h1>
 <p class="lede">A GPU solves the memory wall the opposite way from the wafer. It keeps a big memory with high bandwidth but high latency (HBM) and hides that latency with caches and with hundreds of thousands of threads that take turns: up to ~270,000 resident on an H100 <span class="tag derived">Derived</span>. Understanding that design is the clearest way to see what is unusual about Cerebras.</p>
 
@@ -58,7 +58,7 @@ BF16 is 16 bits. FP8 is 8 bits; Hopper's Transformer Engine picks FP8 scale fact
 
 <div class="callout warn">
 <strong>Specs are targets</strong>
-NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per GPU, down from the 22 and 3.6 it showed at announcement (an even earlier target was 13 TB/s) <span class="tag vendor">Vendor, via secondary reporting, autumn 2026</span>. One report quotes NVIDIA as saying the new figures "reflect what the system sustains at quality, volume production"; others say the change was made without explanation. Tenstorrent's firmware de-rating of already-shipped Blackhole cards (Chapter 13) is a cousin of the same story. Treat announced numbers from every vendor as provisional.
+NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per GPU, down from the 22 and 3.6 it showed at announcement (an even earlier target was 13 TB/s) <span class="tag vendor">Vendor, via secondary reporting, autumn 2026</span>. One report quotes NVIDIA as saying the new figures "reflect what the system sustains at quality, volume production"; others say the change was made without explanation. Tenstorrent's firmware de-rating of already-shipped Blackhole cards (Chapter 16) is a cousin of the same story. Treat announced numbers from every vendor as provisional.
 </div>
 
 <div class="callout ok">
@@ -94,7 +94,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 <p>That matches the datasheet <span class="tag derived">Derived</span>. The 128 FP32 lanes per SM give only about 67 TF FP32 <span class="tag vendor">Vendor</span> <span class="tag unv">not re-checked</span>, about 15× less <span class="tag derived">Derived</span>. The useful sentence: <em>the FLOPs live in the Tensor Cores; everything else in the SM exists to keep them fed.</em> A Hopper Tensor Core instruction (<code>wgmma</code>) is issued by a <em>warpgroup</em> of 4 warps, reads one operand from shared memory and accumulates a tile in registers <span class="tag unv">Unverified, PTX ISA</span>.</p>
 
 <div class="table-wrap"><table class="mini">
-<tr><th></th><th>H100 SM</th><th>WSE-3 PE (Ch. 3)</th><th>Blackhole Tensix (Ch. 13)</th></tr>
+<tr><th></th><th>H100 SM</th><th>WSE-3 PE (Ch. 3)</th><th>Blackhole Tensix (Ch. 16)</th></tr>
 <tr><td>Units per chip</td><td>132</td><td>~900,000</td><td>120</td></tr>
 <tr><td>Local memory</td><td>256 KB registers + 256 KB L1/shared</td><td>48 KB SRAM for code + data</td><td>~1.43 MiB SRAM (1,464 KiB)</td></tr>
 <tr><td>Math engine</td><td>4 Tensor Cores + 128 FP32 lanes</td><td>8-way FP16 SIMD datapath</td><td>matrix FPU + 32-lane SFPU</td></tr>
@@ -206,7 +206,7 @@ Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely 
 <svg id="t-svg" viewBox="0 0 680 244" width="680" role="img" aria-label="Matrix tiles of A, B and C for one step"></svg>
 <div class="readout" id="t-out" aria-live="polite"></div>
 </div>
-<p>Even a 256 × 256 tile reaches only 128 FLOP/B from global memory, below 295. GEMM still hits peak because neighbouring blocks re-read the same slabs from the 50 MB L2, not from HBM. The whole problem needs far less HBM traffic: for M = N = K = 8192 the minimum is 3 × 8192² × 2 B ≈ 403 MB for 1.1 TFLOP, about 2,700 FLOP/B <span class="tag derived">Derived</span>. The budget example 128 × 256 × 64 with 4 stages takes 192 KB of shared memory and 128 accumulator registers per thread across 256 threads: registers, shared memory and Tensor Cores are sized together. On the wafer, A and B tiles are placed in PE SRAM ahead of time and moved neighbour to neighbour by wavelets (Chapter 12): the GPU <em>brings data to compute</em>; the wafer <em>places compute next to data</em>.</p>
+<p>Even a 256 × 256 tile reaches only 128 FLOP/B from global memory, below 295. GEMM still hits peak because neighbouring blocks re-read the same slabs from the 50 MB L2, not from HBM. The whole problem needs far less HBM traffic: for M = N = K = 8192 the minimum is 3 × 8192² × 2 B ≈ 403 MB for 1.1 TFLOP, about 2,700 FLOP/B <span class="tag derived">Derived</span>. The budget example 128 × 256 × 64 with 4 stages takes 192 KB of shared memory and 128 accumulator registers per thread across 256 threads: registers, shared memory and Tensor Cores are sized together. On the wafer, A and B tiles are placed in PE SRAM ahead of time and moved neighbour to neighbour by wavelets (Chapter 13): the GPU <em>brings data to compute</em>; the wafer <em>places compute next to data</em>.</p>
 
 <h2>Hopper: a kernel becomes a pipeline</h2>
 <p>"Many identical threads" describes 2012-era CUDA. A state-of-the-art Hopper GEMM or FlashAttention-3 kernel is explicitly spatial inside the SM. One warpgroup only moves data; the others only compute; they hand off through a ring of shared-memory buffers.</p>
@@ -217,7 +217,7 @@ Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely 
 </svg>
 <figcaption><b>Producer / consumer inside one SM.</b> The producer waits until stage <i>s</i> is <code>empty</code>, then issues one TMA bulk copy; the TMA engine generates every address and signals <code>full[s]</code> when the bytes land. A consumer waits on <code>full[s]</code>, runs <code>wgmma</code>, then arrives on <code>empty[s]</code>. In CUTLASS's "ping-pong" variant the producer drops to 40 registers and the consumers rise to 232 (<code>setmaxnreg</code>) <span class="tag unv">Unverified</span> (background from the Hopper whitepaper, the PyTorch CUTLASS ping-pong blog and the PTX ISA).</figcaption>
 </figure>
-<p>Related Hopper features: <strong>TMA</strong> (Tensor Memory Accelerator) copies 1D–5D tiles between global and shared memory from a descriptor built on the host. <strong>Thread-block clusters</strong> group blocks on neighbouring SMs, which can read each other's shared memory (<strong>distributed shared memory</strong>), and TMA can multicast one tile into several SMs <span class="tag unv">Unverified background</span>. Blackwell moves the accumulator out of registers into a per-SM <strong>tensor memory</strong> (reported as 256 KB) and lets a single thread issue the MMA <span class="tag unv">Unverified background, Colfax tutorials</span>. The trend: each generation moves more of the kernel into asynchronous, explicitly scheduled engines. This rhymes with Tenstorrent's reader / compute / writer kernels and circular buffers (Chapter 13) and with CSL's async DSDs and task activation (Chapters 5–6). That analogy is this course's own, not a vendor claim.</p>
+<p>Related Hopper features: <strong>TMA</strong> (Tensor Memory Accelerator) copies 1D–5D tiles between global and shared memory from a descriptor built on the host. <strong>Thread-block clusters</strong> group blocks on neighbouring SMs, which can read each other's shared memory (<strong>distributed shared memory</strong>), and TMA can multicast one tile into several SMs <span class="tag unv">Unverified background</span>. Blackwell moves the accumulator out of registers into a per-SM <strong>tensor memory</strong> (reported as 256 KB) and lets a single thread issue the MMA <span class="tag unv">Unverified background, Colfax tutorials</span>. The trend: each generation moves more of the kernel into asynchronous, explicitly scheduled engines. This rhymes with Tenstorrent's reader / compute / writer kernels and circular buffers (Chapter 16) and with CSL's async DSDs and task activation (Chapters 5–6). That analogy is this course's own, not a vendor claim.</p>
 
 <h2>SAXPY, twice</h2>
 <div class="grid2">
@@ -281,7 +281,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 <p>For SAXPY the GPU version is simpler. The difference grows with communication. On a GPU, threads in different blocks share data mainly through L2/HBM: atomics, or a <strong>kernel boundary</strong>. A kernel ends only when all its blocks finish, so the next kernel can safely read what they wrote, which makes the boundary a global barrier. Within a Hopper thread-block cluster they can also use distributed shared memory. On the wafer, PEs share data only by sending wavelets on colors you routed (Labs 2 and 3). Tenstorrent sits between: explicit NoC transfers, but large per-core memory with DRAM behind it.</p>
 
 <h2>One token, step by step</h2>
-<p>Decode is where the comparison with Cerebras bites (Chapters 1, 8 and 15). For one layer of a Llama-style model a GPU runs roughly: RMSNorm → fused QKV GEMM → RoPE + append to the KV cache → decode attention over the cache → output GEMM → [TP all-reduce] → residual + RMSNorm → gate/up GEMM → SiLU × mul → down GEMM → [TP all-reduce] → residual. That is 10–14 kernels per layer, around a thousand per token for 80 layers, so serving stacks fuse kernels and replay them with CUDA graphs to avoid launch overhead <span class="tag unv">Unverified background</span>.</p>
+<p>Decode is where the comparison with Cerebras bites (Chapters 1, 8 and 18). For one layer of a Llama-style model a GPU runs roughly: RMSNorm → fused QKV GEMM → RoPE + append to the KV cache → decode attention over the cache → output GEMM → [TP all-reduce] → residual + RMSNorm → gate/up GEMM → SiLU × mul → down GEMM → [TP all-reduce] → residual. That is 10–14 kernels per layer, around a thousand per token for 80 layers, so serving stacks fuse kernels and replay them with CUDA graphs to avoid launch overhead <span class="tag unv">Unverified background</span>.</p>
 <p>Llama-3.1-70B has 80 layers, 8 KV heads of dimension 128 and d<sub>model</sub> 8192 <span class="tag vendor">Vendor, model config.json via search</span>. Its BF16 weights are ~140 GB, and its KV cache costs 2 × 80 × 8 × 128 × 2 B = 320 KiB per token <span class="tag derived">Derived</span>. At batch 1 every step reads all the weights, so step time ≥ bytes ÷ bandwidth:</p>
 <div class="widget" id="dec">
 <h4>Decode speed from bytes moved (Llama-3.1-70B)</h4>
