@@ -364,7 +364,7 @@
     const nUt = Object.keys(byUt).length + 2 * num("fifo") + 1;
     if (nUt > 8) om.push(`${nUt} microthreads needed (ops + 2 per FIFO + memcpy's 0) but a PE has 8`);
     add("microthreads", `${nUt}`, "8", om.length ? "bad" : ow.length ? "warn" : "ok",
-      om.concat(ow).join("; ") || (ops.length ? `ops on ${uts.map(([t, u]) => t + "→" + u).join(", ")}${num("fifo") ? ` + ${2 * num("fifo")} for FIFOs` : ""} + memcpy's 0` : "no concurrent async ops"), nUt / 8);
+      [...new Set(om.concat(ow))].join("; ") || (ops.length ? `ops on ${uts.map(([t, u]) => t + "→" + u).join(", ")}${num("fifo") ? ` + ${2 * num("fifo")} for FIFOs` : ""} + memcpy's 0` : "no concurrent async ops"), nUt / 8);
     // fabric dims
     const W = Math.max(1, num("w")), H = Math.max(1, num("h")), ch = Math.max(1, num("ch"));
     const fd = `--fabric-dims=${W + 7},${H + 2} --fabric-offsets=4,1`;

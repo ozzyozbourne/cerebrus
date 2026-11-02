@@ -140,6 +140,11 @@
 Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol</code> or rule 3 compiles cleanly and fails only at run time (see the error decoder below).
 </div>
 
+<div class="callout cuda">
+<strong>If you know CUDA</strong>
+<p>A <code>.cu</code> file holds device and host code together and <code>nvcc</code> splits them. CSL keeps them apart from the start: the kernel is pe_program.csl, the host is run.py in Python, and the launch configuration you would write at each <code>&lt;&lt;&lt;grid, block&gt;&gt;&gt;</code> lives in layout.csl, fixed at compile time together with every route. A different grid size means a recompile (<a href="#fabric-size">the fabric-size rule</a>).</p>
+</div>
+
 <div class="widget" id="tour">
 <h4>Guided tour: program 01 (SAXPY), line by line</h4>
 <p class="hint">All three files, verbatim. Click a numbered line, or Tab to it and press Enter; ↑/↓ move between numbered lines and ←/→ switch files. Grey pins are twins of an earlier line.</p>
@@ -295,9 +300,13 @@ The scalar language is the easy part.
 <tr><td><code>&lt;random&gt;</code></td><td>random numbers</td><td><code>random_f32</code>, <code>random_normal_f32</code>, <code>set_global_prng_seed</code></td><td>topic-02</td></tr>
 <tr><td><code>&lt;collectives_2d/params&gt;</code>, <code>&lt;collectives_2d/pe&gt;</code></td><td>MPI-style collectives on rows/columns</td><td><code>broadcast</code>, <code>scatter</code>, <code>gather</code>, <code>reduce_fadds</code></td><td>topic-11</td></tr>
 <tr><td><code>&lt;tile_config&gt;</code></td><td>escape hatch: queue, color and switch registers</td><td>(many)</td><td>topic-16</td></tr>
-<tr><td>also</td><td colspan="3"><code>&lt;control&gt;</code>, <code>&lt;malloc&gt;</code>, <code>&lt;message_passing&gt;</code> ("note that B (base=19) clashes with memcpy"), <code>&lt;complex&gt;</code>, <code>&lt;string&gt;</code>, <code>&lt;dsd_ops&gt;</code>, <code>&lt;timer&gt;</code>, <code>&lt;directions&gt;</code>, <code>&lt;types&gt;</code>, <code>kernels/fft</code></td></tr>
+<tr><td>also</td><td colspan="3"><code>&lt;control&gt;</code>, <code>&lt;malloc&gt;</code>, <code>&lt;message_passing&gt;</code> ("note that B (base=19) clashes with memcpy"), <code>&lt;complex&gt;</code>, <code>&lt;string&gt;</code>, <code>&lt;dsd_ops&gt;</code>, <code>&lt;timer&gt;</code>, <code>&lt;directions&gt;</code>, <code>&lt;types&gt;</code></td></tr>
+<tr><td><code>&lt;kernels/fft/fft3d_layout&gt;</code>, <code>&lt;kernels/fft/fft3d&gt;</code></td><td>a ready-made 3-D FFT (pencil decomposition)</td><td>module params: colors, queues, microthreads, task IDs</td><td>fft-3d (WSE-3 script only)</td></tr>
+<tr><td><code>&lt;kernels/tally/layout&gt;</code>, <code>&lt;kernels/tally/pe&gt;</code></td><td>global "every PE is done" tally, reported from one PE</td><td><code>get_params(i, j)</code></td><td>histogram-torus (WSE-2 script only)</td></tr>
+<tr><td><code>benchmark-libs/allreduce</code>, <code>benchmark-libs/stencil_3d_7pts</code> (in the extras, not the image)</td><td>reusable user-level modules: rectangle allreduce; 3-D 7-point SpMV</td><td>imported by relative path, colors passed as params</td><td>conjugate-gradient, 7pt-stencil-spmv; Ch 15</td></tr>
 </table></div>
-<p class="legend">Function names read from <code>csl-libs/*.csl</code> in the SDK image <span class="tag sdk">SDK 2.10.1</span>.</p>
+<p class="legend">Function names read from <code>csl-libs/*.csl</code> in the SDK image <span class="tag sdk">SDK 2.10.1</span>. Every SDK example, with its chips and the chapter that explains it, is in <a href="appendix-d-sdk-index.html">Appendix D</a>.</p>
+<p><b>If an import fails with "Unable to open ./src/../../benchmark-libs/…".</b> The solver benchmarks import <code>benchmark-libs</code> by a relative path, and the SDK wrappers run <code>cslc</code> in a container that sees only the current directory, so this fails even in place in the extras tree. Copy <code>benchmark-libs/</code> next to the example and run <code>export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)</code> before the commands script; the wrapper bind-mounts that path. The compiler's own flag, <code>--import-path DIR</code>, adds a search directory for <code>&lt;…&gt;</code> imports, but alone it did not fix this case for us <span class="tag measured">Measured</span>. Details in <a href="appendix-d-sdk-index.html">Appendix D</a>.</p>
 
 <h2 id="source-to-sim">From source to simulation</h2>
 <div class="filename">course/programs/01-saxpy/commands.sh</div>

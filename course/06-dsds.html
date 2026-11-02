@@ -67,6 +67,11 @@
 <p class="note">The scalar instruction mix is illustrative, not the CE's real ISA, which is not public <span class="tag derived">Derived</span>. The DSD cycle estimate uses the measured <code>@fmacs</code> rate below (about 17 + N cycles) <span class="tag measured">Measured, simulator</span>.</p>
 </div>
 
+<div class="callout cuda">
+<strong>If you know CUDA</strong>
+<p>A DSD is the whole loop, not one lane of it: <code>@fmacs(y_dsd, y_dsd, x_dsd, a)</code> replaces a grid-stride loop, and the descriptor's extent, stride and offset do the job of <code>threadIdx</code>. The CUDA habit of one element per thread becomes one long DSD per PE. Scalar code that moves a DSD around in a loop costs about 35 cycles per step <span class="tag measured">Measured, simulator</span>, so keep loops inside descriptors (<a href="#dsrs">below</a>).</p>
+</div>
+
 <h2 id="moving-dsd">Two spellings, and moving a DSD</h2>
 <p>Every 1-D memory DSD is base address + extent + stride. <code>tensor_access</code> is a readable way to write the same thing; the SDK's gemv-02 tutorial shows both side by side <span class="tag sdk">SDK 2.10.1, gemv-02-memory-dsds</span>. A DSD is also an ordinary run-time value: you can change it between instructions. That is how a 2-D algorithm is built from 1-D instructions. The scalar loop runs over columns, and the loop over the M elements of each column stays in hardware:</p>
 <div class="filename">SDK tutorials/gemv-02-memory-dsds/pe_program.csl (condensed)</div>

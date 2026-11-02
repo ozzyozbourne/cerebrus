@@ -28,6 +28,12 @@
   ol.ladder code { font-weight: 600; }
   .count { font-size: 13.5px; color: var(--muted); margin: 6px 0 0; }
   .legend { font-size: 13.5px; color: var(--muted); margin: 8px 0 0; }
+  @media (max-width: 680px) {
+    #ix-table thead { display: none; }
+    #ix-table tr { display: block; border-bottom: 1px solid var(--border); padding: 6px 0; }
+    #ix-table td { display: block; border: none; padding: 3px 10px; }
+    #ix-table td.nm { white-space: normal; }
+  }
 </style>
 </head>
 <body>
@@ -49,9 +55,9 @@
 <p>The list is every directory under <code>extras/csl-extras-202604101435-6-d2f7d96e/examples/{tutorials,benchmarks}</code> of the installed SDK, plus <code>benchmarks/benchmark-libs/*</code> and <code>csl-libs/kernels/*</code> from the SDK image <span class="tag sdk">SDK 2.10.1</span>. The chip column comes from the run scripts each example ships (<code>commands_wse2.sh</code>, <code>commands_wse3.sh</code>); we checked that each script's <code>--arch</code> matches its name. A missing script means the SDK provides no tested command line for that chip, not necessarily that the code cannot be ported. The "Where in the course" column uses the current chapter numbers (Chapter 14 is the SUMMA lab built on <code>gemm-collectives_2d</code>, Chapter 15 the CG lab). It extends the Phase 3 SDK coverage audit. Two corrections to that audit: <code>fft-3d</code> and <code>topic-15</code> are <b>WSE-3 only</b>, and <code>gemv-00</code> has no run script for either chip (it is a syntax tour, not a program).</p>
 <div class="stat-row">
   <div class="stat"><div class="v">59</div><div class="l">items indexed <span class="tag sdk">SDK 2.10.1</span></div></div>
-  <div class="stat"><div class="v">48</div><div class="l">examples with scripts for both chips</div></div>
-  <div class="stat"><div class="v">4 + 2</div><div class="l">WSE-2 only / WSE-3 only</div></div>
-  <div class="stat"><div class="v">5</div><div class="l">not covered by any chapter</div></div>
+  <div class="stat"><div class="v">48 / 55</div><div class="l">examples with run scripts for both chips</div></div>
+  <div class="stat"><div class="v">4 + 2</div><div class="l">examples WSE-2 only / WSE-3 only</div></div>
+  <div class="stat"><div class="v">4</div><div class="l">examples no chapter explains</div></div>
 </div>
 
 <div class="callout key"><strong>Running an SDK example, and the one import fix you will need</strong>

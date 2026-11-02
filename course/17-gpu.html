@@ -37,7 +37,7 @@ dl.gloss dd { margin: 0; }
 </ul>
 </div>
 
-<h2>Three generations</h2>
+<h2 id="generations">Three generations</h2>
 <div class="table-wrap"><table>
 <tr><th></th><th>H100 SXM (2022)</th><th>B200 (2024–25)</th><th>Rubin (2026)</th></tr>
 <tr><td>Dies</td><td>1 reticle-size die, 132 SMs</td><td>2 reticle-size dies joined by a 10 TB/s link</td><td>2 reticle-size compute dies + I/O dies (so "NVL144" counting dies = NVL72 counting packages)</td></tr>
@@ -76,7 +76,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 </dl>
 </div>
 
-<h2>Inside an SM</h2>
+<h2 id="inside-sm">Inside an SM</h2>
 <p>An SM is four nearly independent <strong>sub-partitions</strong> sharing one block of SRAM. Each sub-partition has its own warp scheduler, a quarter of the register file, 32 FP32 lanes and one Tensor Core. Tap a block for what it does.</p>
 <figure>
 <svg id="sm" viewBox="0 0 760 500" width="760" role="img" aria-labelledby="sm-t sm-d">
@@ -88,7 +88,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 <figcaption><b>One H100 SM; the chip has 132.</b> Four sub-partitions, one warp scheduler and one Tensor Core each, 128 FP32 lanes and 65,536 32-bit registers (256 KB) per SM, 256 KB L1/shared memory (up to 228 KB shared), at most 64 warps = 2,048 threads and 32 blocks per SM <span class="tag vendor">Vendor</span> (Hopper whitepaper and CUDA compute-capability 9.0 limits, via secondary sources). INT32/FP64 lane counts, LD/ST, SFU, texture and instruction-cache details are drawn from the whitepaper layout but were not re-checked this session <span class="tag unv">Unverified</span>.</figcaption>
 </figure>
 
-<h3>Where the 989 TF comes from</h3>
+<h3 id="tensor-flops">Where the 989 TF comes from</h3>
 <p>Each Hopper Tensor Core does 512 dense BF16 fused multiply-adds per clock, so an SM does 4 × 512 = 2,048 FMAs = 4,096 FLOP per clock <span class="tag vendor">Vendor via secondary</span>. Then:</p>
 <pre><code>132 SMs × 4,096 FLOP/clk × 1.83 GHz ≈ 989 TFLOP/s   (dense BF16)</code></pre>
 <p>That matches the datasheet <span class="tag derived">Derived</span>. The 128 FP32 lanes per SM give only about 67 TF FP32 <span class="tag vendor">Vendor</span> <span class="tag unv">not re-checked</span>, about 15× less <span class="tag derived">Derived</span>. The useful sentence: <em>the FLOPs live in the Tensor Cores; everything else in the SM exists to keep them fed.</em> A Hopper Tensor Core instruction (<code>wgmma</code>) is issued by a <em>warpgroup</em> of 4 warps, reads one operand from shared memory and accumulates a tile in registers <span class="tag unv">Unverified, PTX ISA</span>.</p>
@@ -103,7 +103,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 </table></div>
 <p class="small">All <span class="tag vendor">Vendor</span>. Per clock, one SM's 2,048 BF16 FMAs equal 256 PEs at 8 FP16 FMAs each, and a WSE-3 has ~6,800 PEs for every SM on an H100 <span class="tag derived">Derived, ignoring clock speeds</span>: few fat cores versus many thin ones.</p>
 
-<h2>The memory hierarchy</h2>
+<h2 id="hierarchy">The memory hierarchy</h2>
 <figure>
 <svg viewBox="0 0 760 330" width="760" role="img" aria-labelledby="hier-t hier-d">
 <title id="hier-t">GPU and wafer memory hierarchies side by side</title>
@@ -114,7 +114,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 </figure>
 <p><strong>Shared memory</strong> is a scratchpad the programmer manages explicitly, like a PE's SRAM. <strong>L1</strong> is a hardware cache carved from the same 256 KB, which a PE does not have (Chapter 3). The fair GPU counterpart to the wafer's 21 PB/s is not HBM but aggregate register + shared-memory bandwidth. Shared memory has 32 banks of 4 bytes, about 128 B/clk per SM, giving 132 × 128 B × 1.83 GHz ≈ 31 TB/s <span class="tag derived">Derived</span> <span class="tag unv">bank width unverified</span>, with registers several times faster again. The real difference is <em>capacity at that speed</em>: ~66 MiB on an H100 versus 44 GB on a wafer.</p>
 
-<h2>SIMT: grids, blocks and warps</h2>
+<h2 id="simt">SIMT: grids, blocks and warps</h2>
 <p>A CUDA kernel runs as a <strong>grid of thread blocks</strong>. Each block is assigned to one SM and gets a slice of that SM's shared memory. Its threads are issued in <strong>warps of 32</strong>, and the SM spreads its warps over the four schedulers. Warps normally run in lockstep. Since Volta each thread has its own program counter, which changes forward-progress guarantees but not the cost below.</p>
 <p><strong>Divergence:</strong> if threads in one warp take different branches, the warp runs both paths one after the other with the inactive lanes masked.</p>
 <div class="table-wrap"><table class="mini">
@@ -126,7 +126,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 <p class="small">Derived from the masking rule <span class="tag derived">Derived</span>. On the wafer every PE has its own instruction stream, so neighbouring PEs can take different branches for free; the lockstep cost exists only inside one PE's SIMD vector operation.</p>
 <p>Two rules dominate GPU performance: <strong>coalescing</strong> (how a warp's loads become memory transactions) and <strong>occupancy</strong> (how many warps are resident to cover latency).</p>
 
-<h3>Coalescing: count the sectors</h3>
+<h3 id="coalescing">Coalescing: count the sectors</h3>
 <p>Global memory moves in <strong>32-byte sectors</strong>, four to a 128-byte cache line <span class="tag vendor">Vendor, NVIDIA developer blog via search</span>. A warp's 32 loads are merged into as few sectors as possible. When thread <em>i</em> reads element <em>i</em> of a float array, 32 × 4 B = 128 B = 4 sectors and every fetched byte is used.</p>
 <div class="widget" id="coal">
 <h4>Coalescing visualizer</h4>
@@ -148,7 +148,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 </div>
 <p>Stride 2 fetches 8 sectors for 4 sectors' worth of data, so effective bandwidth halves. Reading a column of a row-major float matrix puts every lane in its own sector: 32 sectors for 128 useful bytes, 12.5%. On a PE, a strided DSD costs nothing extra, because SRAM is single-cycle and accessed per element (Chapter 6).</p>
 
-<h3>Occupancy: what fits on one SM</h3>
+<h3 id="occupancy">Occupancy: what fits on one SM</h3>
 <p>All resident threads share the SM's 65,536 registers and 228 KB of shared memory, so the more each thread or block asks for, the fewer warps fit. At 32 registers per thread, 65,536 / 32 = 2,048 threads fit (full occupancy). At 64 it is 1,024 (50%), at 128 it is 512 (25%), and at 255 only about 8 warps <span class="tag derived">Derived</span>. A block that uses 100 KB of shared memory allows only 2 blocks per SM. The same squeeze exists on a PE, where code, data and buffers compete for 48 KB, but the PE gets single-cycle memory in return.</p>
 <div class="widget" id="ocal">
 <h4>Occupancy calculator (H100, one SM)</h4>
@@ -163,7 +163,7 @@ NVIDIA's Vera Rubin NVL72 page now lists 19.2 TB/s HBM4 and 3 TB/s NVLink 6 per 
 <div class="readout" id="q-out" aria-live="polite"></div>
 </div>
 
-<h3>Latency hiding by occupancy</h3>
+<h3 id="latency-hiding">Latency hiding by occupancy</h3>
 <p>Model one scheduler. Each warp computes for C cycles, then waits L cycles for memory. While it waits, the scheduler issues from any other ready warp. One warp is busy C out of every C + L cycles, so W warps keep the scheduler busy a fraction <code>min(1, W·C/(C+L))</code> of the time, and you need <code>⌈(C+L)/C⌉</code> warps to hide the wait. If a warp issues k independent loads before it needs the first result (instruction-level parallelism, ILP), it can compute k·C cycles per wait, and C becomes k·C in both formulas.</p>
 <div class="widget" id="occ">
 <h4>Latency hiding on one warp scheduler (of 4 per SM)</h4>
@@ -191,7 +191,7 @@ Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely 
 </table></div>
 <p>Microthreads are slots for concurrent asynchronous vector operations, not threads of control, so "8 microthreads" and "2,048 threads" are different kinds of thing. A PE also has a few dozen task IDs (Chapter 5).</p>
 
-<h2>Tiling a matmul: climbing the roofline</h2>
+<h2 id="tiling">Tiling a matmul: climbing the roofline</h2>
 <p>SAXPY does 2 FLOP per 12 bytes and is HBM-bound on every machine. So how does a GEMM ever reach the flat part of the roofline (ridge ≈ 295 FLOP/B on H100, Chapter 1)? By <strong>reuse</strong>. Each thread block owns a BM × BN tile of C. It marches along K, loading a BM × BK slab of A and a BK × BN slab of B into shared memory, and every loaded element is used BN or BM times. The accumulator tile stays in registers (on Blackwell, in a separate tensor memory).</p>
 <div class="widget" id="tile">
 <h4>Tile calculator (BF16 inputs, FP32 accumulator)</h4>
@@ -206,9 +206,9 @@ Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely 
 <svg id="t-svg" viewBox="0 0 680 244" width="680" role="img" aria-label="Matrix tiles of A, B and C for one step"></svg>
 <div class="readout" id="t-out" aria-live="polite"></div>
 </div>
-<p>Even a 256 × 256 tile reaches only 128 FLOP/B from global memory, below 295. GEMM still hits peak because neighbouring blocks re-read the same slabs from the 50 MB L2, not from HBM. The whole problem needs far less HBM traffic: for M = N = K = 8192 the minimum is 3 × 8192² × 2 B ≈ 403 MB for 1.1 TFLOP, about 2,700 FLOP/B <span class="tag derived">Derived</span>. The budget example 128 × 256 × 64 with 4 stages takes 192 KB of shared memory and 128 accumulator registers per thread across 256 threads: registers, shared memory and Tensor Cores are sized together. On the wafer, A and B tiles are placed in PE SRAM ahead of time and moved neighbour to neighbour by wavelets (Chapter 13): the GPU <em>brings data to compute</em>; the wafer <em>places compute next to data</em>.</p>
+<p>Even a 256 × 256 tile reaches only 128 FLOP/B from global memory, below 295. GEMM still hits peak because neighbouring blocks re-read the same slabs from the 50 MB L2, not from HBM. The whole problem needs far less HBM traffic: for M = N = K = 8192 the minimum is 3 × 8192² × 2 B ≈ 403 MB for 1.1 TFLOP, about 2,700 FLOP/B <span class="tag derived">Derived</span>. The budget example 128 × 256 × 64 with 4 stages takes 192 KB of shared memory and 128 accumulator registers per thread across 256 threads: registers, shared memory and Tensor Cores are sized together. On the wafer, A and B tiles are placed in PE SRAM ahead of time and moved neighbour to neighbour by wavelets (<a href="14-lab-gemm.html">Chapter 14</a>, a SUMMA GEMM on a P × P grid): the GPU <em>brings data to compute</em>; the wafer <em>places compute next to data</em>.</p>
 
-<h2>Hopper: a kernel becomes a pipeline</h2>
+<h2 id="hopper">Hopper: a kernel becomes a pipeline</h2>
 <p>"Many identical threads" describes 2012-era CUDA. A state-of-the-art Hopper GEMM or FlashAttention-3 kernel is explicitly spatial inside the SM. One warpgroup only moves data; the others only compute; they hand off through a ring of shared-memory buffers.</p>
 <figure>
 <svg id="pipe" viewBox="0 0 760 250" width="760" role="img" aria-labelledby="pipe-t pipe-d">
@@ -219,7 +219,7 @@ Bytes in flight = bandwidth × latency. Assume an HBM latency of 500 ns, purely 
 </figure>
 <p>Related Hopper features: <strong>TMA</strong> (Tensor Memory Accelerator) copies 1D–5D tiles between global and shared memory from a descriptor built on the host. <strong>Thread-block clusters</strong> group blocks on neighbouring SMs, which can read each other's shared memory (<strong>distributed shared memory</strong>), and TMA can multicast one tile into several SMs <span class="tag unv">Unverified background</span>. Blackwell moves the accumulator out of registers into a per-SM <strong>tensor memory</strong> (reported as 256 KB) and lets a single thread issue the MMA <span class="tag unv">Unverified background, Colfax tutorials</span>. The trend: each generation moves more of the kernel into asynchronous, explicitly scheduled engines. This rhymes with Tenstorrent's reader / compute / writer kernels and circular buffers (Chapter 16) and with CSL's async DSDs and task activation (Chapters 5–6). That analogy is this course's own, not a vendor claim.</p>
 
-<h2>SAXPY, twice</h2>
+<h2 id="saxpy-twice">SAXPY, twice</h2>
 <div class="grid2">
 <div>
 <div class="filename">CUDA</div>
@@ -280,7 +280,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 <p><strong>Worked example:</strong> n = 1,000,000 gives ⌈n/256⌉ = 3,907 blocks; the last one has 64 active threads and 192 masked by the guard. If 8 such blocks fit per SM (2,048 threads), one "wave" holds 132 × 8 = 1,056 blocks, so the grid runs in about 3.7 waves <span class="tag derived">Derived</span>. On the roofline SAXPY sits at 2 FLOP / 12 B ≈ 0.17 FLOP/B, so an H100 attains at most ~0.56 TF/s, 0.06% of the BF16 peak. For n = 10⁸ the kernel moves 1.2 GB and takes at least 1.2 GB ÷ 3.35 TB/s ≈ 0.36 ms <span class="tag derived">Derived</span>, plus a few microseconds of launch overhead. Lab 1's single-PE SAXPY took 7,740 simulated cycles, almost all of it host I/O <span class="tag measured">Measured, simulator</span>.</p>
 <p>For SAXPY the GPU version is simpler. The difference grows with communication. On a GPU, threads in different blocks share data mainly through L2/HBM: atomics, or a <strong>kernel boundary</strong>. A kernel ends only when all its blocks finish, so the next kernel can safely read what they wrote, which makes the boundary a global barrier. Within a Hopper thread-block cluster they can also use distributed shared memory. On the wafer, PEs share data only by sending wavelets on colors you routed (Labs 2 and 3). Tenstorrent sits between: explicit NoC transfers, but large per-core memory with DRAM behind it.</p>
 
-<h2>One token, step by step</h2>
+<h2 id="one-token">One token, step by step</h2>
 <p>Decode is where the comparison with Cerebras bites (Chapters 1, 8 and 18). For one layer of a Llama-style model a GPU runs roughly: RMSNorm → fused QKV GEMM → RoPE + append to the KV cache → decode attention over the cache → output GEMM → [TP all-reduce] → residual + RMSNorm → gate/up GEMM → SiLU × mul → down GEMM → [TP all-reduce] → residual. That is 10–14 kernels per layer, around a thousand per token for 80 layers, so serving stacks fuse kernels and replay them with CUDA graphs to avoid launch overhead <span class="tag unv">Unverified background</span>.</p>
 <p>Llama-3.1-70B has 80 layers, 8 KV heads of dimension 128 and d<sub>model</sub> 8192 <span class="tag vendor">Vendor, model config.json via search</span>. Its BF16 weights are ~140 GB, and its KV cache costs 2 × 80 × 8 × 128 × 2 B = 320 KiB per token <span class="tag derived">Derived</span>. At batch 1 every step reads all the weights, so step time ≥ bytes ÷ bandwidth:</p>
 <div class="widget" id="dec">
@@ -299,7 +299,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 </div>
 <p>One B200 at batch 1 needs ≥ 140 GB ÷ 8 TB/s ≈ 17.5 ms per token, at most ~57 tokens/s per user, and only ~40 GB is left for KV cache. Eight H100s with TP = 8 read 17.5 GB each, ≥ 5.2 ms, ~190 tokens/s at best before all-reduces and overheads <span class="tag derived">Derived</span>. Batching raises <em>aggregate</em> throughput nearly for free, because the weight bytes are shared, but not per-user speed. Each sequence reads only its own KV cache, so attention stays near 1 FLOP/B at any batch: at batch 64 and 4,096 tokens of context the cache adds ~86 GB per step on top of the weights <span class="tag derived">Derived</span>. That is why grouped-query attention, FP8 KV caches and paged KV memory (vLLM's PagedAttention) exist. Four CS-3 wafers keep the weights in SRAM and pipeline layers across them (Chapter 8), which is how Cerebras reaches 2,314 tokens/s per user on Llama 3.3-70B <span class="tag indep">Indep, Artificial Analysis via interview</span>. GPUs win back on cost per token at large batch.</p>
 
-<h2>Scaling out</h2>
+<h2 id="scaling">Scaling out</h2>
 <figure>
 <svg id="topo" viewBox="0 0 760 290" width="760" role="img" aria-labelledby="topo-t topo-d">
 <title id="topo-t">HGX H100 and NVL72 topologies</title>

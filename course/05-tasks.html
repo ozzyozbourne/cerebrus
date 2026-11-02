@@ -115,6 +115,11 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
 <li><strong>Self-start and self-send.</strong> <code>@activate(id)</code> inside a <code>comptime</code> block (code the compiler runs to set up bindings, Chapter 10) runs that task at program start. A PE can also feed its own data task by routing a color RAMP → RAMP, which "immediately sends them back to the compute element" <span class="tag sdk">SDK 2.10.1, topic-09</span>.</li>
 </ul>
 
+<div class="callout cuda">
+<strong>If you know CUDA</strong>
+<p>A task is not a thread and not a kernel: it is an entry point that the picker runs when its bit is set and unblocked, and it runs to completion. A warp that stalls on memory is set aside while other warps run; a task that waits holds the PE, and no other task runs until it returns. So code that would call <code>__syncthreads()</code> or spin on a flag in CUDA is split here into tasks that activate each other: the <a href="#join-rule">join</a> and the <a href="#state-machine">state machine</a> below.</p>
+</div>
+
 <div class="widget" id="buf">
 <h4>Buffered versus collapsed: why data tasks never lose wavelets</h4>
 <p class="hint">While the CE is busy with some other task, N events arrive. Left: N wavelets for a data task. Right: N <code>@activate</code> calls (or async completions) for a local task. Step through, then watch both tasks run once the CE is free. The queue is drawn with 6 slots for illustration; the real depth is not published <span class="tag derived">schematic</span>.</p>

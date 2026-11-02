@@ -265,6 +265,10 @@
 
 <h2 id="no-caches">Why no caches?</h2>
 <p>A cache exists to hide the distance between compute and a large, slow memory. On the WSE there is no large slow memory on the wafer: the "main memory" is the 48 KB beside the core, and it is already single-cycle. A hardware cache would add area and power to fix a problem the PE does not have. The cost moves to the programmer: whatever data a PE needs must already be in its 48 KB, or must arrive over the fabric.</p>
+<div class="callout cuda">
+<strong>If you know CUDA</strong>
+<p>A PE is neither an SM nor a thread. Like an SM it has its own instruction stream, a scheduler (the task picker, <a href="05-tasks.html">Chapter 5</a>) and fast local memory; like threads there are hundreds of thousands of them, but each runs its own program and none shares memory with another. The 48 KB is closer to <code>__shared__</code> than to L1: software-managed, single-cycle, and the only memory the PE has. There is no L2 or HBM behind it, so what a GPU kernel would load from global memory must arrive as wavelets. The full mapping is in <a href="appendix-b-cuda-to-csl.html#rosetta">Appendix B</a>.</p>
+</div>
 <p>The SDK's single-tile matvec benchmark makes this concrete by counting memory traffic two ways <span class="tag sdk">SDK 2.10.1</span>. <strong>"Relative"</strong> is the minimum traffic on a traditional cached machine: read A and x once, keep the running y in registers or cache, write y once: 4(N² + 2N) bytes. <strong>"Absolute"</strong> is what the WSE kernel really does: it walks A column by column and reads and writes all of y for every column: 4(3N² + N) bytes. The difference is about <em>y</em>, not x; x is read once in both counts. Step through it:</p>
 <div class="widget" id="mvw">
 <h4>Matvec memory-traffic stepper</h4>
