@@ -75,7 +75,7 @@ ol.decoder li { margin: 4px 0; }
 <div class="chart" id="rf-c" data-label="Ridge points and decode intensity per device"></div>
 <div class="rd" id="rf-out" aria-live="polite"></div>
 </div>
-<p>On every HBM or GDDR6 machine, batch-1 decode sits two to three decades left of the ridge, so most of the peak is idle (Chapter 1's table gives the same gaps). Batching moves the dot right because many users share each weight byte. The wafer's ridge is below 1 because its weights sit in SRAM, so on paper decode is not bandwidth-bound there at all. That is the first hint of a result this chapter returns to: measured Cerebras decode is limited by pipeline latency and communication, not by memory bandwidth.</p>
+<p>On every HBM or GDDR6 machine, batch-1 decode sits two to three decades left of the ridge, so most of the peak is idle (Chapter 1's table gives the same gaps). Batching moves the dot right because many users share each weight byte. The wafer's ridge is below 1 because its weights sit in SRAM, so on paper decode is not bandwidth-bound there at all. That is the first hint of a result this chapter returns to: measured Cerebras single-user decode is limited by each layer region's own SRAM reads plus pipeline latency and communication, not by off-chip bandwidth.</p>
 
 <h2>The numbers, side by side</h2>
 <div class="widget" id="cmp">
@@ -112,10 +112,10 @@ ol.decoder li { margin: 4px 0; }
 <tr><td>On-chip network</td><td>2-D mesh, 32-bit wavelets, 24 static colors (memcpy takes 4) <span class="tag sdk">SDK</span>; router hop 2.0 cycles WSE-3, 1.0 WSE-2 <span class="tag measured">Measured</span></td><td>two 2-D tori, 64 B flits, packets ≤ 16 KiB, 1.35 GHz (Wormhole: 32 B / 8 KiB) <span class="tag vendor">ISA docs</span></td><td>crossbar to L2 <span class="tag unv">not verified here</span></td></tr>
 <tr><td>Off-device links</td><td>1.2 Tb/s per CS-3 <span class="tag vendor">Vendor, HC2024</span></td><td>4 × 800 GbE QSFP-DD (8 of the die's 14 × 400 GbE tiles wired; none on p100) <span class="tag vendor">ISA docs</span></td><td>NVLink 4: 900 GB/s (H100); NVLink 5: 1.8 TB/s (B200) <span class="tag vendor">Vendor via secondary</span></td></tr>
 <tr><td>Power</td><td>~23 kW for a whole 15U system, cooling included <span class="tag vendor">Vendor</span></td><td>300 W per card <span class="tag vendor">Vendor</span></td><td>H100 SXM up to 700 W; B200 up to 1,000 W (1,200 W liquid-cooled): max TDP per GPU module, not a system <span class="tag vendor">Vendor datasheets, via review web search</span></td></tr>
-<tr><td><b>Consequence</b></td><td><b>Weights must fit in SRAM across enough wafers; then reading them is almost free.</b></td><td><b>Weights stream from slow DRAM every token; the large L1 holds tiles, not models.</b></td><td><b>Weights stream from fast HBM; batching shares each byte across users.</b></td></tr>
+<tr><td><b>Consequence</b></td><td><b>Weights must fit in SRAM across enough wafers; then each layer reads its weights at SRAM speed.</b></td><td><b>Weights stream from slow DRAM every token; the large L1 holds tiles, not models.</b></td><td><b>Weights stream from fast HBM; batching shares each byte across users.</b></td></tr>
 </table></div>
 
-<h2>Programming model</h2>
+<h2 id="programming-model">Programming model</h2>
 <figure>
 <div class="tri">
 <div><svg id="pm-cuda" viewBox="0 0 260 330" role="img" aria-labelledby="pm-cuda-t"><title id="pm-cuda-t">CUDA: data flows from HBM through L2 and the SM's L1 or shared memory to warps, through hardware caches</title></svg></div>
@@ -137,7 +137,7 @@ ol.decoder li { margin: 4px 0; }
 </table></div>
 <p><strong>The cross-cutting pattern.</strong> Two of the three designs answer the memory wall the same way: private SRAM per core, no hardware caches, and data moved explicitly by software between cores. That is why TT-Metalium is the closest relative of CSL. The grain differs. A Tensix core moves 32×32 tiles (2 KB at BF16) in packets up to 16 KiB and always has DRAM behind it. A PE moves single 32-bit wavelets and has nothing behind it but the wafer edge. CUDA is the outlier: it keeps one global address space and lets caches and thread oversubscription absorb latency. These placements explain the evidence below: the wafer wins where the data already sits next to the compute, and the GPU wins where many users can share each byte fetched from HBM.</p>
 
-<h3>What you must budget by hand</h3>
+<h3 id="budget">What you must budget by hand</h3>
 <div class="table-wrap"><table class="mini">
 <tr><th>Resource</th><th>CSL</th><th>TT-Metalium</th><th>CUDA</th></tr>
 <tr><td>Memory per unit</td><td>48 KB for code and data; ~44.5 KB left for arrays <span class="tag measured">Measured</span></td><td>1,536 KiB L1 for CBs and buffers <span class="tag vendor">ISA docs</span></td><td>255 registers per thread, 228 KB shared per SM, traded against occupancy <span class="tag vendor">Vendor</span></td></tr>
@@ -148,7 +148,7 @@ ol.decoder li { margin: 4px 0; }
 <tr><td>Files for a 1-D heat stencil</td><td>4 files, 246 lines incl. timing code (program 04: layout 45, PE 140, run.py 53, commands 8) <span class="tag measured">Measured, wc -l</span></td><td colspan="2">not written for this course; no independent productivity study exists for any of the three</td></tr>
 </table></div>
 
-<h3>The software stack</h3>
+<h3 id="stack">The software stack</h3>
 <div class="table-wrap"><table class="mini">
 <tr><th>Layer</th><th>NVIDIA</th><th>Cerebras</th><th>Tenstorrent</th></tr>
 <tr><td>Frameworks and libraries</td><td>PyTorch, cuDNN and much more (mature)</td><td>Cerebras ML stack (closed); research compilers: MLIR stencils, SpaDA</td><td>TT-NN, TT-MLIR, TT-Forge, TT-XLA (open; Forge-ONNX single-chip only)</td></tr>
@@ -191,12 +191,12 @@ ol.decoder li { margin: 4px 0; }
 <div class="rd" id="dc-out"></div>
 </div>
 <div class="callout key">
-<strong>On the wafer, decode is not bandwidth-bound</strong>
+<strong>On the wafer, the bandwidth bound is per region, not per wafer</strong>
 <ul>
 <li>GPUs and Tenstorrent run within a small factor of their bandwidth ceiling: 8 × H100 measured 86 tok/s against a simple ceiling near 190, about 45% (Hot Chips 2024, counting differently, put it at "&lt;30% memory bandwidth utilization" <span class="tag vendor">Vendor, HC2024 citing AA</span>), and Wormhole Galaxy 72.5 against ~124, about 58% <span class="tag derived">Derived</span>. More bandwidth there means more speed.</li>
-<li>Four CS-3s have 4 × 21 PB/s = 84 PB/s, a ceiling near 600,000 tok/s. Even the SDK GEMV benchmark's measured rate gives about 18,000 (<a href="08-systems.html">Ch. 8</a>). The measured 2,314 tok/s <span class="tag indep">Indep, AA via interview</span> is under 0.5% of the headline ceiling <span class="tag derived">Derived</span>.</li>
-<li>1 ÷ 2,314 tok/s ≈ 432 µs per token ≈ 5.4 µs per layer over 80 layers ≈ 4,600 cycles per layer at the SDK's 850 MHz assumption (no WSE-3 clock is published; WSE-2 runs at 1.1 GHz <span class="tag vendor">HC22</span>) <span class="tag derived">Derived</span>. Reading that layer's ~1.75 GB share of one wafer's 35 GB takes about 83 ns at 21 PB/s, under 2% of the layer's time <span class="tag derived">Derived</span>.</li>
-<li>So the wafer's pace is set by per-layer latency: reductions across PEs, pipeline synchronisation, attention and KV reads, and the hops between wafers. The sources do not break this down. No per-user H100 or B200 measurement for this model is in the sources.</li>
+<li>Four CS-3s have 4 × 21 PB/s = 84 PB/s, a ceiling near 600,000 tok/s, but that is summed over every user in the pipeline. One user's token is in one of 80 layer regions at a time, so a single user sees about 1/80 of it: ~7,500 tok/s at the headline bandwidth, ~2,000 at the measured SDK matrix-vector rate (<a href="09-model-to-tokens.html">Ch. 9</a>) <span class="tag derived">Derived</span>. The measured 2,314 tok/s <span class="tag indep">Indep, AA via interview</span> is about 30% of the first and close to the second.</li>
+<li>1 ÷ 2,314 tok/s ≈ 432 µs per token ≈ 5.4 µs per layer over 80 layers ≈ 4,600 cycles per layer at the SDK's 850 MHz assumption (no WSE-3 clock is published; WSE-2 runs at 1.1 GHz <span class="tag vendor">HC22</span>) <span class="tag derived">Derived</span>. That layer's ~1.75 GB sits in about 1/20 of one wafer, ~1 PB/s of headline bandwidth, so reading it takes ~1.7 µs, about a third of the layer's time; at the measured kernel rate it takes about as long as the whole layer budget <span class="tag derived">Derived</span>.</li>
+<li>So the wafer's single-user pace is set by each region's SRAM reads plus per-layer latency: reductions across PEs, pipeline synchronisation, attention and KV reads, and the hops between wafers. The aggregate bandwidth pays off as throughput across many users. The sources do not break this down (Chapter 9 builds a budget). No per-user H100 or B200 measurement for this model is in the sources.</li>
 </ul>
 </div>
 
@@ -205,7 +205,7 @@ ol.decoder li { margin: 4px 0; }
 <strong>The course's own stencil, extrapolated <span class="tag derived">Derived</span></strong>
 <p>Lab 3 costs 90 + 2.5·n cycles per step for n cells per PE <span class="tag measured">Measured, Ch. 13</span>. Spread over an SDK-visible 743 × 992 ≈ 737k PEs at 850 MHz (as <a href="13-lab-stencil.html">Chapter 13</a> does), n = 16 gives 130 cycles ≈ 0.15 µs per step on 11.8 M cells, about 7.7 × 10¹³ cell-updates/s; n = 5,450 gives about 2.5 × 10¹⁴. An H100 that streams each f32 cell from HBM (4 B read + 4 B write, no temporal blocking) tops out near 3.35 TB/s ÷ 8 B ≈ 4.2 × 10¹¹. The ratio is roughly 180× to 600×, the same order as the peer-reviewed 179× molecular-dynamics result. Capacity runs the other way: the wafer holds at most ~4 × 10⁹ cells (5,450 per PE), one H100 about 10¹⁰ in 80 GB.</p>
 <p>Caveats: a 1-D rod against real 3-D grids; GPU temporal blocking in the 50 MB L2 narrows the gap; and this is a simulator extrapolation, not a hardware measurement.</p>
-<p><strong>GEMM is the opposite regime.</strong> It is compute-bound, so the ceiling is peak dense FLOP/s: ~15.6 PF FP16 for WSE-3 <span class="tag analyst">Analyst</span> against 989 TF BF16 for H100 <span class="tag vendor">Vendor</span>, about 16×, for about 33× the power (23 kW system vs 700 W module) <span class="tag derived">Derived</span>. The SDK pattern is <code>benchmarks/gemm-collectives_2d</code>: P steps on a P × P grid with row and column broadcasts <span class="tag sdk">SDK</span>, the same structure as Tenstorrent's multicast matmul and a GPU's tiled GEMM.</p>
+<p><strong>GEMM is the opposite regime.</strong> It is compute-bound, so the ceiling is peak dense FLOP/s: ~15.6 PF FP16 for WSE-3 <span class="tag analyst">Analyst</span> against 989 TF BF16 for H100 <span class="tag vendor">Vendor</span>, about 16×, for about 33× the power (23 kW system vs 700 W module) <span class="tag derived">Derived</span>. The SDK pattern is <code>benchmarks/gemm-collectives_2d</code>: P steps on a P × P grid with row and column broadcasts <span class="tag sdk">SDK</span>, the same structure as Tenstorrent's multicast matmul and a GPU's tiled GEMM. <a href="14-lab-gemm.html">Chapter 14</a> runs it: on a 4 × 4 grid with 32 × 32 f32 tiles on WSE-3, a step spends 2,569 cycles on the row and column broadcasts and 103,724 on compute, so the fabric is about 2% of the time <span class="tag measured">Measured, Ch. 14</span>. The SDK's loop still reaches only 32% of the one f32 multiply-add per cycle a PE can sustain (operand bank clash plus ≈37 cycles per instruction), and an outer-product rewrite 51% <span class="tag measured">Measured, Ch. 14</span>. On the wafer, f32 GEMM is limited by per-PE instruction efficiency, not by moving tiles.</p>
 </div>
 
 <h3>Training, prefill and decode</h3>
@@ -377,7 +377,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 
 <div class="quiz">
 <h3>Final check</h3>
-<details><summary>Why is Cerebras fast at single-user decode, and what limits it?</summary><p>On a GPU, decode does ~1 FLOP per byte and must stream every weight from HBM per token, so it is bandwidth-bound. On the wafer the weights stay in SRAM spread across ~900k PEs, so reading them is almost free: four CS-3s have a bandwidth ceiling near 600,000 tok/s on Llama-70B. The measured 2,314 tok/s is far below that, so the limit is per-layer latency (reductions, pipeline synchronisation, hops between wafers), not memory bandwidth.</p></details>
+<details><summary>Why is Cerebras fast at single-user decode, and what limits it?</summary><p>On a GPU, decode does ~1 FLOP per byte and must stream every weight from HBM per token, so it is bandwidth-bound. On the wafer the weights stay in SRAM spread across ~900k PEs, and each layer region reads its own weights at SRAM speed: about 7,500 tok/s for one user at headline bandwidth (the 600,000 ceiling is summed over all users in the pipeline). The measured 2,314 tok/s is within ~3× of that, so the limit is each region's SRAM reads plus per-layer latency (reductions, pipeline synchronisation, hops between wafers), still far faster than streaming weights from HBM.</p></details>
 <details><summary>Why might a provider still serve that model on GPUs?</summary><p>With large batches GPUs reuse each weight across many requests, reaching a lower cost per token (~$0.10–0.25 vs $0.60 per M tokens, an analyst estimate against a list price). And a single GPU holds 2–4× more memory than one wafer (80–192 GB vs 44 GB), so long contexts and large KV caches fit.</p></details>
 <details><summary>Which of the three programming models is closest to CSL, and how do they differ?</summary><p>TT-Metalium: both use explicit, software-scheduled data movement between cores with private SRAM and no hardware caches. CSL is finer-grained (32-bit wavelets, not 32 × 32 tiles), routes are declared statically per color, and there is no DRAM behind the PE.</p></details>
 <details><summary>A 400B-parameter model at FP16 must serve 50 tok/s per user to 10,000 users. How many wafers hold the weights, and what does the evidence say?</summary><p>800 GB ÷ 44 GB ≈ 18.2, so at least 19 wafers before any KV cache <span class="tag derived">Derived</span>. The aggregate demand is 500,000 tok/s. 50 tok/s per user is within a GPU's reach: five B200s (~180 GB usable each) hold the weights, and their 40 TB/s gives a ceiling of exactly 50 tok/s per user, so in practice eight. The deciding question is cost per token, where the only data is an analyst estimate favouring batched GPUs, and the missing data is how many streams one wafer pipeline serves.</p></details>
@@ -804,7 +804,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     { n: "8 × B200, FP16", c: "pur", ceil: 64e12 / 140e9, cf: "64 TB/s ÷ 140 GB, no communication" },
     { n: "Wormhole Galaxy, BFP8", c: "grn", ceil: 124, cf: "~74 GB of BFP8 weights (Ch. 16)", m: 72.5, mt: ["vendor", "Vendor repo table, batch 32"] },
     { n: "Galaxy Blackhole, BFP8", c: "grn", ceil: 16e12 / 74e9, cf: "16 TB/s ÷ ~74 GB (Ch. 16)" },
-    { n: "4 × CS-3, FP16 in SRAM", c: "acc", ceil: 84e15 / 140e9, cf: "84 PB/s ÷ 140 GB; SDK GEMV rate gives ~18,000 (Ch. 8)", m: 2314, mt: ["indep", "Indep, AA via interview"], ceil2: 18000 }
+    { n: "4 × CS-3, FP16 in SRAM", c: "acc", ceil: 84e15 / 140e9, cf: "84 PB/s ÷ 140 GB, summed over all users; one user sees ~1/80 of it (~7,500)", m: 2314, mt: ["indep", "Indep, AA via interview"], ceil2: 7500 }
   ];
   respChart($("#dc-c"), (svg, W) => {
     const narrow = W < 600, x0 = narrow ? 14 : 190, x1 = W - 16, rowH = narrow ? 50 : 38, top = 8;
@@ -826,7 +826,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
   });
   $("#dc-out").innerHTML = "<ul>" + DC.map(r => `<li><span class="sw ${r.c}"></span><b>${r.n}</b>: ceiling ≈ ${Math.round(r.ceil).toLocaleString("en-US")} (${r.cf}) ${tg("derived")}` +
     (r.m ? `; measured ${r.m.toLocaleString("en-US")} ${tg(r.mt)} = ${(100 * r.m / r.ceil).toPrecision(2)}% of the ceiling` : "; no measurement in the sources") + "</li>").join("") +
-    "</ul>The Cerebras row's short tick marks the ~18,000 tok/s ceiling from the SDK GEMV benchmark's measured rate (Ch. 8). The Wormhole measurement is at batch 32 on an older chip generation.";
+    "</ul>The Cerebras row's short tick marks the ~7,500 tok/s single-user ceiling: one layer region's share of the bandwidth (Ch. 9). The Wormhole measurement is at batch 32 on an older chip generation.";
 
   // ---------- 7. cost and energy ----------
   const KP = {
