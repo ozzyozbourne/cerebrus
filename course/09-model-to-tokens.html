@@ -21,6 +21,7 @@
   .kgrid input[type=range] { width: 110px; accent-color: var(--accent); }
   .kgrid .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border); flex: none; }
   pre.formula { font-size: 14px; }
+  svg .f-muted { fill: var(--muted); }
 </style>
 </head>
 <body>
@@ -84,7 +85,7 @@ Cerebras's ML compiler and its production inference kernels are closed. The prim
 <button class="btn secondary" id="kp-shuf" type="button">Shuffle order</button>
 <button class="btn secondary" id="kp-topo" type="button">Graph order</button>
 </div>
-<svg id="kp-svg" viewBox="0 0 720 330" width="720" role="img" aria-label="Kernel rectangles placed on a 48 by 24 fabric"></svg>
+<svg id="kp-svg" viewBox="0 0 760 330" width="760" role="img" aria-label="Kernel rectangles placed on a 48 by 24 fabric"></svg>
 <div class="readout" id="kp-out" aria-live="polite"></div>
 </div>
 
@@ -360,9 +361,9 @@ Place two or three GEMV "layer regions" side by side on a small rectangle, each 
     el("rect", { x: wx, y: wy, width: 128, height: 70, rx: 6, class: "box", "stroke-width": 1 }, svg);
     [[4, 4, 30, 30, "--blue"], [36, 4, 50, 30, "--accent"], [88, 4, 36, 30, "--green"], [4, 36, 60, 30, "--purple"], [66, 36, 58, 30, "--amber"]].forEach(([x, y, w, h, c]) =>
       el("rect", { x: wx + x, y: wy + y, width: w, height: h, rx: 3, fill: cssVar(c), opacity: 0.45 }, svg));
-    txt(svg, wx - 8, wy + 30, "each kernel: a rectangle", { "text-anchor": "end", "font-size": 12 });
-    txt(svg, wx - 8, wy + 46, "of PEs, sized for its work", { "text-anchor": "end", "font-size": 12, class: "muted" });
-    txt(svg, wx - 8, wy + 62, "and memory, then wired up", { "text-anchor": "end", "font-size": 12, class: "muted" });
+    txt(svg, wx + 138, wy + 22, "each kernel: a rectangle", { "font-size": 12 });
+    txt(svg, wx + 138, wy + 38, "of PEs, sized for its", { "font-size": 12, class: "muted" });
+    txt(svg, wx + 138, wy + 54, "work and memory", { "font-size": 12, class: "muted" });
     txt(svg, 8 + 2 * 152 + 64, 100, "hand-written", { "text-anchor": "middle", "font-size": 12, class: "muted" });
     txt(svg, 8 + 2 * 152 + 64, 116, "kernel library", { "text-anchor": "middle", "font-size": 12, class: "muted" });
   })();
@@ -410,11 +411,13 @@ Place two or three GEMV "layer regions" side by side on a small rectangle, each 
         pos[i] = { c: px, r: shelf * SH, ill: shelf === 1 && x + w[i] > FW };
         x += w[i];
       });
+      let ox = 0; order.forEach(i => { if (pos[i].ill) { pos[i] = { c: ox, r: FH + 1, ill: true }; ox += w[i]; } });
       const dts = work.map((x, i) => x / (w[i] * SH)), dtMax = Math.max(...dts), bott = dts.indexOf(dtMax);
       order.forEach(i => {
-        const p = pos[i], rx = OX + p.c * CELL, ry = OY + p.r * CELL, ww = w[i] * CELL, hh = SH * CELL;
+        const p = pos[i], rx = OX + p.c * CELL, ry = OY + p.r * CELL, ww = w[i] * CELL, hh = (p.ill ? 4 : SH) * CELL;
         el("rect", { x: rx + 1, y: ry + 1, width: ww - 2, height: hh - 2, rx: 3, fill: cssVar(colors[i]), opacity: p.ill ? 0.25 : 0.42, stroke: cssVar(p.ill ? "--red" : i === bott ? "--text" : colors[i]), "stroke-width": i === bott ? 3 : 1.5, "stroke-dasharray": p.ill ? "4 3" : "none" }, svg);
-        if (ww >= 34) {
+        if (p.ill) txt(svg, rx + ww / 2, ry + hh / 2 + 4, `${names[i]}: no room`, { "text-anchor": "middle", "font-size": 11.5, "font-weight": 700, class: "f-red" });
+        else if (ww >= 34) {
           txt(svg, rx + ww / 2, ry + hh / 2 - 4, names[i], { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: "halo" });
           txt(svg, rx + ww / 2, ry + hh / 2 + 12, `Δt ${Math.round(dts[i])}`, { "text-anchor": "middle", "font-size": 11.5, class: "halo" });
         } else txt(svg, rx + ww / 2, ry + hh / 2 + 4, String(i + 1), { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: "halo" });
@@ -423,19 +426,19 @@ Place two or three GEMV "layer regions" side by side on a small rectangle, each 
       let wire = 0;
       for (let i = 0; i < 5; i++) {
         const a = pos[i], b = pos[i + 1];
-        const ax = a.c + w[i] / 2, ay = a.r + SH / 2, bx = b.c + w[i + 1] / 2, by = b.r + SH / 2;
+        const ax = a.c + w[i] / 2, ay = a.r + (a.ill ? 2 : SH / 2), bx = b.c + w[i + 1] / 2, by = b.r + (b.ill ? 2 : SH / 2);
         wire += Math.abs(ax - bx) + Math.abs(ay - by);
         el("path", { d: `M${OX + ax * CELL} ${OY + ay * CELL} L${OX + bx * CELL} ${OY + ay * CELL} L${OX + bx * CELL} ${OY + by * CELL}`, fill: "none", class: "s-muted", "stroke-width": 1.6, "stroke-dasharray": "3 3" }, svg);
       }
       // side panel: Δt bars
-      const PX = OX + FW * CELL + 16, bw = 720 - PX - 8;
-      txt(svg, PX, 16, "Δt per layer (cycles)", { "font-size": 12.5, "font-weight": 600 });
+      const PX = OX + FW * CELL + 16, bw = 760 - PX - 8;
+      txt(svg, PX, 16, "Δt (cycles)", { "font-size": 12.5, "font-weight": 600 });
       const sc = Math.max(...dts, 1);
       names.forEach((n, i) => {
         const y = OY + 6 + i * 40;
         txt(svg, PX, y + 10, `L${i + 1}`, { "font-size": 12 });
         el("rect", { x: PX + 22, y, width: Math.max(2, (bw - 26) * dts[i] / sc), height: 14, rx: 3, fill: cssVar(colors[i]), opacity: 0.55, stroke: cssVar(i === bott ? "--text" : colors[i]), "stroke-width": i === bott ? 2 : 1 }, svg);
-        txt(svg, PX + 22, y + 28, `${Math.round(dts[i])}${i === bott ? "  ← sets the pace" : ""}`, { "font-size": 11.5, class: i === bott ? "" : "muted" });
+        txt(svg, PX + 22, y + 28, `${Math.round(dts[i])}${i === bott ? " ← slowest" : ""}`, { "font-size": 11.5, class: i === bott ? "" : "muted" });
       });
       const used = w.reduce((a, b) => a + b, 0) * SH, memNote = mode ? "minimum widths come from each layer's pinned weights" : "minimum widths come from activations and small weights";
       $("#kp-out").textContent =
@@ -443,6 +446,7 @@ Place two or three GEMV "layer regions" side by side on a small rectangle, each 
         `pipeline Δt = max = ${Math.round(dtMax)} cycles per sample (bottleneck L${bott + 1}) · relative throughput ${(100 / dtMax).toFixed(2)} samples per 100 cycles\n` +
         `cores used ${used} of ${FW * FH} (${Math.round(100 * used / (FW * FH))}%) · wire length (L1, consecutive layers) ${wire.toFixed(0)} cores\n` +
         `${memNote}; balanced Δt ≈ ${Math.round(work.reduce((a, b) => a + b, 0) / (FW * FH))} if every core is used.`;
+      svg.setAttribute("viewBox", `0 0 760 ${illegal ? 380 : 330}`);
       svg.setAttribute("aria-label", `Pipeline delta t ${Math.round(dtMax)} cycles, bottleneck layer ${bott + 1}${illegal ? ", illegal placement" : ""}`);
     }
     seg("#kp-mode", v => { mode = +v; balance(); draw(); });
@@ -660,16 +664,14 @@ Place two or three GEMV "layer regions" side by side on a small rectangle, each 
       const line = (f, cls, dash) => { let d = ""; for (let kk = 1; kk <= 10; kk++) d += (kk > 1 ? "L" : "M") + X(kk).toFixed(1) + " " + Y(f(kk)).toFixed(1); el("path", { d, fill: "none", class: cls, "stroke-width": 2.4, "stroke-dasharray": dash || "none" }, svg); };
       line(gpu, "s-blu"); line(waf, "s-acc"); line(slot, "s-muted", "5 4");
       el("line", { x1: X(k), y1: y1, x2: X(k), y2: y0, class: "s-muted", "stroke-width": 1, "stroke-dasharray": "2 3" }, svg);
-      [[gpu, "f-blu"], [waf, "f-acc"], [slot, "f-pur"]].forEach(([f, cl]) => el("circle", { cx: X(k), cy: Y(f(k)), r: 5, class: cl }, svg));
+      [[gpu, "f-blu"], [waf, "f-acc"], [slot, "f-muted"]].forEach(([f, cl]) => el("circle", { cx: X(k), cy: Y(f(k)), r: 5, class: cl }, svg));
       const LX = x1 + 14;
-      [["GPU per-user speedup", "s-blu", ""], ["wafer per-user speedup", "s-acc", ""], ["slot efficiency E/(k+1)", "s-muted", "5 4"]].forEach(([n, cl, d], i) => {
+      [["GPU", "s-blu", ""], ["wafer", "s-acc", ""], ["slot share", "s-muted", "5 4"]].forEach(([n, cl, d], i) => {
         el("line", { x1: LX, y1: 30 + i * 22, x2: LX + 18, y2: 30 + i * 22, class: cl, "stroke-width": 2.4, "stroke-dasharray": d || "none" }, svg);
-        txt(svg, LX + 22, 34 + i * 22, n.split(" ")[0], { "font-size": 11.5 });
-        txt(svg, LX + 22, 46 + i * 22, "", {});
+        txt(svg, LX + 24, 34 + i * 22, n, { "font-size": 12 });
       });
-      txt(svg, LX, 110, "blue: GPU", { "font-size": 11, class: "muted" });
-      txt(svg, LX, 124, "orange: wafer", { "font-size": 11, class: "muted" });
-      txt(svg, LX, 138, "dashed: slots → tokens", { "font-size": 11, class: "muted" });
+      txt(svg, LX, 110, "per-user speedup", { "font-size": 11, class: "muted" });
+      txt(svg, LX, 124, "(solid lines)", { "font-size": 11, class: "muted" });
       const E = Ef(a, k);
       $("#sd-out").textContent =
         `E = (1 − ${a.toFixed(2)}^${k + 1}) / (1 − ${a.toFixed(2)}) = ${E.toFixed(2)} tokens per target pass\n` +
