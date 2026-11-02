@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 4: SUMMA GEMM</title>
+<link rel="stylesheet" href="assets/course.css">
+<style>
+.halo-txt { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+#bud-mem .seg { stroke: var(--surface); stroke-width: 1; }
+.budget td:first-child { white-space: nowrap; }
+.okc { color: var(--green); font-weight: 650; } .badc { color: var(--red); font-weight: 650; } .unkc { color: var(--amber); font-weight: 650; }
+</style>
+</head>
+<body>
+<main>
+<div class="kicker">Chapter 14 · Part III · Programming</div>
+<h1>Lab 4: 2-D GEMM with SUMMA</h1>
+<p class="lede">Every lab so far ran on a row or a column. This one uses a P × P grid of PEs to multiply two matrices with SUMMA, the textbook distributed GEMM. Each step broadcasts one block column of A along the rows and one block row of B down the columns, and then every PE multiplies the two tiles it received. The SDK's <code>&lt;collectives_2d&gt;</code> library does the broadcasts, rewriting the routes at run time and tearing them down after each step. We time each step on the tile's own counter. At realistic tile sizes the kernel spends almost all its time computing, which is the opposite of Lab 3's result. It still reaches only a third of the multiply-add rate, and the measurements show where the rest goes.</p>
+
+<div class="objectives">
+<h4>After this lab you can</h4>
+<ul>
+<li>Explain SUMMA as "P outer products of block columns and block rows", and map it onto a P × P grid with 2-D host I/O.</li>
+<li>Read <code>&lt;collectives_2d&gt;</code>: two colors per axis, routes rewritten per broadcast, a teardown wavelet, and a lock task that fires the callback.</li>
+<li>Build a task that waits for two independent networks (block + activate), and re-arm it every step.</li>
+<li>Time broadcast and compute separately with the TSC, compare them with a compute-bound estimate, and find the instruction and bank-clash overheads.</li>
+<li>Budget a kernel before writing it: memory, colors, task IDs, queues and microthreads, and a cycle model.</li>
+</ul>
+</div>
+
+<div class="callout ok">
+<strong>Run it yourself</strong>
+<p><code>source /home/user/cerebras-sdk/env.sh</code>, then in <code>course/programs/06-summa</code> run <code>bash commands.sh</code> (about 30 s wall time at the defaults). Knobs: <code>P</code> (grid side, default 4), <code>T</code> (tile size, default 8; or set <code>Mt</code>, <code>Kt</code>, <code>Nt</code> separately), <code>KERNEL</code> (0 = the SDK's column loop, 1 = the outer-product variant from the measurement section) and <code>ARCH</code> (<code>wse3</code> default, or <code>wse2</code>). Example: <code>P=6 T=16 KERNEL=1 ARCH=wse2 bash commands.sh</code>. Larger tiles take minutes: T = 32 at P = 4 took about 4 minutes of wall time.</p>
+</div>
+
+<h2 id="summa">From GEMV to SUMMA</h2>
+<p><a href="12-lab-neighbours.html#row-reduce">Chapter 12</a> composed a distributed GEMV from two collectives: broadcast slices of <code>x</code> down the columns, multiply locally, and reduce partial <code>y</code> along the rows. A GEMM, <code>C = A·B</code>, is many GEMVs at once (one per column of B), so you could run that pattern N times. SUMMA (Scalable Universal Matrix Multiplication Algorithm, van de Geijn and Watts, 1997) organises the same work so that <em>no reduction is needed at all</em>.</p>
+<p>Cut A (M × K), B (K × N) and C (M × N) into a P × P grid of blocks. PE (px, py) owns block row py and block column px of all three: <code>A(py, px)</code>, <code>B(py, px)</code> and <code>C(py, px)</code>. The owner of a block of C computes it:</p>
+<pre><code>C(py, px) = Σ_s  A(py, s) · B(s, px)        s = 0 … P−1</code></pre>
+<p>The term for step <em>s</em> needs block column <em>s</em> of A and block row <em>s</em> of B. So at step <em>s</em> the PEs in grid column <em>s</em> broadcast their A block along their row, the PEs in grid row <em>s</em> broadcast their B block down their column, and every PE adds one tile product into its C. After P steps each C block is complete, and it never moved. In matrix terms each step adds one rank-K/P update, an outer product of a block column and a block row.</p>
+<p><strong>The GEMV warm-up.</strong> Set <code>Nt=1</code> and the same program computes a matrix times P vectors at once (B is K × P): a batched GEMV. Each step still broadcasts an A tile along the rows, but the B "tile" is a column segment of only Kt words, and each PE does Kt multiply-adds per output element. Compared with Chapter 12's GEMV, the vector is broadcast and the result stays put, instead of the vector staying put and the result being reduced. The warm-up exercise runs it.</p>
+
+<div class="widget" id="st">
+<h4>SUMMA, one step at a time</h4>
+<p class="hint">Left: the P × P grid of PEs. At step <em>s</em>, the orange column of PEs sends its A tiles along the rows and the blue row sends its B tiles down the columns; arrows show the run-time routes (the root's router sends both ways, every other router passes the tile to its own PE and onward). Green fill is how much of each C tile is done. Right: the same step on the whole matrices. Click a PE to follow it. The cycle estimate uses the measured WSE-3 fits from this chapter (kernel 0, P = 4).</p>
+<div class="controls">
+<label>grid P <select id="st-p"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></label>
+<label>tile T <select id="st-t"><option>4</option><option selected>8</option><option>16</option><option>32</option></select></label>
+<button class="btn" id="st-play" type="button">Play</button>
+<button class="btn secondary" id="st-next" type="button">Next phase</button>
+<button class="btn secondary" id="st-reset" type="button">Reset</button>
+</div>
+<svg id="st-svg" viewBox="0 0 720 330" width="720" role="img" aria-label="SUMMA step animation"></svg>
+<div class="readout" id="st-out"></div>
+</div>
+
+<p><strong>Why it suits the wafer.</strong> Each step moves Mt·Kt + Kt·Nt words into every PE and does Mt·Kt·Nt multiply-adds there. For square tiles of side T that is 2T² words for T³ multiply-adds: the compute grows faster than the traffic, so large tiles are compute-bound. The broadcasts are multicasts (one send reaches the whole row, Chapter 12's program 05), so their cost barely depends on P. And C never moves, so the only data in flight is A and B.</p>
+
+<h2 id="layout">Data layout and host I/O on a 2-D grid</h2>
+<p>The host copies each matrix in a single <code>memcpy_h2d</code> over the whole P × P rectangle (<a href="07-host-io.html">Chapter 7</a>). With <code>MemcpyOrder.ROW_MAJOR</code>, the flat host array is consumed PE by PE in row-major order over the grid (py outer, px inner), Mt·Kt words per PE. So the host must arrange A so that each PE's tile is contiguous, and in the order the PE wants. This program stores every tile <em>column-major</em>, so that a column of the A tile, which is what the inner multiply-add streams over, is contiguous.</p>
+<figure>
+<svg id="lay-svg" viewBox="0 0 720 230" width="720" role="img" aria-label="Host array to per-PE tiles, column-major"></svg>
+<figcaption><b>One reshape and one transpose.</b> A 4 × 4 matrix on a 2 × 2 grid (Mt = Kt = 2). <code>A.reshape(P, Mt, P, Kt)</code> indexes (block row, row in tile, block column, column in tile). Transposing to (block row, block column, column, row) and flattening gives the wire order: PE (0,0)'s tile column by column, then PE (1,0)'s, and so on. The numbers are the original row-major positions. The SDK's <code>run.py</code> draws the same example in a comment <span class="tag sdk">SDK 2.10.1</span>.</figcaption>
+</figure>
+<p>Reading C back is the inverse: the device returns (py, px, column, row), and <code>transpose(0, 3, 1, 2)</code> brings it back to (block row, row, block column, column). Getting one axis wrong does not crash anything: the program just multiplies the wrong numbers, and the numpy check catches it. That check is the first line of defence in any 2-D program.</p>
+
+<h2 id="collectives">Inside <code>&lt;collectives_2d&gt;</code></h2>
+<p>Chapter 12 used the library in one dimension and measured its fixed cost at about 700 cycles <span class="tag measured">Measured, Ch. 12</span>. Here we need it in both dimensions, so it is worth opening up. The source is <code>csl-libs/collectives_2d/pe.csl</code> in the SDK image (1,312 lines) <span class="tag sdk">SDK 2.10.1</span>; the broadcast path is short.</p>
+
+<h3>What one instance owns</h3>
+<p>Each axis is a separate instance of the module (<code>row</code> and <code>col</code> in our program). Each one owns two colors (<code>DATA_COLOR_0</code>, <code>DATA_COLOR_1</code>), two local task IDs (an FSM task and a "lock" task), two input/output queue pairs and one DSD-register set. Broadcast uses only color 0; color 1 is for <code>reduce_fadds</code>, which needs the alternating checkerboard of Chapter 12's program 03. The layout calls <code>c2d.get_params(px, py, ids)</code>, which records only whether the PE sits at either end of its row and column. The PE reads its own coordinate at run time (<code>init()</code>), so the compiler builds a handful of ELF files instead of P². At load time color 0 is a broadcast network rooted at PE 0, in teardown mode.</p>
+
+<h3>Why the routes change at run time</h3>
+<p>A static route has a fixed input direction, and on WSE-3 a route accepts at most one input direction (<a href="04-fabric.html">Chapter 4</a>). In SUMMA the root of the row broadcast moves one column east every step: at step 0 every PE receives from the west side, at step P−1 from the east side, and in between the PEs left of the root receive from the east and the PEs right of it from the west. With static routes you would need a color per root, P colors per axis. The library uses one color and rewrites it before each broadcast:</p>
+<div class="filename">collectives_2d/pe.csl, configure_broadcast_network() (abridged)</div>
+<pre><code><span class="k">if</span> (pe_id == root) {                    <span class="c">// the root's CE feeds the router</span>
+  <span class="c">// ends of the line send one way, everyone else both ways</span>
+  color_config.reset_routes(addr, .{.tx = [2]direction{POS_DIR, NEG_DIR}, .rx = RAMP});
+} <span class="k">else if</span> (pe_id &lt; root) {               <span class="c">// left of / above the root</span>
+  color_config.reset_routes(addr, .{.tx = [2]direction{RAMP, NEG_DIR}, .rx = POS_DIR});
+} <span class="k">else</span> {                                 <span class="c">// right of / below the root</span>
+  color_config.reset_routes(addr, .{.tx = [2]direction{RAMP, POS_DIR}, .rx = NEG_DIR});
+}
+tile_config.teardown.exit(DATA_COLOR_0);  <span class="c">// leave teardown: traffic may flow</span></code></pre>
+<p>POS_DIR is EAST for the row instance and SOUTH for the column instance. Every non-root router passes the wavelet both to its own CE (RAMP) and onward, which is program 05's multicast with a run-time root.</p>
+
+<h3>One broadcast, end to end</h3>
+<ol>
+<li><strong><code>broadcast(root, buf, count, callback)</code></strong> blocks the lock task, records the root and the buffer, clears the filter and switch state left by any earlier gather or scatter, rewrites the routes as above, and leaves teardown mode.</li>
+<li><strong>Transfer.</strong> It activates its FSM task, which starts one asynchronous 32-bit move of <code>count</code> words: memory → fabric at the root, fabric → memory everywhere else. The move runs on the microthread of its queue (2 for the row instance, 3 for the column instance) and activates the FSM task again when it finishes.</li>
+<li><strong>Teardown.</strong> On that second run the FSM calls <code>initiate_teardowns()</code>. Only the root sends anything: one control wavelet with the TEARDOWN command and the CE-ignore bit set, on color 0. It follows the same routes as the data, so it reaches every router in the line after the last data wavelet, and each router puts color 0 back into teardown mode.</li>
+<li><strong>Lock.</strong> Entering teardown runs the CE's teardown handler, task 29 (<a href="04-fabric.html">Chapter 4</a>), which activates the lock task. The FSM unblocks the lock when its own transfer is done. So the lock runs only when <em>both</em> have happened: the data is in my memory, and the network is torn down and ready to be rewritten. The lock task then activates the user's callback (our <code>x_done</code> or <code>y_done</code>).</li>
+</ol>
+<p>The teardown is what makes the next step's rewrite safe: no PE can reconfigure color 0 while wavelets of the previous broadcast are still in its router. What happens to a root that starts step <em>s</em>+1 while a slower neighbour is still computing step <em>s</em>? Its data waits behind the neighbour's router, which is still in teardown mode, and the lossless fabric back-pressures the sender until the neighbour calls <code>broadcast</code> and leaves teardown. The library's comments describe this ordering ("if we clear TIP bit before routing is reconfigured, it stalls"); we did not isolate it in a separate experiment <span class="tag derived">Derived from the library source</span>.</p>
+
+<div class="callout">
+<strong>Chain or tree?</strong>
+<p>Both the library's broadcast and Chapter 12's program 05 are <em>chains</em>: the wavelets stream through every router of the line, one hop after another, and each router copies them to its CE on the way. A chain broadcast costs about (hops × hop cost) + words, and the hop cost is tiny (2.0 cycles on WSE-3, 1.0 on WSE-2 <span class="tag measured">Measured, Ch. 4</span>), so for a row of a few hundred PEs the word count dominates. Reductions are different, because each PE must add before forwarding. A chain reduce still streams (≈ 9.2 cycles per hop through a PE's compute on WSE-3, 6.0 on WSE-2, plus the words <span class="tag measured">Measured, Ch. 12</span>). A binary tree would need only log₂P levels but each level is a separate message, and Chapter 12 measured store-and-forward at more than 3× the streaming chain (348 vs 101 cycles at P = 8, M = 32) <span class="tag measured">Measured, Ch. 12</span>. With c ≈ 9 per hop, a chain over P PEs beats a store-and-forward tree until roughly 9·P &gt; log₂P · (≈ 15 + M), which for M = 32 is P in the hundreds <span class="tag derived">Derived</span>. SUMMA itself needs no reduction; <a href="15-lab-cg.html">Chapter 15</a>'s solver does.</p>
+</div>
+
+<h2 id="join">The task that waits on two networks</h2>
+<p>Each step needs both tiles before it can compute: the A tile from the row broadcast and the B tile from the column broadcast. They finish in either order. <a href="05-tasks.html">Chapter 5</a>'s join does this with two bits: the <code>compute</code> task starts <em>blocked</em>; <code>y_done</code> unblocks it and <code>x_done</code> activates it. A task runs only when it is both activated and unblocked, so <code>compute</code> runs exactly once, after the later of the two callbacks. At the end of <code>compute</code>, <code>@block(COMPUTE)</code> re-arms the join for the next step before <code>start_step()</code> issues the next pair of broadcasts.</p>
+<p>Why not count, as Lab 3 did with <code>pending</code>? That works too, but it needs a counter, a decrement in each callback and a test. The join is free: the hardware task picker evaluates it.</p>
+
+<h2 id="code">Walking through the code</h2>
+<p>The layout file is short. Two calls per PE: the library parameters with our colors and entrypoint task IDs, and the PE program with the tile sizes. The resource map at the top is the budget sheet the design section below fills in.</p>
+<div class="filename">course/programs/06-summa/layout.csl</div>
+<pre><code><span class="c">// 06-summa: C = A·B on a P x P grid of PEs with the SUMMA algorithm.</span>
+<span class="c">// Adapted from Cerebras SDK 2.10.1 benchmarks/gemm-collectives_2d (layout.csl,</span>
+<span class="c">// pe.csl, run.py), rewritten in the course&#x27;s style, with per-step TSC stamps.</span>
+<span class="c">//</span>
+<span class="c">// Each PE (px, py) owns one tile of each matrix: A is Mt x Kt, B is Kt x Nt,</span>
+<span class="c">// C is Mt x Nt, all column-major. In step s, the PEs of column s broadcast</span>
+<span class="c">// their A tile along their row, and the PEs of row s broadcast their B tile</span>
+<span class="c">// down their column; then every PE does C_tile += A_s · B_s.</span>
+<span class="c">// Teaches: a 2-D decomposition, &lt;collectives_2d&gt; (routes rewritten at run</span>
+<span class="c">// time, teardown), a task that waits on two networks, the compute-bound regime.</span>
+<span class="c">//</span>
+<span class="c">// Resource map (every PE)</span>
+<span class="c">//   colors        0, 1  row (x) broadcast         2, 3  column (y) broadcast</span>
+<span class="c">//                 (20-23 belong to memcpy and the runtime, Chapter 4)</span>
+<span class="c">//   local tasks   8, 9  x library (FSM, lock)     10, 11  y library (FSM, lock)</span>
+<span class="c">//                 12 exit   13 compute   14 x_done   15 y_done</span>
+<span class="c">//                 (the teardown handler, task 29, is installed by the library)</span>
+<span class="c">//   queues        0, 1  memcpy    2, 4  x library    3, 5  y library</span>
+<span class="c">//   microthreads  = queue IDs: a broadcast uses 2 (x) and 3 (y) at the same time</span>
+<span class="k">param</span> P: <span class="n">u16</span>;              <span class="c">// grid is P x P PEs</span>
+<span class="k">param</span> Mt: <span class="n">u16</span>;             <span class="c">// tile sizes on one PE</span>
+<span class="k">param</span> Kt: <span class="n">u16</span>;
+<span class="k">param</span> Nt: <span class="n">u16</span>;
+<span class="k">param</span> kernel: <span class="n">u16</span> = 0;     <span class="c">// 0 = column @fmacs (SDK), 1 = outer product (pe_program.csl)</span>
+
+<span class="k">const</span> memcpy = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/get_params&gt;&quot;</span>, .{ .width = P, .height = P });
+<span class="k">const</span> c2d = <span class="b">@import_module</span>(<span class="s">&quot;&lt;collectives_2d/params&gt;&quot;</span>);
+
+<span class="k">layout</span> {
+  <span class="b">@set_rectangle</span>(P, P);
+  <span class="k">for</span> (<span class="b">@range</span>(<span class="n">u16</span>, P)) |px| {
+    <span class="k">const</span> memcpy_params = memcpy.get_params(px);
+    <span class="k">for</span> (<span class="b">@range</span>(<span class="n">u16</span>, P)) |py| {
+      <span class="c">// get_params only records which end of its row/column a PE sits at;</span>
+      <span class="c">// the PE reads its own coordinates at run time (fewer distinct ELFs).</span>
+      <span class="k">const</span> c2d_params = c2d.get_params(px, py, .{
+        .x_colors      = .{ <span class="b">@get_color</span>(0),          <span class="b">@get_color</span>(1) },
+        .x_entrypoints = .{ <span class="b">@get_local_task_id</span>(8),  <span class="b">@get_local_task_id</span>(9) },
+        .y_colors      = .{ <span class="b">@get_color</span>(2),          <span class="b">@get_color</span>(3) },
+        .y_entrypoints = .{ <span class="b">@get_local_task_id</span>(10), <span class="b">@get_local_task_id</span>(11) },
+      });
+      <span class="b">@set_tile_code</span>(px, py, <span class="s">&quot;pe_program.csl&quot;</span>, .{
+        .memcpy_params = memcpy_params, .c2d_params = c2d_params,
+        .Mt = Mt, .Kt = Kt, .Nt = Nt, .kernel = kernel });
+    }
+  }
+  <span class="b">@export_name</span>(<span class="s">&quot;A&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;B&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;C&quot;</span>, [*]<span class="n">f32</span>, true);
+  <span class="b">@export_name</span>(<span class="s">&quot;tsc&quot;</span>, [*]<span class="n">u16</span>, true);   <span class="c">// 3P + 2 timestamps of 3 x u16 per PE</span>
+  <span class="b">@export_name</span>(<span class="s">&quot;main&quot;</span>, <span class="k">fn</span>()<span class="n">void</span>);
+}</code></pre>
+<p>The PE program. The library instances come first, each with its own queues and DSD registers. <code>main()</code> is the RPC; it returns immediately and the rest is a chain of tasks: <code>start_step</code> → two broadcasts → <code>x_done</code>/<code>y_done</code> → <code>compute</code> → <code>start_step</code> … → <code>exit</code>, which unblocks the host. Kernel 0 is the SDK's loop; kernel 1 is explained in the measurement section.</p>
+<div class="filename">course/programs/06-summa/pe_program.csl</div>
+<pre><code><span class="c">// 06-summa PE program (see layout.csl for the algorithm and the resource map).</span>
+<span class="k">param</span> memcpy_params;
+<span class="k">param</span> c2d_params;
+<span class="k">param</span> Mt: <span class="n">i16</span>;
+<span class="k">param</span> Kt: <span class="n">i16</span>;
+<span class="k">param</span> Nt: <span class="n">i16</span>;
+<span class="k">param</span> kernel: <span class="n">u16</span>;         <span class="c">// 0 = column @fmacs (as in the SDK), 1 = outer product</span>
+
+<span class="k">const</span> P = <span class="b">@get_rectangle</span>().width;
+
+<span class="k">const</span> EXIT:       <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(12);
+<span class="k">const</span> COMPUTE:    <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(13);
+<span class="k">const</span> X_DONE:     <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(14);
+<span class="k">const</span> Y_DONE:     <span class="n">local_task_id</span> = <span class="b">@get_local_task_id</span>(15);
+
+<span class="c">// One library instance per axis. Each owns two colors, two queues, two task IDs</span>
+<span class="c">// and one set of DSD registers. x and y must not share any of them.</span>
+<span class="k">const</span> row = <span class="b">@import_module</span>(<span class="s">&quot;&lt;collectives_2d/pe&gt;&quot;</span>, .{
+  .dim_params = c2d_params.x, .queues = [2]<span class="n">u16</span>{2, 4},
+  .dest_dsr_ids = [1]<span class="n">u16</span>{1}, .src0_dsr_ids = [1]<span class="n">u16</span>{1}, .src1_dsr_ids = [1]<span class="n">u16</span>{1} });
+<span class="k">const</span> col = <span class="b">@import_module</span>(<span class="s">&quot;&lt;collectives_2d/pe&gt;&quot;</span>, .{
+  .dim_params = c2d_params.y, .queues = [2]<span class="n">u16</span>{3, 5},
+  .dest_dsr_ids = [1]<span class="n">u16</span>{2}, .src0_dsr_ids = [1]<span class="n">u16</span>{2}, .src1_dsr_ids = [1]<span class="n">u16</span>{2} });
+
+<span class="k">const</span> sys_mod = <span class="b">@import_module</span>(<span class="s">&quot;&lt;memcpy/memcpy&gt;&quot;</span>, memcpy_params);
+
+<span class="c">// Home tiles (filled by the host) and receive buffers, all column-major.</span>
+<span class="k">var</span> A_tile = <span class="b">@zeros</span>([Mt * Kt]<span class="n">f32</span>);
+<span class="k">var</span> B_tile = <span class="b">@zeros</span>([Kt * Nt]<span class="n">f32</span>);
+<span class="k">var</span> C_tile = <span class="b">@zeros</span>([Mt * Nt]<span class="n">f32</span>);
+<span class="k">var</span> A_buf  = <span class="b">@zeros</span>([Mt * Kt]<span class="n">f32</span>);
+<span class="k">var</span> T_tile = <span class="b">@zeros</span>([<span class="k">if</span> (kernel == 1) Mt * Nt <span class="k">else</span> 1]<span class="n">f32</span>);   <span class="c">// kernel 1 only</span>
+<span class="k">var</span> B_buf  = <span class="b">@zeros</span>([Kt * Nt]<span class="n">f32</span>);
+<span class="k">var</span> A_ptr: [*]<span class="n">f32</span> = &amp;A_tile;
+<span class="k">var</span> B_ptr: [*]<span class="n">f32</span> = &amp;B_tile;
+<span class="k">var</span> C_ptr: [*]<span class="n">f32</span> = &amp;C_tile;
+
+<span class="c">// Kernel timing on this PE&#x27;s own TSC: stamp[0] at main(), then per step s</span>
+<span class="c">// stamp[1+3s] = broadcasts issued, [2+3s] = compute starts, [3+3s] = compute</span>
+<span class="c">// ends, and stamp[3P+1] just before the host is released. Only compare stamps</span>
+<span class="c">// from the same PE (each counter starts when the launch reaches that PE).</span>
+<span class="k">const</span> timestamp = <span class="b">@import_module</span>(<span class="s">&quot;&lt;time&gt;&quot;</span>);
+<span class="k">var</span> stamp = <span class="b">@zeros</span>([3 * (3 * P + 2)]<span class="n">u16</span>);
+<span class="k">var</span> tsc_ptr: [*]<span class="n">u16</span> = &amp;stamp;
+<span class="k">fn</span> stamp_now(k: <span class="n">u16</span>) <span class="n">void</span> {
+  timestamp.get_timestamp(<span class="b">@ptrcast</span>(*[3]<span class="n">u16</span>, &amp;stamp[3 * k]));
+}
+
+<span class="k">var</span> px: <span class="n">u16</span> = 0;
+<span class="k">var</span> py: <span class="n">u16</span> = 0;
+<span class="k">var</span> step: <span class="n">u16</span> = 0;
+
+<span class="c">// main() is the host&#x27;s RPC. It returns at once; the step chain continues in tasks.</span>
+<span class="k">fn</span> main() <span class="n">void</span> {
+  timestamp.enable_tsc();
+  stamp_now(0);
+  row.init();
+  col.init();
+  px = row.pe_id;          <span class="c">// my column index (x coordinate)</span>
+  py = col.pe_id;          <span class="c">// my row index (y coordinate)</span>
+  start_step();
+}
+
+<span class="k">fn</span> start_step() <span class="n">void</span> {
+  stamp_now(1 + 3 * step);
+  <span class="c">// Root of the row broadcast is the PE in column `step`; it sends its home</span>
+  <span class="c">// tile, everyone else receives into A_buf. Same for B down the columns.</span>
+  <span class="k">const</span> Ap = <span class="k">if</span> (px == step) &amp;A_tile <span class="k">else</span> &amp;A_buf;
+  <span class="k">const</span> Bp = <span class="k">if</span> (py == step) &amp;B_tile <span class="k">else</span> &amp;B_buf;
+  row.broadcast(step, <span class="b">@ptrcast</span>([*]<span class="n">u32</span>, Ap), <span class="b">@as</span>(<span class="n">u16</span>, Mt * Kt), X_DONE);
+  col.broadcast(step, <span class="b">@ptrcast</span>([*]<span class="n">u32</span>, Bp), <span class="b">@as</span>(<span class="n">u16</span>, Kt * Nt), Y_DONE);
+}
+
+<span class="c">// The join: COMPUTE starts blocked. y_done unblocks it, x_done activates it;</span>
+<span class="c">// it runs only when both have happened, in either order (Chapter 5).</span>
+<span class="k">task</span> x_done() <span class="n">void</span> { <span class="b">@activate</span>(COMPUTE); }
+<span class="k">task</span> y_done() <span class="n">void</span> { <span class="b">@unblock</span>(COMPUTE); }
+
+<span class="k">task</span> compute() <span class="n">void</span> {
+  stamp_now(2 + 3 * step);
+  <span class="k">const</span> Ap = <span class="k">if</span> (px == step) &amp;A_tile <span class="k">else</span> &amp;A_buf;
+  <span class="k">const</span> Bp = <span class="k">if</span> (py == step) &amp;B_tile <span class="k">else</span> &amp;B_buf;
+
+  <span class="k">if</span> (kernel == 0) {
+    <span class="c">// C[:, j] += A[:, k] * B[k, j]: one @fmacs of length Mt per (k, j) pair,</span>
+    <span class="c">// Kt * Nt instructions per step. The scalar B[k, j] is read from memory.</span>
+    <span class="k">var</span> A_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{Mt} -&gt; A_tile[i] });
+    A_dsd = <span class="b">@set_dsd_base_addr</span>(A_dsd, Ap);
+    <span class="k">for</span> (<span class="b">@range</span>(<span class="n">i16</span>, Kt)) |k| {
+      <span class="k">var</span> C_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{Mt} -&gt; C_tile[i] });
+      <span class="k">for</span> (<span class="b">@range</span>(<span class="n">i16</span>, Nt)) |j| {
+        <span class="b">@fmacs</span>(C_dsd, C_dsd, A_dsd, Bp.*[j * Kt + k]);
+        C_dsd = <span class="b">@increment_dsd_offset</span>(C_dsd, Mt, <span class="n">f32</span>);
+      }
+      A_dsd = <span class="b">@increment_dsd_offset</span>(A_dsd, Mt, <span class="n">f32</span>);
+    }
+  } <span class="k">else</span> {
+    <span class="c">// C += A[:, k] (outer) B[k, :]: two instructions of length Mt * Nt per k,</span>
+    <span class="c">// Kt * 2 instructions per step. 2-D DSDs with a zero stride repeat column</span>
+    <span class="c">// k of A across j and row k of B across i; T_tile holds the product.</span>
+    <span class="k">var</span> A2 = <span class="b">@get_dsd</span>(mem4d_dsd, .{ .tensor_access = |j, i|{Nt, Mt} -&gt; A_tile[i] });
+    <span class="k">var</span> B2 = <span class="b">@get_dsd</span>(mem4d_dsd, .{ .tensor_access = |j, i|{Nt, Mt} -&gt; B_tile[j * Kt] });
+    <span class="k">const</span> T2 = <span class="b">@get_dsd</span>(mem4d_dsd, .{ .tensor_access = |j, i|{Nt, Mt} -&gt; T_tile[j * Mt + i] });
+    <span class="k">const</span> C2 = <span class="b">@get_dsd</span>(mem4d_dsd, .{ .tensor_access = |j, i|{Nt, Mt} -&gt; C_tile[j * Mt + i] });
+    A2 = <span class="b">@set_dsd_base_addr</span>(A2, Ap);
+    B2 = <span class="b">@set_dsd_base_addr</span>(B2, Bp);
+    <span class="k">for</span> (<span class="b">@range</span>(<span class="n">i16</span>, Kt)) |k| {
+      <span class="b">@fmuls</span>(T2, A2, B2);
+      <span class="b">@fadds</span>(C2, C2, T2);
+      A2 = <span class="b">@increment_dsd_offset</span>(A2, Mt, <span class="n">f32</span>);
+      B2 = <span class="b">@increment_dsd_offset</span>(B2, 1, <span class="n">f32</span>);
+    }
+  }
+  stamp_now(3 + 3 * step);
+
+  step += 1;
+  <span class="b">@block</span>(COMPUTE);                     <span class="c">// re-arm the join for the next step</span>
+  <span class="k">if</span> (step &lt; P) start_step() <span class="k">else</span> <span class="b">@activate</span>(EXIT);
+}
+
+<span class="k">task</span> exit() <span class="n">void</span> {
+  stamp_now(3 * P + 1);
+  sys_mod.unblock_cmd_stream();        <span class="c">// only now does the host&#x27;s launch() return</span>
+}
+
+<span class="k">comptime</span> {
+  <span class="b">@bind_local_task</span>(exit, EXIT);
+  <span class="b">@bind_local_task</span>(compute, COMPUTE);
+  <span class="b">@bind_local_task</span>(x_done, X_DONE);
+  <span class="b">@bind_local_task</span>(y_done, Y_DONE);
+  <span class="b">@block</span>(COMPUTE);
+  <span class="b">@export_symbol</span>(A_ptr, <span class="s">&quot;A&quot;</span>);
+  <span class="b">@export_symbol</span>(B_ptr, <span class="s">&quot;B&quot;</span>);
+  <span class="b">@export_symbol</span>(C_ptr, <span class="s">&quot;C&quot;</span>);
+  <span class="b">@export_symbol</span>(tsc_ptr, <span class="s">&quot;tsc&quot;</span>);
+  <span class="b">@export_symbol</span>(main);
+}</code></pre>
+<p>Notes on the details:</p>
+<ul>
+<li><strong>Home tile or buffer.</strong> At step <em>s</em> the root of the row broadcast is the PE whose <code>px == s</code>. It sends from its own <code>A_tile</code>; everyone else receives into <code>A_buf</code>. <code>compute</code> makes the same choice, so a PE multiplies its own tile when it is the root. The two buffers cost 2 extra tiles of memory, the price of not overwriting home tiles that later steps still need to send.</li>
+<li><strong>Kernel 0's loop.</strong> For each k and j it reads the scalar <code>B[k, j]</code> and issues one <code>@fmacs</code> of length Mt: <code>C[:, j] += A[:, k] · B[k, j]</code>. That is Kt·Nt vector instructions per step, each moving a DSD with <code>@increment_dsd_offset</code> (<a href="06-dsds.html">Chapter 6</a>).</li>
+<li><strong>Timestamps.</strong> <code>stamp_now(k)</code> writes the 48-bit TSC into slot k of an exported array: once at <code>main()</code>, three times per step (broadcasts issued, compute starts, compute ends) and once in <code>exit</code>. The host reads them with a 16-bit memcpy, as in Lab 3. All differences are taken on one PE (note 19 of the course's cross-chapter rules: counters on different PEs start at different times).</li>
+</ul>
+<p>The host script: tile, copy, launch, read C and the stamps, check against numpy, then report one PE's split.</p>
+<div class="filename">course/programs/06-summa/run.py</div>
+<pre><code>#!/usr/bin/env cs_python
+<span class="c"># Host side of 06-summa (adapted from Cerebras SDK 2.10.1 benchmarks/gemm-collectives_2d/run.py).</span>
+<span class="k">import</span> argparse, json
+<span class="k">import</span> numpy as np
+<span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder  <span class="c"># pylint: disable=no-name-in-module</span>
+
+p = argparse.ArgumentParser(); p.add_argument(&#x27;--name&#x27;); p.add_argument(&#x27;--cmaddr&#x27;)
+args = p.parse_args()
+cfg = json.load(open(f<span class="s">&quot;{args.name}/out.json&quot;</span>))
+prm = cfg[&#x27;params&#x27;]
+P, Mt, Kt, Nt, kern = (int(prm[k]) <span class="k">for</span> k in (&#x27;P&#x27;, &#x27;Mt&#x27;, &#x27;Kt&#x27;, &#x27;Nt&#x27;, &#x27;kernel&#x27;))
+M, K, N = Mt * P, Kt * P, Nt * P                    <span class="c"># A is M x K, B is K x N</span>
+
+np.random.seed(7)
+A = np.random.rand(M, K).astype(np.float32)
+B = np.random.rand(K, N).astype(np.float32)
+
+<span class="c"># Host layout: PE (px, py) gets block row py, block column px, flattened</span>
+<span class="c"># column-major. reshape(rows, tile_rows, cols, tile_cols) -&gt; (py, px, col, row).</span>
+<span class="k">def</span> to_tiles(X, tr, tc):
+  <span class="k">return</span> X.reshape(P, tr, P, tc).transpose(0, 2, 3, 1).ravel()
+<span class="k">def</span> from_tiles(flat, tr, tc):
+  <span class="k">return</span> flat.reshape(P, P, tc, tr).transpose(0, 3, 1, 2).reshape(P * tr, P * tc)
+
+<span class="c"># suppress_simfab_trace: large tiles would otherwise write gigabytes of simulator traces.</span>
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr, suppress_simfab_trace=<span class="k">True</span>)
+rt.load(); rt.run()
+kw = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
+<span class="c"># One memcpy per matrix covers the whole P x P rectangle: the wire order is</span>
+<span class="c"># row-major over PEs (py outer, px inner), Mt*Kt words per PE.</span>
+rt.memcpy_h2d(rt.get_id(&#x27;A&#x27;), to_tiles(A, Mt, Kt), 0, 0, P, P, Mt * Kt, **kw)
+rt.memcpy_h2d(rt.get_id(&#x27;B&#x27;), to_tiles(B, Kt, Nt), 0, 0, P, P, Kt * Nt, **kw)
+rt.launch(&#x27;main&#x27;, nonblock=<span class="k">False</span>)
+Cf = np.zeros(M * N, dtype=np.float32)
+rt.memcpy_d2h(Cf, rt.get_id(&#x27;C&#x27;), 0, 0, P, P, Mt * Nt, **kw)
+S = 3 * P + 2                                         <span class="c"># timestamps per PE</span>
+w = np.zeros(P * P * S * 3, dtype=np.uint32)
+rt.memcpy_d2h(w, rt.get_id(&#x27;tsc&#x27;), 0, 0, P, P, S * 3,
+              **dict(kw, data_type=MemcpyDataType.MEMCPY_16BIT))
+rt.stop()
+
+C = from_tiles(Cf, Mt, Nt)
+np.testing.assert_allclose(C, A @ B, rtol=1e-5, atol=1e-6)
+
+w = (w &amp; 0xffff).astype(np.int64).reshape(P, P, S, 3)  <span class="c"># (py, px, stamp, word)</span>
+t = w[..., 0] | (w[..., 1] &lt;&lt; 16) | (w[..., 2] &lt;&lt; 32)
+total = t[:, :, -1] - t[:, :, 0]                      <span class="c"># same-PE differences only</span>
+issue, cbeg, cend = t[:, :, 1:-1:3], t[:, :, 2:-1:3], t[:, :, 3:-1:3]
+comp = (cend - cbeg).sum(-1)                          <span class="c"># compute, all steps</span>
+comm = (cbeg - issue).sum(-1)                         <span class="c"># issue -&gt; both broadcasts done</span>
+py, px = P - 1, P - 1                                  <span class="c"># report the far corner PE</span>
+print(f<span class="s">&quot;C = A·B with A {M}x{K}, B {K}x{N} on {P}x{P} PEs, tiles {Mt}x{Kt} · {Kt}x{Nt}; C[:2, :4] =&quot;</span>)
+print(np.array2string(C[:2, :4], precision=4))
+print(f<span class="s">&quot;kernel time (TSC, per PE, cycles): min {total.min()}, max {total.max()}&quot;</span>)
+print(f<span class="s">&quot;PE ({px},{py}) over {P} steps: total {total[py, px]} = broadcast wait {comm[py, px]}&quot;</span>
+      f<span class="s">&quot; + compute {comp[py, px]} + other {total[py, px] - comm[py, px] - comp[py, px]}&quot;</span>)
+shape = f<span class="s">&quot;{Kt * Nt} <span class="b">@fmacs</span> of length {Mt}&quot;</span> <span class="k">if</span> kern == 0 <span class="k">else</span> f<span class="s">&quot;{Kt} x (<span class="b">@fmuls</span> + <span class="b">@fadds</span>) of length {Mt * Nt}&quot;</span>
+print(f<span class="s">&quot;compute per step {comp[py, px] / P:.0f} cycles <span class="k">for</span> {Mt * Kt * Nt} multiply-adds ({shape})&quot;</span>)
+print(<span class="s">&quot;SUCCESS!&quot;</span>)</code></pre>
+<div class="filename">course/programs/06-summa/commands.sh</div>
+<pre><code>#!/usr/bin/env bash
+<span class="c"># Knobs (environment): P = grid side (P x P PEs); T = tile size (sets Mt = Kt = Nt</span>
+<span class="c"># unless you set them); KERNEL = 0 (column @fmacs, as in the SDK) | 1 (outer product);</span>
+<span class="c"># ARCH = wse3 | wse2.     e.g.  P=6 T=16 KERNEL=1 ARCH=wse2 bash commands.sh</span>
+set -e
+P=${P:-4}; T=${T:-8}; Mt=${Mt:-$T}; Kt=${Kt:-$T}; Nt=${Nt:-$T}; KERNEL=${KERNEL:-0}
+cslc --arch=${ARCH:-wse3} ./<span class="k">layout</span>.csl --fabric-dims=$((P+7)),$((P+2)) --fabric-offsets=4,1 \
+  --params=P:$P,Mt:$Mt,Kt:$Kt,Nt:$Nt,kernel:$KERNEL -o out --memcpy --channels 1
+cs_python run.py --name out</code></pre>
+<div class="filename">course/programs/06-summa/expected_output.txt</div>
+<pre class="output"><code>[x simulated cycles, WSE-3]</code></pre>
+<p>The result matches numpy to <code>rtol = 1e-5</code> on both chips <span class="tag measured">Measured</span>; the summation order differs from numpy's, so it is not bit-identical. The fabric is 11 × 6 for P = 4: the rectangle plus memcpy's 7 columns and 2 rows (<a href="07-host-io.html">Chapter 7</a>).</p>
+
+<h2 id="measure">Measurements and the compute-bound regime</h2>
+<p>All numbers are TSC cycles on the far-corner PE (P−1, P−1), SDK 2.10.1 simulator, square tiles T = Mt = Kt = Nt <span class="tag measured">Measured</span>. "Broadcast" is the time from issuing the two broadcasts to the start of <code>compute</code>, summed over the steps; it includes the library's set-up and teardown and the wait for the slower of the two networks. "Compute" is the time inside <code>compute</code>. The kernel time on the other PEs differs by less than 1% (the run prints the min and max).</p>
+<div class="table-wrap"><table id="mtab">
+<tr><th>Chip, kernel</th><th>P</th><th>T</th><th>Kernel cycles</th><th>Broadcast</th><th>Compute</th><th>Compute per step</th><th>Ideal T³</th></tr>
+<tbody id="mtab-body"></tbody>
+</table></div>
+
+<div class="widget" id="ch">
+<h4>Cycles per step: measured against the model</h4>
+<p class="hint">Points are measured (P = 4). Lines are the fitted models from the text, and the dashed line is the compute-bound ideal: one f32 multiply-add per cycle per PE, T³ cycles per step (<code>@fmacs</code> streams 1 element per cycle on both chips when its operands do not collide, <a href="06-dsds.html">Chapter 6</a>). Drag the tile size to read off the split; hover a point for its numbers.</p>
+<div class="controls">
+<label>chip <select id="ch-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>y axis <select id="ch-y"><option value="step">cycles per step</option><option value="mac">cycles per multiply-add</option></select></label>
+<label>tile T <input type="range" id="ch-t" min="4" max="45" value="16"> <span id="ch-tv" class="mono"></span></label>
+</div>
+<svg id="ch-svg" viewBox="0 0 700 330" width="700" role="img" aria-label="Cycles per step versus tile size"></svg>
+<div class="readout" id="ch-out"></div>
+</div>
+
+<h3>What the numbers say</h3>
+<ul id="findings">
+
+</ul>
+
+
+
+<h2 id="design">A design method, applied to this kernel</h2>
+<p>Each lab so far handed you a finished program. Here is the procedure behind one, using the budgets from Chapters 4, 5, 7 and 10 in order. Do it on paper before writing CSL; every line below took one compile-and-measure cycle to discover the hard way.</p>
+<div class="table-wrap"><table class="budget">
+<tr><th>Step</th><th>Question</th><th>For 06-summa</th></tr>
+<tr><td>1. Placement</td><td>Which PE owns which data, and what must move?</td><td>PE (px, py) owns block (py, px) of A, B, C. C never moves; per step, A tiles move along rows and B tiles down columns. No reduction.</td></tr>
+<tr><td>2. Memory</td><td>Bytes per PE, against what the linker gives you</td><td>4 bytes × (2·Mt·Kt + 2·Kt·Nt + Mt·Nt), +Mt·Nt for kernel 1, + 6·(3P + 2) bytes of timestamps. Library and memcpy code come first: measured limits below.</td></tr>
+<tr><td>3. Colors</td><td>One per distinct route pattern through a PE; 20–23 are taken</td><td>4: two per axis for the library (colors 0–3). Routes change at run time, so the count does not grow with P.</td></tr>
+<tr><td>4. Task IDs</td><td>Local tasks in 8–20; never 29</td><td>8: library FSM + lock per axis (8–11), exit, compute, x_done, y_done (12–15). Task 29 is the library's teardown handler.</td></tr>
+<tr><td>5. Queues and microthreads</td><td>0/1 are memcpy's; one microthread per concurrent fabric op</td><td>Queues 2, 4 (row) and 3, 5 (column). Two moves run at once, on microthreads 2 and 3. Same IDs on both chips.</td></tr>
+<tr><td>6. Fabric</td><td>Rectangle + memcpy frame</td><td>(P + 7) × (P + 2), offsets 4, 1.</td></tr>
+<tr><td>7. Cycle model</td><td>Predict before you measure</td><td>Per step ≈ broadcast + compute, with the fits above; kernel ≈ P × step. Write the prediction down.</td></tr>
+<tr><td>8. Code and validate</td><td>Smallest size first, check against numpy</td><td>P = 2, T = 4 runs in seconds; a layout bug shows up as a wrong C, not a crash.</td></tr>
+<tr><td>9. Measure</td><td>TSC on one PE, split the phases, compare with the model</td><td>Stamps per step; the model was off by 2× on compute until the operand collision was found.</td></tr>
+</table></div>
+
+<div class="widget" id="bud">
+<h4>Budget calculator</h4>
+<p class="hint">Change the grid, the tile sizes, the kernel and the chip. Memory uses the measured link limits of this program (largest square tile that linked, and smallest that failed); between them the answer is "try it". Cycles use the fits from this chapter. Wafer-scale lines are <span class="tag derived">Derived</span>: they assume the SDK-visible WSE-2 fabric (750 × 994, Chapter 13) and the clock you pick, and leave out host I/O.</p>
+<div class="controls">
+<label>P <input type="number" id="b-p" min="2" max="743" value="4" style="width:5.5em"></label>
+<label>Mt <input type="number" id="b-m" min="1" max="64" value="8" style="width:4.5em"></label>
+<label>Kt <input type="number" id="b-k" min="1" max="64" value="8" style="width:4.5em"></label>
+<label>Nt <input type="number" id="b-n" min="1" max="64" value="8" style="width:4.5em"></label>
+<label>kernel <select id="b-ker"><option value="0">0 · column @fmacs</option><option value="1">1 · outer product</option></select></label>
+<label>chip <select id="b-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>clock <select id="b-clk"><option value="0.85">850 MHz (SDK assumption)</option><option value="1.1">1.1 GHz (WSE-2, HC22)</option></select></label>
+</div>
+<svg id="bud-mem" viewBox="0 0 680 92" width="680" role="img" aria-label="Memory budget bar"></svg>
+<div class="readout" id="b-out"></div>
+</div>
+
+<h2 id="scale">Scaling up <span class="tag derived">Derived</span></h2>
+
+
+<h2 id="ex">Exercises</h2>
+<ol>
+
+</ol>
+
+<div class="quiz">
+<h3>Check yourself</h3>
+<details><summary>Why does SUMMA need no reduction, while Chapter 12's GEMV did?</summary><p>The owner of a C block accumulates every term of its own sum: at step s it receives the A and B blocks it needs. In the GEMV the A blocks stayed put and each PE produced a partial sum of a y block that lived on several PEs, so the partials had to be added along the row.</p></details>
+<details><summary>Why does the library rewrite routes before every broadcast instead of declaring them in the layout?</summary><p>The root moves every step, so the direction each router receives from changes. A static route has one input direction (on WSE-3 at most one is allowed), so static routes would need one color per possible root. Rewriting one color at run time keeps it to two colors per axis.</p></details>
+<details><summary>What does the teardown wavelet protect against?</summary><p>Rewriting a router while wavelets of the previous broadcast are still passing through it. The root sends the teardown after its last data wavelet, on the same route, so each router enters teardown only after the data has gone by, and the next <code>broadcast()</code> may then reconfigure it.</p></details>
+<details><summary><code>x_done</code> runs, then <code>y_done</code>. How many times does <code>compute</code> run, and what if the order is reversed?</summary><p>Once, either way. <code>compute</code> starts blocked; one callback activates it and the other unblocks it, and the task picker runs it only when both bits are set. <code>compute</code> blocks itself again before starting the next step.</p></details>
+<details><summary>Kernel 0 at T = 32 needs 101 cycles per <code>@fmacs</code> of 32 elements. Where do they go?</summary><p>About 2 cycles per element (64), because the two source streams collide in the same memory bank so <code>@fmacs</code> runs at half speed, plus about 37 cycles per instruction for the loop: reading the scalar, moving the DSD and starting the op.</p></details>
+<details><summary>Doubling P at fixed tile size: what happens to the time per step and to the total?</summary><p>The time per step stays almost constant (the multicast's hop cost is tiny), so the kernel takes twice as long in total, for a matrix twice as large in each dimension: 8× the work in 2× the time, on 4× the PEs.</p></details>
+<details><summary>Your design needs a third axis instance of the library. What runs out first?</summary><p>Check each budget: 2 more colors (fine), 2 more task IDs (fine), and 2 more queues and a microthread for a third concurrent move. On WSE-3, queues 0–1 are memcpy's and 2–5 are taken, so you need queues 6/7 and their microthreads; on WSE-2 the queue and microthread counts are smaller (Chapter 5), so that is where to look first.</p></details>
+</div>
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  const T = (tag, attrs, parent, text) => { const e = el(tag, attrs, parent); if (text !== undefined) e.textContent = text; return e; };
+  const fmt = v => Math.round(v).toLocaleString("en-US");
+
+  // ---------- measured data (TSC, far-corner PE; SDK 2.10.1 simulator) ----------
+  // key: chip|kernel|P|T  ->  [kernel total, broadcast sum, compute sum]
+  const RUNS = {"wse3|0|2|8": [7188, 1253, 5806], "wse3|0|4|4": [5011, 2310, 2492], "wse3|0|4|8": [14431, 2610, 11612], "wse3|0|4|16": [75682, 4133, 71340], "wse3|0|4|24": [208294, 6693, 201392], "wse3|0|4|32": [425382, 10277, 414896], "wse3|0|6|8": [21624, 3917, 17418], "wse3|0|8|8": [28828, 5235, 23224], "wse3|1|4|4": [4374, 2313, 1852], "wse3|1|4|8": [9186, 2601, 6376], "wse3|1|4|16": [39998, 4133, 35656], "wse3|1|4|24": [117982, 6693, 111080], "wse3|1|4|32": [266046, 10277, 255560], "wse2|0|2|8": [6791, 1126, 5536], "wse2|0|4|4": [4341, 1840, 2272], "wse2|0|4|8": [13514, 2233, 11072], "wse2|0|4|16": [68318, 3765, 64344], "wse2|0|8|8": [26967, 4454, 22144], "wse2|1|4|8": [10126, 2233, 7684]};
+  // per-step fits (see text): broadcast = b0 + b1 * words, k0 = Kt*Nt*(a*Mt + c), k1 = Kt*(a*Mt*Nt + c)
+  const FIT = {"wse3": {"b": [520, 1.0], "k0": [2.32, 29.6], "k1": [1.874, 77], "cross": "9"}, "wse2": {"b": [429, 1.0], "k0": [2.0, 28], "k1": [2.5, 80], "cross": "9"}};
+  const bc = (chip, w) => FIT[chip].b[0] + FIT[chip].b[1] * w;
+  const comp = (chip, ker, m, k, n) => ker == 0 ? k * n * (FIT[chip].k0[0] * m + FIT[chip].k0[1]) : k * (FIT[chip].k1[0] * m * n + FIT[chip].k1[1]);
+
+  // ---------- measurement table ----------
+  const tb = $("#mtab-body");
+  Object.keys(RUNS).forEach(key => {
+    const [chip, ker, P, t] = key.split("|"), [tot, b, c] = RUNS[key], Tn = +t;
+    const tr = el("tr", { "data-k": key }, tb);
+    tr.innerHTML = `<td>${chip === "wse3" ? "WSE-3" : "WSE-2"}, kernel ${ker}</td><td>${P}</td><td>${t}</td><td>${fmt(tot)}</td><td>${fmt(b)}</td><td>${fmt(c)}</td><td><strong>${fmt(c / P)}</strong></td><td>${fmt(Tn ** 3)}</td>`;
+  });
+
+  // ---------- host layout figure ----------
+  (function () {
+    const s = $("#lay-svg"), cell = 26;
+    const Pg = 2, tm = 2, n = 4;
+    const col = (py, px) => ["acc", "blu", "grn", "pur"][py * Pg + px];
+    T("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700 }, s, "A (4 × 4), row-major index");
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+      const py = Math.floor(r / tm), px = Math.floor(c / tm);
+      el("rect", { x: 20 + c * cell, y: 34 + r * cell, width: cell - 2, height: cell - 2, rx: 3, class: col(py, px) }, s);
+      T("text", { x: 20 + c * cell + 12, y: 34 + r * cell + 17, "text-anchor": "middle", "font-size": 12, class: "mono" }, s, String(r * n + c));
+    }
+    T("text", { x: 20, y: 160, "font-size": 12, class: "muted" }, s, "colour = owning PE");
+    // per-PE tiles
+    T("text", { x: 180, y: 22, "font-size": 13, "font-weight": 700 }, s, "each PE's tile, column-major in memory");
+    const order = [];
+    for (let py = 0; py < Pg; py++) for (let px = 0; px < Pg; px++) {
+      const vals = [];
+      for (let c = 0; c < tm; c++) for (let r = 0; r < tm; r++) vals.push((py * tm + r) * n + px * tm + c);
+      order.push({ py, px, vals });
+      const x0 = 180 + px * 120, y0 = 34 + py * 66;
+      T("text", { x: x0, y: y0 + 12, "font-size": 12 }, s, `PE (${px},${py})`);
+      vals.forEach((v, i) => { el("rect", { x: x0 + 52 + i * 15, y: y0, width: 14, height: 18, rx: 2, class: col(py, px) }, s); T("text", { x: x0 + 59 + i * 15, y: y0 + 13, "text-anchor": "middle", "font-size": 9, class: "mono" }, s, String(v)); });
+    }
+    T("text", { x: 180, y: 172, "font-size": 12, class: "muted" }, s, "PE (px, py): px = block column, py = block row");
+    // wire order
+    T("text", { x: 20, y: 196, "font-size": 13, "font-weight": 700 }, s, "host array sent by one memcpy_h2d(w = h = 2, 4 words per PE):");
+    let i = 0;
+    order.forEach(o => o.vals.forEach(v => { el("rect", { x: 20 + i * 42, y: 206, width: 40, height: 20, rx: 3, class: col(o.py, o.px) }, s); T("text", { x: 40 + i * 42, y: 220, "text-anchor": "middle", "font-size": 12, class: "mono" }, s, String(v)); i++; }));
+  })();
+
+  // ---------- SUMMA stepper ----------
+  const st = { s: 0, phase: 0, sel: [1, 2], timer: null };
+  function stDraw() {
+    const svg = $("#st-svg"); svg.innerHTML = "";
+    const P = +$("#st-p").value, t = +$("#st-t").value;
+    if (st.sel[0] >= P || st.sel[1] >= P) st.sel = [P - 1, P - 1];
+    const G = 280 / P, X0 = 20, Y0 = 34, s = st.s, ph = st.phase; // phase 0 = broadcast, 1 = compute
+    T("text", { x: X0, y: 20, "font-size": 13, "font-weight": 700 }, svg, `PE grid · step ${s} of ${P - 1} · ${ph ? "compute" : "broadcast"}`);
+    const done = (px, py) => Math.min(1, (s + ph) / P);
+    for (let py = 0; py < P; py++) for (let px = 0; px < P; px++) {
+      const x = X0 + px * G, y = Y0 + py * G, isA = px === s, isB = py === s, sel = st.sel[0] === px && st.sel[1] === py;
+      const g = el("g", { style: "cursor:pointer" }, svg);
+      el("rect", { x: x + 3, y: y + 3, width: G - 6, height: G - 6, rx: 5, class: "box", "stroke-width": sel ? 3 : 1, stroke: sel ? cssVar("--text") : undefined }, g);
+      const f = done(px, py);
+      el("rect", { x: x + 3, y: y + 3 + (G - 6) * (1 - f), width: G - 6, height: (G - 6) * f, rx: 5, class: "grn", opacity: .55 }, g);
+      if (isA) el("rect", { x: x + 6, y: y + 6, width: (G - 12) / 2 - 2, height: G * .3, rx: 3, class: "acc" }, g);
+      if (isB) el("rect", { x: x + G / 2 + 1, y: y + 6, width: (G - 12) / 2 - 2, height: G * .3, rx: 3, class: "blu" }, g);
+      if (G > 50) T("text", { x: x + G / 2, y: y + G - 10, "text-anchor": "middle", "font-size": 11, class: "mono halo-txt" }, g, `${px},${py}`);
+      g.addEventListener("click", () => { st.sel = [px, py]; stDraw(); });
+    }
+    if (!ph) { // routes
+      for (let py = 0; py < P; py++) for (let px = 0; px < P; px++) {
+        const cx = X0 + px * G + G / 2, cy = Y0 + py * G + G / 2;
+        if (px !== s) { const dir = px > s ? 1 : -1; el("line", { x1: cx - dir * G * .5, y1: cy - 6, x2: cx - dir * G * .12, y2: cy - 6, class: "s-acc", "stroke-width": 2.5 }, svg); }
+        if (py !== s) { const dir = py > s ? 1 : -1; el("line", { x1: cx + 6, y1: cy - dir * G * .5, x2: cx + 6, y2: cy - dir * G * .12, class: "s-blu", "stroke-width": 2.5 }, svg); }
+      }
+    }
+    // matrices
+    const M0 = 360, MS = 120, b = MS / P;
+    const mat = (x0, y0, name, hi) => {
+      T("text", { x: x0, y: y0 - 8, "font-size": 13, "font-weight": 700 }, svg, name);
+      for (let r = 0; r < P; r++) for (let c = 0; c < P; c++) el("rect", { x: x0 + c * b, y: y0 + r * b, width: b - 1.5, height: b - 1.5, rx: 2, class: hi(r, c) }, svg);
+    };
+    const [sx, sy] = st.sel;
+    mat(M0, 50, "A", (r, c) => c === s ? (r === sy ? "acc" : "acc") : "box");
+    T("text", { x: M0 + MS + 16, y: 50 + MS / 2 + 6, "font-size": 20 }, svg, "·");
+    mat(M0 + MS + 40, 50, "B", (r, c) => r === s ? "blu" : "box");
+    mat(M0 + 60, 200, "C += A(:, s) · B(s, :)", (r, c) => (r === sy && c === sx) ? "pur" : "grn");
+    // highlight selected block terms
+    el("rect", { x: M0 + s * b - 1, y: 50 + sy * b - 1, width: b + 1, height: b + 1, fill: "none", class: "stroke", "stroke-width": 2.5 }, svg);
+    el("rect", { x: M0 + MS + 40 + sx * b - 1, y: 50 + s * b - 1, width: b + 1, height: b + 1, fill: "none", class: "stroke", "stroke-width": 2.5 }, svg);
+    // legend
+    const L = 20 + 300 + 4;
+    el("rect", { x: 20, y: 318, width: 10, height: 10, class: "acc" }, svg); T("text", { x: 34, y: 327, "font-size": 11 }, svg, "A tile sent along the row");
+    el("rect", { x: 190, y: 318, width: 10, height: 10, class: "blu" }, svg); T("text", { x: 204, y: 327, "font-size": 11 }, svg, "B tile sent down the column");
+    el("rect", { x: 370, y: 318, width: 10, height: 10, class: "grn" }, svg); T("text", { x: 384, y: 327, "font-size": 11 }, svg, "C done (fraction)");
+    el("rect", { x: 500, y: 318, width: 10, height: 10, class: "pur" }, svg); T("text", { x: 514, y: 327, "font-size": 11 }, svg, "selected PE's C block");
+    const bw = bc("wse3", 2 * t * t), cw = comp("wse3", 0, t, t, t);
+    $("#st-out").textContent =
+      `PE (${sx},${sy}) at step ${s}: ` + (sx === s ? "sends its own A tile along row " + sy : `receives A(${sy},${s}) from PE (${s},${sy})`) + "; " +
+      (sy === s ? "sends its own B tile down column " + sx : `receives B(${s},${sx}) from PE (${sx},${s})`) +
+      `\n${ph ? "computing" : "then computes"} C(${sy},${sx}) += A(${sy},${s}) · B(${s},${sx}): ${fmt(t ** 3)} multiply-adds\n` +
+      `per step, T = ${t}: ${2 * t * t} words in, broadcast ≈ ${fmt(bw)} + compute ≈ ${fmt(cw)} cycles (kernel 0, WSE-3 fit); whole kernel ≈ ${fmt(P * (bw + cw))}`;
+  }
+  function stAdvance() { const P = +$("#st-p").value; if (st.phase === 0) st.phase = 1; else { st.phase = 0; st.s = (st.s + 1) % P; } stDraw(); }
+  function stStop() { if (st.timer) clearInterval(st.timer); st.timer = null; $("#st-play").textContent = "Play"; }
+  $("#st-play").onclick = () => { if (st.timer) { stStop(); return; } $("#st-play").textContent = "Pause"; st.timer = setInterval(stAdvance, 900); };
+  $("#st-next").onclick = () => { stStop(); stAdvance(); };
+  $("#st-reset").onclick = () => { stStop(); st.s = 0; st.phase = 0; stDraw(); };
+  $("#st-p").onchange = () => { stStop(); st.s = 0; st.phase = 0; stDraw(); };
+  $("#st-t").onchange = stDraw;
+  stDraw();
+
+  // ---------- chart: measured vs model ----------
+  let chBase = "";
+  function chHover(h) {
+    $("#ch-out").textContent = chBase + `\nmeasured point: ${h.nm}, T = ${h.Tn}: ${fmt(h.v)} cycles per step (P = 4, ${h.key.split("|")[0].toUpperCase()})`;
+    document.querySelectorAll("#mtab tr").forEach(r => r.style.background = r.dataset.k === h.key ? cssVar("--accent-soft") : "");
+  }
+  function chDraw() {
+    const svg = $("#ch-svg"); svg.innerHTML = "";
+    const chip = $("#ch-chip").value, perMac = $("#ch-y").value === "mac", tSel = +$("#ch-t").value;
+    $("#ch-tv").textContent = tSel;
+    const X0 = 70, X1 = 520, Y0 = 290, Y1 = 20, tmin = 4, tmax = 45;
+    const lx = t => X0 + (Math.log(t) - Math.log(tmin)) / (Math.log(tmax) - Math.log(tmin)) * (X1 - X0);
+    const ylo = perMac ? 0.5 : 100, yhi = perMac ? 100 : 3e5;
+    const ly = v => Y0 - (Math.log(Math.max(ylo, Math.min(yhi, v))) - Math.log(ylo)) / (Math.log(yhi) - Math.log(ylo)) * (Y0 - Y1);
+    const norm = (v, t) => perMac ? v / t ** 3 : v;
+    // axes
+    [4, 8, 16, 32, 45].forEach(t => { el("line", { x1: lx(t), x2: lx(t), y1: Y1, y2: Y0, class: "line" }, svg); T("text", { x: lx(t), y: Y0 + 16, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg, t); });
+    (perMac ? [1, 2, 5, 10, 20, 50, 100] : [100, 1e3, 1e4, 1e5]).forEach(v => { el("line", { x1: X0, x2: X1, y1: ly(v), y2: ly(v), class: "line" }, svg); T("text", { x: X0 - 6, y: ly(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg, v >= 1000 ? (v / 1000) + "k" : v); });
+    T("text", { x: (X0 + X1) / 2, y: Y0 + 34, "text-anchor": "middle", "font-size": 12, class: "muted" }, svg, "tile size T (Mt = Kt = Nt), log scale");
+    T("text", { x: 16, y: (Y0 + Y1) / 2, "text-anchor": "middle", "font-size": 12, class: "muted", transform: `rotate(-90 16 ${(Y0 + Y1) / 2})` }, svg, perMac ? "cycles per multiply-add (log)" : "cycles per step (log)");
+    const series = [
+      { k: "b", name: "broadcast (fit)", cls: "s-pur", f: t => bc(chip, 2 * t * t) },
+      { k: "0", name: "compute, kernel 0 (fit)", cls: "s-acc", f: t => comp(chip, 0, t, t, t) },
+      { k: "1", name: "compute, kernel 1 (fit)", cls: "s-blu", f: t => comp(chip, 1, t, t, t) },
+      { k: "i", name: "ideal: T³ (1 MAC/cycle)", cls: "s-grn", f: t => t ** 3, dash: "6 4" },
+    ];
+    series.forEach((sr, i) => {
+      const pts = []; for (let t = tmin; t <= tmax; t += 0.5) pts.push(`${lx(t)},${ly(norm(sr.f(t), t))}`);
+      el("polyline", { points: pts.join(" "), fill: "none", class: sr.cls, "stroke-width": 2, "stroke-dasharray": sr.dash || "" }, svg);
+      el("line", { x1: X1 + 20, x2: X1 + 44, y1: 40 + i * 22, y2: 40 + i * 22, class: sr.cls, "stroke-width": 2.5, "stroke-dasharray": sr.dash || "" }, svg);
+      T("text", { x: X1 + 50, y: 44 + i * 22, "font-size": 11 }, svg, sr.name);
+    });
+    el("circle", { cx: X1 + 32, cy: 40 + 4 * 22, r: 4, class: "f-acc" }, svg); T("text", { x: X1 + 50, y: 44 + 4 * 22, "font-size": 11 }, svg, "measured (P = 4)");
+    // measured points
+    Object.keys(RUNS).forEach(key => {
+      const [c, ker, P, t] = key.split("|"); if (c !== chip || +P !== 4) return;
+      const [tot, b, cc] = RUNS[key], Tn = +t;
+      const pts = [[b / P, "f-pur", "broadcast"], [cc / P, ker === "0" ? "f-acc" : "f-blu", "compute, kernel " + ker]];
+      if (ker === "1" && RUNS[`${c}|0|4|${t}`]) pts.shift(); // broadcast drawn once
+      pts.forEach(([v, cls, nm]) => {
+        const ci = el("circle", { cx: lx(Tn), cy: ly(norm(v, Tn)), r: 5, class: cls, stroke: cssVar("--surface"), "stroke-width": 1.5, style: "cursor:pointer" }, svg);
+        ci.addEventListener("mouseenter", () => chHover({ key, nm, v, Tn }));
+      });
+    });
+    el("line", { x1: lx(tSel), x2: lx(tSel), y1: Y1, y2: Y0, class: "s-red", "stroke-width": 1.2, "stroke-dasharray": "3 3" }, svg);
+    const b = bc(chip, 2 * tSel * tSel), c0 = comp(chip, 0, tSel, tSel, tSel), c1 = comp(chip, 1, tSel, tSel, tSel), id = tSel ** 3;
+    let txt = `${chip.toUpperCase()}, T = ${tSel}, per step (fits): broadcast ${fmt(b)} · compute kernel 0 ${fmt(c0)} (${(100 * id / c0).toFixed(0)}% of ideal) · kernel 1 ${fmt(c1)} (${(100 * id / c1).toFixed(0)}%) · ideal ${fmt(id)}` +
+      `\ncompute share of a step: kernel 0 ${(100 * c0 / (b + c0)).toFixed(0)}%, kernel 1 ${(100 * c1 / (b + c1)).toFixed(0)}%; ideal compute passes broadcast at T ≈ ${chip === "wse3" ? FIT.wse3.cross : FIT.wse2.cross}`;
+    chBase = txt;
+    $("#ch-out").textContent = txt;
+  }
+  ["#ch-chip", "#ch-y"].forEach(s => $(s).onchange = () => chDraw());
+  $("#ch-t").oninput = () => chDraw();
+  chDraw();
+
+  // ---------- budget calculator ----------
+  // measured link limits for square tiles, bytes of the 5 (or 6) tile arrays: [largest ok, smallest failing]
+  const LIM = {"wse3": {"0": [40500, 42320], "1": [40344, 42336]}, "wse2": {"0": [42320, 44180], "1": [36504, 38400]}};
+  function budDraw() {
+    const clampI = (id, lo, hi) => { let v = Math.round(+$(id).value); if (!isFinite(v)) v = lo; v = Math.max(lo, Math.min(hi, v)); return v; };
+    const P = clampI("#b-p", 2, 743), m = clampI("#b-m", 1, 64), k = clampI("#b-k", 1, 64), n = clampI("#b-n", 1, 64);
+    const ker = +$("#b-ker").value, chip = $("#b-chip").value, clk = +$("#b-clk").value;
+    const parts = [["A tile", 4 * m * k, "acc"], ["A buffer", 4 * m * k, "acc"], ["B tile", 4 * k * n, "blu"], ["B buffer", 4 * k * n, "blu"], ["C tile", 4 * m * n, "grn"]];
+    if (ker === 1) parts.push(["product tile", 4 * m * n, "pur"]);
+    const ts = 6 * (3 * P + 2); parts.push(["timestamps", ts, "amb"]);
+    const arr = parts.reduce((a, p) => a + p[1], 0), tiles = arr - ts;
+    const [okB, failB] = LIM[chip][ker];
+    const svg = $("#bud-mem"); svg.innerHTML = "";
+    const X0 = 10, W = 660, scale = W / 49152;
+    el("rect", { x: X0, y: 20, width: W, height: 30, rx: 4, class: "box" }, svg);
+    let x = X0;
+    parts.forEach(p => { const w = p[1] * scale; el("rect", { x, y: 20, width: Math.max(0.5, w), height: 30, class: p[2] + " seg" }, svg); if (w > 46) T("text", { x: x + w / 2, y: 40, "text-anchor": "middle", "font-size": 10 }, svg, p[0]); x += w; });
+    [[okB, "s-grn", "largest that linked"], [failB, "s-red", "smallest that failed"]].forEach(([v, cls, nm], i) => {
+      el("line", { x1: X0 + v * scale, x2: X0 + v * scale, y1: 14, y2: 56, class: cls, "stroke-width": 2 }, svg);
+      T("text", { x: X0 + v * scale + (i ? 4 : -4), y: 70 + i * 14, "text-anchor": i ? "start" : "end", "font-size": 10, class: "muted" }, svg, `${nm} ${(v / 1024).toFixed(1)} KB`);
+    });
+    T("text", { x: X0, y: 12, "font-size": 11, class: "muted" }, svg, "48 KB of PE memory (code, task table, library and memcpy buffers not drawn)");
+    const fit = tiles <= okB ? "fits (at or below a size that linked)" : tiles >= failB ? "does NOT fit (at or above a size that failed)" : "between measured limits: try it";
+    const b = bc(chip, m * k + k * n), c = comp(chip, ker, m, k, n), stepC = b + c, tot = P * stepC;
+    const flops = 2 * (m * P) * (k * P) * (n * P), sec = tot / (clk * 1e9);
+    $("#b-out").textContent =
+      `memory: ${fmt(tiles)} B of tiles + ${ts} B timestamps → ${fit}\n` +
+      `colors 4 (0–3) · local task IDs 8–15 · queues 2–5 · microthreads 2, 3 · fabric ${P + 7} × ${P + 2}${P > 743 ? " (too big)" : ""}\n` +
+      `per step: broadcast ≈ ${fmt(b)} + compute ≈ ${fmt(c)} = ${fmt(stepC)} cycles; ideal compute ${fmt(m * k * n)} (${(100 * m * k * n / c).toFixed(0)}% reached)\n` +
+      `kernel ≈ ${fmt(tot)} cycles = ${(sec * 1e6).toFixed(1)} µs at ${clk} GHz for C ${m * P} × ${n * P} (K = ${k * P})\n` +
+      `→ ${(flops / sec / 1e12).toFixed(2)} TFLOP/s f32 on ${fmt(P * P)} PEs; peak at 1 MAC/cycle would be ${(2 * P * P * clk / 1e3).toFixed(2)} TFLOP/s  [Derived]`;
+  }
+  ["#b-p", "#b-m", "#b-k", "#b-n"].forEach(s => $(s).oninput = budDraw);
+  ["#b-ker", "#b-chip", "#b-clk"].forEach(s => $(s).onchange = budDraw);
+  budDraw();
+})();
+
+</script>
+</body>
+</html>

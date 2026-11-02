@@ -1,0 +1,8 @@
+C = A·B with A 32x32, B 32x32 on 4x4 PEs, tiles 8x8 · 8x8; C[:2, :4] =
+[[7.0824 7.5491 7.788  8.825 ]
+ [7.5541 8.3549 7.4368 8.2489]]
+kernel time (TSC, per PE, cycles): min 14370, max 14462
+PE (3,3) over 4 steps: total 14422 = broadcast wait 2601 + compute 11612 + other 209
+compute per step 2903 cycles for 512 multiply-adds (64 @fmacs of length 8)
+SUCCESS!
+[36959 simulated cycles, WSE-3]

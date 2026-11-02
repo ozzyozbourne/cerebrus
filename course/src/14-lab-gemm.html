@@ -141,10 +141,10 @@ tile_config.teardown.exit(DATA_COLOR_0);  <span class="c">// leave teardown: tra
 
 <h3>What the numbers say</h3>
 <ul id="findings">
-<!--FINDINGS-->
+
 </ul>
 
-<!--BANK-->
+
 
 <h2 id="design">A design method, applied to this kernel</h2>
 <p>Each lab so far handed you a finished program. Here is the procedure behind one, using the budgets from Chapters 4, 5, 7 and 10 in order. Do it on paper before writing CSL; every line below took one compile-and-measure cycle to discover the hard way.</p>
@@ -178,11 +178,11 @@ tile_config.teardown.exit(DATA_COLOR_0);  <span class="c">// leave teardown: tra
 </div>
 
 <h2 id="scale">Scaling up <span class="tag derived">Derived</span></h2>
-<!--SCALE-->
+
 
 <h2 id="ex">Exercises</h2>
 <ol>
-<!--EXERCISES-->
+
 </ol>
 
 <div class="quiz">
@@ -198,7 +198,211 @@ tile_config.teardown.exit(DATA_COLOR_0);  <span class="c">// leave teardown: tra
 </main>
 <script src="assets/course.js"></script>
 <script>
-/*SCRIPT*/
+(function () {
+  const T = (tag, attrs, parent, text) => { const e = el(tag, attrs, parent); if (text !== undefined) e.textContent = text; return e; };
+  const fmt = v => Math.round(v).toLocaleString("en-US");
+
+  // ---------- measured data (TSC, far-corner PE; SDK 2.10.1 simulator) ----------
+  // key: chip|kernel|P|T  ->  [kernel total, broadcast sum, compute sum]
+  const RUNS = {"wse3|0|2|8": [7188, 1253, 5806], "wse3|0|4|4": [5011, 2310, 2492], "wse3|0|4|8": [14431, 2610, 11612], "wse3|0|4|16": [75682, 4133, 71340], "wse3|0|4|24": [208294, 6693, 201392], "wse3|0|4|32": [425382, 10277, 414896], "wse3|0|6|8": [21624, 3917, 17418], "wse3|0|8|8": [28828, 5235, 23224], "wse3|1|4|4": [4374, 2313, 1852], "wse3|1|4|8": [9186, 2601, 6376], "wse3|1|4|16": [39998, 4133, 35656], "wse3|1|4|24": [117982, 6693, 111080], "wse3|1|4|32": [266046, 10277, 255560], "wse2|0|2|8": [6791, 1126, 5536], "wse2|0|4|4": [4341, 1840, 2272], "wse2|0|4|8": [13514, 2233, 11072], "wse2|0|4|16": [68318, 3765, 64344], "wse2|0|8|8": [26967, 4454, 22144], "wse2|1|4|8": [10126, 2233, 7684]};
+  // per-step fits (see text): broadcast = b0 + b1 * words, k0 = Kt*Nt*(a*Mt + c), k1 = Kt*(a*Mt*Nt + c)
+  const FIT = {"wse3": {"b": [520, 1.0], "k0": [2.32, 29.6], "k1": [1.874, 77], "cross": "9"}, "wse2": {"b": [429, 1.0], "k0": [2.0, 28], "k1": [2.5, 80], "cross": "9"}};
+  const bc = (chip, w) => FIT[chip].b[0] + FIT[chip].b[1] * w;
+  const comp = (chip, ker, m, k, n) => ker == 0 ? k * n * (FIT[chip].k0[0] * m + FIT[chip].k0[1]) : k * (FIT[chip].k1[0] * m * n + FIT[chip].k1[1]);
+
+  // ---------- measurement table ----------
+  const tb = $("#mtab-body");
+  Object.keys(RUNS).forEach(key => {
+    const [chip, ker, P, t] = key.split("|"), [tot, b, c] = RUNS[key], Tn = +t;
+    const tr = el("tr", { "data-k": key }, tb);
+    tr.innerHTML = `<td>${chip === "wse3" ? "WSE-3" : "WSE-2"}, kernel ${ker}</td><td>${P}</td><td>${t}</td><td>${fmt(tot)}</td><td>${fmt(b)}</td><td>${fmt(c)}</td><td><strong>${fmt(c / P)}</strong></td><td>${fmt(Tn ** 3)}</td>`;
+  });
+
+  // ---------- host layout figure ----------
+  (function () {
+    const s = $("#lay-svg"), cell = 26;
+    const Pg = 2, tm = 2, n = 4;
+    const col = (py, px) => ["acc", "blu", "grn", "pur"][py * Pg + px];
+    T("text", { x: 20, y: 22, "font-size": 13, "font-weight": 700 }, s, "A (4 × 4), row-major index");
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+      const py = Math.floor(r / tm), px = Math.floor(c / tm);
+      el("rect", { x: 20 + c * cell, y: 34 + r * cell, width: cell - 2, height: cell - 2, rx: 3, class: col(py, px) }, s);
+      T("text", { x: 20 + c * cell + 12, y: 34 + r * cell + 17, "text-anchor": "middle", "font-size": 12, class: "mono" }, s, String(r * n + c));
+    }
+    T("text", { x: 20, y: 160, "font-size": 12, class: "muted" }, s, "colour = owning PE");
+    // per-PE tiles
+    T("text", { x: 180, y: 22, "font-size": 13, "font-weight": 700 }, s, "each PE's tile, column-major in memory");
+    const order = [];
+    for (let py = 0; py < Pg; py++) for (let px = 0; px < Pg; px++) {
+      const vals = [];
+      for (let c = 0; c < tm; c++) for (let r = 0; r < tm; r++) vals.push((py * tm + r) * n + px * tm + c);
+      order.push({ py, px, vals });
+      const x0 = 180 + px * 120, y0 = 34 + py * 66;
+      T("text", { x: x0, y: y0 + 12, "font-size": 12 }, s, `PE (${px},${py})`);
+      vals.forEach((v, i) => { el("rect", { x: x0 + 52 + i * 15, y: y0, width: 14, height: 18, rx: 2, class: col(py, px) }, s); T("text", { x: x0 + 59 + i * 15, y: y0 + 13, "text-anchor": "middle", "font-size": 9, class: "mono" }, s, String(v)); });
+    }
+    T("text", { x: 180, y: 172, "font-size": 12, class: "muted" }, s, "PE (px, py): px = block column, py = block row");
+    // wire order
+    T("text", { x: 20, y: 196, "font-size": 13, "font-weight": 700 }, s, "host array sent by one memcpy_h2d(w = h = 2, 4 words per PE):");
+    let i = 0;
+    order.forEach(o => o.vals.forEach(v => { el("rect", { x: 20 + i * 42, y: 206, width: 40, height: 20, rx: 3, class: col(o.py, o.px) }, s); T("text", { x: 40 + i * 42, y: 220, "text-anchor": "middle", "font-size": 12, class: "mono" }, s, String(v)); i++; }));
+  })();
+
+  // ---------- SUMMA stepper ----------
+  const st = { s: 0, phase: 0, sel: [1, 2], timer: null };
+  function stDraw() {
+    const svg = $("#st-svg"); svg.innerHTML = "";
+    const P = +$("#st-p").value, t = +$("#st-t").value;
+    if (st.sel[0] >= P || st.sel[1] >= P) st.sel = [P - 1, P - 1];
+    const G = 280 / P, X0 = 20, Y0 = 34, s = st.s, ph = st.phase; // phase 0 = broadcast, 1 = compute
+    T("text", { x: X0, y: 20, "font-size": 13, "font-weight": 700 }, svg, `PE grid · step ${s} of ${P - 1} · ${ph ? "compute" : "broadcast"}`);
+    const done = (px, py) => Math.min(1, (s + ph) / P);
+    for (let py = 0; py < P; py++) for (let px = 0; px < P; px++) {
+      const x = X0 + px * G, y = Y0 + py * G, isA = px === s, isB = py === s, sel = st.sel[0] === px && st.sel[1] === py;
+      const g = el("g", { style: "cursor:pointer" }, svg);
+      el("rect", { x: x + 3, y: y + 3, width: G - 6, height: G - 6, rx: 5, class: "box", "stroke-width": sel ? 3 : 1, stroke: sel ? cssVar("--text") : undefined }, g);
+      const f = done(px, py);
+      el("rect", { x: x + 3, y: y + 3 + (G - 6) * (1 - f), width: G - 6, height: (G - 6) * f, rx: 5, class: "grn", opacity: .55 }, g);
+      if (isA) el("rect", { x: x + 6, y: y + 6, width: (G - 12) / 2 - 2, height: G * .3, rx: 3, class: "acc" }, g);
+      if (isB) el("rect", { x: x + G / 2 + 1, y: y + 6, width: (G - 12) / 2 - 2, height: G * .3, rx: 3, class: "blu" }, g);
+      if (G > 50) T("text", { x: x + G / 2, y: y + G - 10, "text-anchor": "middle", "font-size": 11, class: "mono halo-txt" }, g, `${px},${py}`);
+      g.addEventListener("click", () => { st.sel = [px, py]; stDraw(); });
+    }
+    if (!ph) { // routes
+      for (let py = 0; py < P; py++) for (let px = 0; px < P; px++) {
+        const cx = X0 + px * G + G / 2, cy = Y0 + py * G + G / 2;
+        if (px !== s) { const dir = px > s ? 1 : -1; el("line", { x1: cx - dir * G * .5, y1: cy - 6, x2: cx - dir * G * .12, y2: cy - 6, class: "s-acc", "stroke-width": 2.5 }, svg); }
+        if (py !== s) { const dir = py > s ? 1 : -1; el("line", { x1: cx + 6, y1: cy - dir * G * .5, x2: cx + 6, y2: cy - dir * G * .12, class: "s-blu", "stroke-width": 2.5 }, svg); }
+      }
+    }
+    // matrices
+    const M0 = 360, MS = 120, b = MS / P;
+    const mat = (x0, y0, name, hi) => {
+      T("text", { x: x0, y: y0 - 8, "font-size": 13, "font-weight": 700 }, svg, name);
+      for (let r = 0; r < P; r++) for (let c = 0; c < P; c++) el("rect", { x: x0 + c * b, y: y0 + r * b, width: b - 1.5, height: b - 1.5, rx: 2, class: hi(r, c) }, svg);
+    };
+    const [sx, sy] = st.sel;
+    mat(M0, 50, "A", (r, c) => c === s ? (r === sy ? "acc" : "acc") : "box");
+    T("text", { x: M0 + MS + 16, y: 50 + MS / 2 + 6, "font-size": 20 }, svg, "·");
+    mat(M0 + MS + 40, 50, "B", (r, c) => r === s ? "blu" : "box");
+    mat(M0 + 60, 200, "C += A(:, s) · B(s, :)", (r, c) => (r === sy && c === sx) ? "pur" : "grn");
+    // highlight selected block terms
+    el("rect", { x: M0 + s * b - 1, y: 50 + sy * b - 1, width: b + 1, height: b + 1, fill: "none", class: "stroke", "stroke-width": 2.5 }, svg);
+    el("rect", { x: M0 + MS + 40 + sx * b - 1, y: 50 + s * b - 1, width: b + 1, height: b + 1, fill: "none", class: "stroke", "stroke-width": 2.5 }, svg);
+    // legend
+    const L = 20 + 300 + 4;
+    el("rect", { x: 20, y: 318, width: 10, height: 10, class: "acc" }, svg); T("text", { x: 34, y: 327, "font-size": 11 }, svg, "A tile sent along the row");
+    el("rect", { x: 190, y: 318, width: 10, height: 10, class: "blu" }, svg); T("text", { x: 204, y: 327, "font-size": 11 }, svg, "B tile sent down the column");
+    el("rect", { x: 370, y: 318, width: 10, height: 10, class: "grn" }, svg); T("text", { x: 384, y: 327, "font-size": 11 }, svg, "C done (fraction)");
+    el("rect", { x: 500, y: 318, width: 10, height: 10, class: "pur" }, svg); T("text", { x: 514, y: 327, "font-size": 11 }, svg, "selected PE's C block");
+    const bw = bc("wse3", 2 * t * t), cw = comp("wse3", 0, t, t, t);
+    $("#st-out").textContent =
+      `PE (${sx},${sy}) at step ${s}: ` + (sx === s ? "sends its own A tile along row " + sy : `receives A(${sy},${s}) from PE (${s},${sy})`) + "; " +
+      (sy === s ? "sends its own B tile down column " + sx : `receives B(${s},${sx}) from PE (${sx},${s})`) +
+      `\n${ph ? "computing" : "then computes"} C(${sy},${sx}) += A(${sy},${s}) · B(${s},${sx}): ${fmt(t ** 3)} multiply-adds\n` +
+      `per step, T = ${t}: ${2 * t * t} words in, broadcast ≈ ${fmt(bw)} + compute ≈ ${fmt(cw)} cycles (kernel 0, WSE-3 fit); whole kernel ≈ ${fmt(P * (bw + cw))}`;
+  }
+  function stAdvance() { const P = +$("#st-p").value; if (st.phase === 0) st.phase = 1; else { st.phase = 0; st.s = (st.s + 1) % P; } stDraw(); }
+  function stStop() { if (st.timer) clearInterval(st.timer); st.timer = null; $("#st-play").textContent = "Play"; }
+  $("#st-play").onclick = () => { if (st.timer) { stStop(); return; } $("#st-play").textContent = "Pause"; st.timer = setInterval(stAdvance, 900); };
+  $("#st-next").onclick = () => { stStop(); stAdvance(); };
+  $("#st-reset").onclick = () => { stStop(); st.s = 0; st.phase = 0; stDraw(); };
+  $("#st-p").onchange = () => { stStop(); st.s = 0; st.phase = 0; stDraw(); };
+  $("#st-t").onchange = stDraw;
+  stDraw();
+
+  // ---------- chart: measured vs model ----------
+  let chBase = "";
+  function chHover(h) {
+    $("#ch-out").textContent = chBase + `\nmeasured point: ${h.nm}, T = ${h.Tn}: ${fmt(h.v)} cycles per step (P = 4, ${h.key.split("|")[0].toUpperCase()})`;
+    document.querySelectorAll("#mtab tr").forEach(r => r.style.background = r.dataset.k === h.key ? cssVar("--accent-soft") : "");
+  }
+  function chDraw() {
+    const svg = $("#ch-svg"); svg.innerHTML = "";
+    const chip = $("#ch-chip").value, perMac = $("#ch-y").value === "mac", tSel = +$("#ch-t").value;
+    $("#ch-tv").textContent = tSel;
+    const X0 = 70, X1 = 520, Y0 = 290, Y1 = 20, tmin = 4, tmax = 45;
+    const lx = t => X0 + (Math.log(t) - Math.log(tmin)) / (Math.log(tmax) - Math.log(tmin)) * (X1 - X0);
+    const ylo = perMac ? 0.5 : 100, yhi = perMac ? 100 : 3e5;
+    const ly = v => Y0 - (Math.log(Math.max(ylo, Math.min(yhi, v))) - Math.log(ylo)) / (Math.log(yhi) - Math.log(ylo)) * (Y0 - Y1);
+    const norm = (v, t) => perMac ? v / t ** 3 : v;
+    // axes
+    [4, 8, 16, 32, 45].forEach(t => { el("line", { x1: lx(t), x2: lx(t), y1: Y1, y2: Y0, class: "line" }, svg); T("text", { x: lx(t), y: Y0 + 16, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg, t); });
+    (perMac ? [1, 2, 5, 10, 20, 50, 100] : [100, 1e3, 1e4, 1e5]).forEach(v => { el("line", { x1: X0, x2: X1, y1: ly(v), y2: ly(v), class: "line" }, svg); T("text", { x: X0 - 6, y: ly(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg, v >= 1000 ? (v / 1000) + "k" : v); });
+    T("text", { x: (X0 + X1) / 2, y: Y0 + 34, "text-anchor": "middle", "font-size": 12, class: "muted" }, svg, "tile size T (Mt = Kt = Nt), log scale");
+    T("text", { x: 16, y: (Y0 + Y1) / 2, "text-anchor": "middle", "font-size": 12, class: "muted", transform: `rotate(-90 16 ${(Y0 + Y1) / 2})` }, svg, perMac ? "cycles per multiply-add (log)" : "cycles per step (log)");
+    const series = [
+      { k: "b", name: "broadcast (fit)", cls: "s-pur", f: t => bc(chip, 2 * t * t) },
+      { k: "0", name: "compute, kernel 0 (fit)", cls: "s-acc", f: t => comp(chip, 0, t, t, t) },
+      { k: "1", name: "compute, kernel 1 (fit)", cls: "s-blu", f: t => comp(chip, 1, t, t, t) },
+      { k: "i", name: "ideal: T³ (1 MAC/cycle)", cls: "s-grn", f: t => t ** 3, dash: "6 4" },
+    ];
+    series.forEach((sr, i) => {
+      const pts = []; for (let t = tmin; t <= tmax; t += 0.5) pts.push(`${lx(t)},${ly(norm(sr.f(t), t))}`);
+      el("polyline", { points: pts.join(" "), fill: "none", class: sr.cls, "stroke-width": 2, "stroke-dasharray": sr.dash || "" }, svg);
+      el("line", { x1: X1 + 20, x2: X1 + 44, y1: 40 + i * 22, y2: 40 + i * 22, class: sr.cls, "stroke-width": 2.5, "stroke-dasharray": sr.dash || "" }, svg);
+      T("text", { x: X1 + 50, y: 44 + i * 22, "font-size": 11 }, svg, sr.name);
+    });
+    el("circle", { cx: X1 + 32, cy: 40 + 4 * 22, r: 4, class: "f-acc" }, svg); T("text", { x: X1 + 50, y: 44 + 4 * 22, "font-size": 11 }, svg, "measured (P = 4)");
+    // measured points
+    Object.keys(RUNS).forEach(key => {
+      const [c, ker, P, t] = key.split("|"); if (c !== chip || +P !== 4) return;
+      const [tot, b, cc] = RUNS[key], Tn = +t;
+      const pts = [[b / P, "f-pur", "broadcast"], [cc / P, ker === "0" ? "f-acc" : "f-blu", "compute, kernel " + ker]];
+      if (ker === "1" && RUNS[`${c}|0|4|${t}`]) pts.shift(); // broadcast drawn once
+      pts.forEach(([v, cls, nm]) => {
+        const ci = el("circle", { cx: lx(Tn), cy: ly(norm(v, Tn)), r: 5, class: cls, stroke: cssVar("--surface"), "stroke-width": 1.5, style: "cursor:pointer" }, svg);
+        ci.addEventListener("mouseenter", () => chHover({ key, nm, v, Tn }));
+      });
+    });
+    el("line", { x1: lx(tSel), x2: lx(tSel), y1: Y1, y2: Y0, class: "s-red", "stroke-width": 1.2, "stroke-dasharray": "3 3" }, svg);
+    const b = bc(chip, 2 * tSel * tSel), c0 = comp(chip, 0, tSel, tSel, tSel), c1 = comp(chip, 1, tSel, tSel, tSel), id = tSel ** 3;
+    let txt = `${chip.toUpperCase()}, T = ${tSel}, per step (fits): broadcast ${fmt(b)} · compute kernel 0 ${fmt(c0)} (${(100 * id / c0).toFixed(0)}% of ideal) · kernel 1 ${fmt(c1)} (${(100 * id / c1).toFixed(0)}%) · ideal ${fmt(id)}` +
+      `\ncompute share of a step: kernel 0 ${(100 * c0 / (b + c0)).toFixed(0)}%, kernel 1 ${(100 * c1 / (b + c1)).toFixed(0)}%; ideal compute passes broadcast at T ≈ ${chip === "wse3" ? FIT.wse3.cross : FIT.wse2.cross}`;
+    chBase = txt;
+    $("#ch-out").textContent = txt;
+  }
+  ["#ch-chip", "#ch-y"].forEach(s => $(s).onchange = () => chDraw());
+  $("#ch-t").oninput = () => chDraw();
+  chDraw();
+
+  // ---------- budget calculator ----------
+  // measured link limits for square tiles, bytes of the 5 (or 6) tile arrays: [largest ok, smallest failing]
+  const LIM = {"wse3": {"0": [40500, 42320], "1": [40344, 42336]}, "wse2": {"0": [42320, 44180], "1": [36504, 38400]}};
+  function budDraw() {
+    const clampI = (id, lo, hi) => { let v = Math.round(+$(id).value); if (!isFinite(v)) v = lo; v = Math.max(lo, Math.min(hi, v)); return v; };
+    const P = clampI("#b-p", 2, 743), m = clampI("#b-m", 1, 64), k = clampI("#b-k", 1, 64), n = clampI("#b-n", 1, 64);
+    const ker = +$("#b-ker").value, chip = $("#b-chip").value, clk = +$("#b-clk").value;
+    const parts = [["A tile", 4 * m * k, "acc"], ["A buffer", 4 * m * k, "acc"], ["B tile", 4 * k * n, "blu"], ["B buffer", 4 * k * n, "blu"], ["C tile", 4 * m * n, "grn"]];
+    if (ker === 1) parts.push(["product tile", 4 * m * n, "pur"]);
+    const ts = 6 * (3 * P + 2); parts.push(["timestamps", ts, "amb"]);
+    const arr = parts.reduce((a, p) => a + p[1], 0), tiles = arr - ts;
+    const [okB, failB] = LIM[chip][ker];
+    const svg = $("#bud-mem"); svg.innerHTML = "";
+    const X0 = 10, W = 660, scale = W / 49152;
+    el("rect", { x: X0, y: 20, width: W, height: 30, rx: 4, class: "box" }, svg);
+    let x = X0;
+    parts.forEach(p => { const w = p[1] * scale; el("rect", { x, y: 20, width: Math.max(0.5, w), height: 30, class: p[2] + " seg" }, svg); if (w > 46) T("text", { x: x + w / 2, y: 40, "text-anchor": "middle", "font-size": 10 }, svg, p[0]); x += w; });
+    [[okB, "s-grn", "largest that linked"], [failB, "s-red", "smallest that failed"]].forEach(([v, cls, nm], i) => {
+      el("line", { x1: X0 + v * scale, x2: X0 + v * scale, y1: 14, y2: 56, class: cls, "stroke-width": 2 }, svg);
+      T("text", { x: X0 + v * scale + (i ? 4 : -4), y: 70 + i * 14, "text-anchor": i ? "start" : "end", "font-size": 10, class: "muted" }, svg, `${nm} ${(v / 1024).toFixed(1)} KB`);
+    });
+    T("text", { x: X0, y: 12, "font-size": 11, class: "muted" }, svg, "48 KB of PE memory (code, task table, library and memcpy buffers not drawn)");
+    const fit = tiles <= okB ? "fits (at or below a size that linked)" : tiles >= failB ? "does NOT fit (at or above a size that failed)" : "between measured limits: try it";
+    const b = bc(chip, m * k + k * n), c = comp(chip, ker, m, k, n), stepC = b + c, tot = P * stepC;
+    const flops = 2 * (m * P) * (k * P) * (n * P), sec = tot / (clk * 1e9);
+    $("#b-out").textContent =
+      `memory: ${fmt(tiles)} B of tiles + ${ts} B timestamps → ${fit}\n` +
+      `colors 4 (0–3) · local task IDs 8–15 · queues 2–5 · microthreads 2, 3 · fabric ${P + 7} × ${P + 2}${P > 743 ? " (too big)" : ""}\n` +
+      `per step: broadcast ≈ ${fmt(b)} + compute ≈ ${fmt(c)} = ${fmt(stepC)} cycles; ideal compute ${fmt(m * k * n)} (${(100 * m * k * n / c).toFixed(0)}% reached)\n` +
+      `kernel ≈ ${fmt(tot)} cycles = ${(sec * 1e6).toFixed(1)} µs at ${clk} GHz for C ${m * P} × ${n * P} (K = ${k * P})\n` +
+      `→ ${(flops / sec / 1e12).toFixed(2)} TFLOP/s f32 on ${fmt(P * P)} PEs; peak at 1 MAC/cycle would be ${(2 * P * P * clk / 1e3).toFixed(2)} TFLOP/s  [Derived]`;
+  }
+  ["#b-p", "#b-m", "#b-k", "#b-n"].forEach(s => $(s).oninput = budDraw);
+  ["#b-ker", "#b-chip", "#b-clk"].forEach(s => $(s).onchange = budDraw);
+  budDraw();
+})();
+
 </script>
 </body>
 </html>
