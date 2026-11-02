@@ -78,7 +78,7 @@
 
 <div class="callout bug">
 <strong>The hang</strong>
-<p>Chapters 3 and 5 described this failure; here is the code that caused it. The first version used output queues 2/3 and input queues 2/3. It compiled, then <code>cs_python</code> never returned. <code>sim.log</code> showed that the simulator had already stopped with a fatal error: <code>FATAL: P5.1: … trying to term ut_instr[3], but it's not ours</code>, followed by <code>Stopping due to fatal error</code>, at cycle 2,123 on WSE-3 and 2,125 on WSE-2 (2,367 with this chapter's timing code added) <span class="tag measured">Measured</span>. It fails the same way on both chips.</p>
+<p>Chapters 3 and 5 described this failure; here is the code that caused it. The first version used output queues 2/3 and input queues 2/3. It compiled, then <code>cs_python</code> never returned. <code>sim.log</code> showed that the simulator had already stopped with a fatal error: <code>FATAL: P5.1: … trying to term ut_instr[3], but it's not ours</code>, followed by <code>Stopping due to fatal error</code>, at cycle 2,123 on WSE-3 and 2,125 on WSE-2 (2,367 and 2,148 with this chapter's timing code added) <span class="tag measured">Measured</span>. It fails the same way on both chips.</p>
 <p>The reason: an asynchronous fabric operation runs on the microthread whose ID equals its queue ID. On WSE-2 that rule is fixed; on WSE-3 it is the default when you give no <code>.ut_id</code>. So the east send (output queue 2) and the west receive (input queue 2) both claimed microthread 2, and the west send and east receive both claimed microthread 3. Moving the input queues to 4/5 fixes it on both chips. On WSE-3 only, keeping queues 2/3 and adding <code>.ut_id = @get_ut_id(4)</code> / <code>@get_ut_id(5)</code> to the two receives also fixes it <span class="tag measured">Measured</span>.</p>
 <p>Rule: <em>give every concurrently active fabric operation its own microthread, and when a run hangs, read <code>sim.log</code> first.</em> Try it: change <code>@get_input_queue(4)</code>/<code>(5)</code> back to 2/3, rerun, kill the hung host script, and search <code>sim.log</code> for <code>FATAL</code>. The timeline below replays the clash.</p>
 </div>
@@ -118,7 +118,7 @@
 <h2>Measuring a timestep</h2>
 <h3>Time it inside the kernel</h3>
 <p>The SDK's own stencil benchmarks time kernels with each tile's timestamp counter (TSC), and so does this program. <code>run()</code> calls <code>timestamp.enable_tsc()</code> and <code>get_timestamp(&amp;t0)</code>; <code>finish()</code> calls <code>get_timestamp(&amp;t1)</code> just before it unblocks the host. A timestamp is 48 bits in three <code>u16</code> words. A separate RPC, <code>pack()</code>, copies the six words into an exported array, and the host reads them with a 16-bit memcpy (each <code>u16</code> arrives in the low half of a 32-bit word, Chapter 3) and reassembles <code>w0 | w1&lt;&lt;16 | w2&lt;&lt;32</code>.</p>
-<p>Two rules. First, <em>only subtract readings from the same PE</em>: each PE's counter starts when the launch reaches it, so counters on different PEs are not aligned. The program reports PE 1, an interior PE. Second, one run's <code>t1 − t0</code> divided by the step count includes a fixed ~27 cycles of start-up (entering <code>run()</code>, the first issue), which is why the output above shows 130.7 rather than 130.2. For the exact per-step cost, run two step counts and take the slope:</p>
+<p>Two rules. First, <em>only subtract readings from the same PE</em>: each PE's counter starts when the launch reaches it, so counters on different PEs are not aligned. The program reports PE 1, an interior PE. Second, one run's <code>t1 − t0</code> divided by the step count includes a few dozen cycles of start-up (entering <code>run()</code>, the first issue, the final timestamp), which is why the output above shows 131.0 rather than 130.2. For the exact per-step cost, run two step counts and take the slope:</p>
 <pre><code>source /home/user/cerebras-sdk/env.sh
 cd course/programs/04-heat-stencil
 STEPS=10  bash commands.sh | grep kernel     # PE 1: 1329 cycles
@@ -133,7 +133,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 
 <div class="callout bug">
 <strong>The inlining trap</strong>
-<p>CSL inlines helper functions into every task that calls them. <code>finish()</code> is called from <code>update()</code>, which is called from <code>op_done()</code>, which sits inside all four completion tasks. So code that runs <em>once</em>, at the last step, still makes every task bigger and every step slower. Copying the six timestamp words inside <code>finish()</code> instead of in a separate RPC raised the cost from 130 to 167 cycles per step <span class="tag measured">Measured</span>; the completion tasks grew from 136 to 200 bytes in the ELF. Moving the copy into <code>pack()</code>, the SDK's own pattern, restored 130. Keep instrumentation and epilogue code out of the hot tasks.</p>
+<p>CSL inlines helper functions into every task that calls them. <code>finish()</code> is called from <code>update()</code>, which is called from <code>op_done()</code>, which sits inside all four completion tasks. So code that runs <em>once</em>, at the last step, still makes every task bigger and every step slower. Copying the six timestamp words inside <code>finish()</code> instead of in a separate RPC raised the cost from 130.2 to 167.0 cycles per step <span class="tag measured">Measured</span>; each completion task grew from 176 to 212 bytes in the ELF (<code>readelf -sW out/bin/out_3_0.elf</code>). Moving the copy into <code>pack()</code>, the SDK's own pattern, restored 130. Keep instrumentation and epilogue code out of the hot tasks.</p>
 </div>
 
 <h3>The measurements</h3>
@@ -304,7 +304,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
     tsvg.innerHTML = "";
     const lanes = JSON.parse(tsvg.dataset.lanes), X0 = 150, W = 530, LH = 34, Y0 = 34;
     const X = c => X0 + c / tlTot * W;
-    const names = ["CE (one task at a time)"].concat(lanes.map(l => `${l.name} · µthread ${l.ut}`));
+    const names = ["CE (tasks)"].concat(lanes.map(l => `${l.name} · µthread ${l.ut}`));
     names.forEach((nm, i) => {
       const clash = i > 0 && lanes.some((m, j) => j !== i - 1 && m.ut === lanes[i - 1].ut);
       T("text", { x: X0 - 8, y: Y0 + i * LH + 20, "text-anchor": "end", "font-size": 12, class: clash ? "f-red" : "" }, tsvg, nm);
@@ -316,7 +316,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
       const g = el("g", { class: on ? "on" : "off" }, tsvg);
       el("rect", { x: X(e.s), y, width: Math.max(1.5, X(e.e) - X(e.s)), height: 20, rx: 3, class: e.cls }, g);
       if (e.wait !== undefined && e.wait > e.e) el("line", { x1: X(e.e), x2: X(e.wait), y1: y + 10, y2: y + 10, class: "s-blu", "stroke-dasharray": "3 3", "stroke-width": 1.5 }, g);
-      if (e.label && X(e.e) - X(e.s) > 26) T("text", { x: (X(e.s) + X(e.e)) / 2, y: y + 14, "text-anchor": "middle", "font-size": 11, class: "mono" }, g, e.label);
+      if (e.label && X(e.e) - X(e.s) > 40) T("text", { x: (X(e.s) + X(e.e)) / 2, y: y + 14, "text-anchor": "middle", "font-size": 11, class: "mono" }, g, e.label);
     });
     // pending counter row
     const py = Y0 + names.length * LH + 18;
@@ -386,7 +386,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
       if (k) el("line", { x1: X0 + k * bw, x2: X0 + k * bw, y1: Y0 - H, y2: Y0, class: "line" }, svg);
       if (bw >= 30) T("text", { x: X0 + (k + .5) * bw, y: Y0 - H + 14, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg, `PE ${k}`);
     }
-    for (let j = 0; j <= 5; j++) { const v = lo + j * (hi - lo) / 5; T("text", { x: X0 - 6, y: Y(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg, Math.abs(v) >= 100 ? v.toExponential(0) : +v.toFixed(2)); }
+    for (let j = 0; j <= 5; j++) { const v = lo + j * (hi - lo) / 5; T("text", { x: X0 - 16, y: Y(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg, Math.abs(v) >= 100 ? v.toExponential(0) : +v.toFixed(2)); }
     T("text", { x: 14, y: Y0 - H / 2, "text-anchor": "middle", "font-size": 12, class: "muted", transform: `rotate(-90 14 ${Y0 - H / 2})` }, svg, "temperature");
     // steady-state reference line
     el("line", { x1: X0, y1: Y(1), x2: X0 + W, y2: Y(0), class: "s-muted", "stroke-dasharray": "4 4", "stroke-width": 1 }, svg);
@@ -453,6 +453,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
     const bars = [["P = 2 (ends only)", 101.0, "p2", "f-acc"], ["P = 8", 130.2, "n16", "f-acc"], ["P = 16", 130.8, "p16", "f-acc"], ["WSE-2, P = 8", 134.1, "w16", "f-blu"], ["vector ops removed", 71.2, "nc", "f-pur"], ["naive overlap", 178.0, "ov", "f-red"]];
     const BX = 480, BW = 190, bmax = 200, BY = 40, BH = 30;
     T("text", { x: BX - 120, y: 22, "font-size": 12 }, cs, "n = 16, WSE-3 unless noted");
+    el("line", { x1: BX + 130.2 / bmax * BW, x2: BX + 130.2 / bmax * BW, y1: BY, y2: BY + bars.length * BH, class: "s-muted", "stroke-dasharray": "3 3" }, cs);
     bars.forEach(([lb, v, k, cl], i) => {
       const g = el("g", {}, cs), y = BY + i * BH;
       T("text", { x: BX - 8, y: y + 15, "text-anchor": "end", "font-size": 12 }, g, lb);
@@ -460,7 +461,6 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
       T("text", { x: BX + v / bmax * BW + 5, y: y + 15, "font-size": 11, class: "mono" }, g, v.toFixed(1));
       T("title", {}, g, `${lb}: ${v} cycles per step`); hover(g, k);
     });
-    el("line", { x1: BX + 130.2 / bmax * BW, x2: BX + 130.2 / bmax * BW, y1: BY, y2: BY + bars.length * BH, class: "s-muted", "stroke-dasharray": "3 3" }, cs);
     T("text", { x: BX, y: BY + bars.length * BH + 18, "font-size": 11, class: "muted" }, cs, "dotted line: the baseline 130.2");
   }
 
@@ -491,11 +491,11 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
     T("text", { x: X0 + W / 2, y: Y0 + 34, "text-anchor": "middle", "font-size": 12 }, ms, "cells per PE (n), log scale");
     T("text", { x: X0 - 50, y: 74, "font-size": 12 }, ms, "cycles/step (log)");
     el("rect", { x: X(MAXN), y: Y(cmax), width: X(nmax) - X(MAXN), height: H, class: "red", opacity: .5, "stroke-width": 0 }, ms);
-    T("text", { x: X(MAXN) + 4, y: Y(cmax) + 14, "font-size": 11, class: "f-red" }, ms, "does not fit");
+    T("text", { x: X(MAXN) - 4, y: Y(cmax) + 14, "text-anchor": "end", "font-size": 11, class: "f-red halo-txt" }, ms, "n > 5,450 does not fit →");
     const pts = []; for (let v = 1; v <= nmax; v *= 1.1) pts.push(`${X(v)},${Y(FIX + 2.5 * v)}`);
     el("polyline", { points: pts.join(" "), fill: "none", class: "s-blu", "stroke-width": 2 }, ms);
     el("line", { x1: X0, x2: X0 + W, y1: Y(FIX), y2: Y(FIX), class: "s-pur", "stroke-dasharray": "5 4", "stroke-width": 1.5 }, ms);
-    T("text", { x: X(1) + 4, y: Y(FIX) + 16, "font-size": 11, class: "f-pur halo-txt" }, ms, "fixed ≈ 90 per step");
+    T("text", { x: X(MAXN) - 6, y: Y(FIX) - 6, "text-anchor": "end", "font-size": 11, class: "f-pur halo-txt" }, ms, "fixed ≈ 90 per step");
     meas.forEach(([v, c]) => { el("circle", { cx: X(v), cy: Y(c), r: 5, class: "f-acc" }, ms); T("text", { x: X(v) - 6, y: Y(c) - 9, "text-anchor": "end", "font-size": 11, class: "halo-txt" }, ms, `measured ${c}`); });
     el("line", { x1: X(nn), x2: X(nn), y1: Y0, y2: Y(cmax), class: "s-red", "stroke-dasharray": "3 3" }, ms);
     el("circle", { cx: X(nn), cy: Y(cyc), r: 4, class: "f-red" }, ms);
@@ -503,7 +503,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
     const tstr = ns >= 1000 ? `${(ns / 1000).toFixed(2)} µs` : `${ns.toFixed(0)} ns`;
     const sps = CLK / cyc, cells = PES * nn, pf = cells * 5 * sps / 1e15;
     $("#m-out").textContent = `n = ${nn}: ≈ ${cyc.toFixed(0)} cycles/step → ${tstr} at 850 MHz; streaming share ${(100 * comp).toFixed(0)}%` +
-      (nn > MAXN ? `\n⚠ n > ~${MAXN}: u and lap no longer fit (cslc fails above ~5,450 on WSE-3)` : `\nmemory: u + lap = ${((2 * nn + 2) * 4 / 1024).toFixed(1)} KB of ≈43 KB available for arrays`) +
+      (nn > MAXN ? `\n⚠ n > ~${MAXN}: u and lap no longer fit (cslc fails above ~5,450 on WSE-3)` : `\nmemory: u + lap = ${((2 * nn + 2) * 4 / 1024).toFixed(2)} KB of ≈43 KB available for arrays`) +
       `\nwhole wafer (derived, 737k PEs, 1-D snake): ${(cells / 1e6).toFixed(cells < 1e8 ? 1 : 0)} M cells, ${(sps / 1e6).toFixed(2)} M steps/s, ≈ ${pf.toFixed(2)} PFLOP/s f32`;
   }
   $("#m-n").oninput = model; model();

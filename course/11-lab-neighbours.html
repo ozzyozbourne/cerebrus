@@ -10,32 +10,51 @@
 <main>
 <div class="kicker">Chapter 11 · Part III · Programming</div>
 <h1>Lab 2: reduce and broadcast</h1>
-<p class="lede">Now the PEs talk to each other. Program 03 sums vectors held by a row of PEs by letting the running total flow east through the row. Program 05 sends one vector to a whole column with a single multicast route. Together they cover the two collective shapes that most wafer algorithms are built from.</p>
+<p class="lede">Now the PEs talk to each other. Program 03 sums vectors held by a row of PEs by letting the running total flow east through the row. Program 05 sends one vector down a whole column with one color and multicast routes. Together they cover the two collective shapes that most wafer algorithms are built from, and both programs time their own kernels, so you can see what the fabric costs apart from host I/O.</p>
 
 <div class="objectives">
 <h4>After this lab you can</h4>
 <ul>
-<li>Write a multi-PE layout with per-PE roles and colors.</li>
+<li>Write a multi-PE layout with per-PE roles and colors, and explain why each PE configures only the routes and queues it uses.</li>
 <li>Use a fabric-in/memory/fabric-out DSD operation to build a streaming (systolic) reduction.</li>
 <li>Use a multicast route to broadcast without any relay code.</li>
-<li>Explain why streaming through PEs beats store-and-forward.</li>
+<li>Time a kernel with the PE's timestamp counter, apart from host I/O, and know which timestamp comparisons are valid.</li>
+<li>Explain, with measured numbers, why streaming through PEs beats store-and-forward.</li>
 </ul>
 </div>
 
+<div class="callout ok">
+<strong>Run it yourself</strong>
+<p><code>source /home/user/cerebras-sdk/env.sh</code>. Then, in <code>course/programs/03-row-reduce</code>, run <code>bash commands.sh</code>. Every program reads its knobs from the environment:</p>
+<ul>
+<li>Program 03: <code>P</code> (PEs in the row, default 8, at least 2) and <code>M</code> (vector length, default 32), e.g. <code>P=16 M=64 bash commands.sh</code>.</li>
+<li>Program 05 (<code>course/programs/05-column-broadcast</code>): <code>R</code> (rows, default 6) and <code>M</code>.</li>
+<li>Both: <code>ARCH=wse2</code> or <code>ARCH=wse3</code> (default).</li>
+</ul>
+<p><code>commands.sh</code> sizes the fabric to your rectangle plus memcpy's frame: <code>--fabric-dims=$((P+7)),3</code> with offsets <code>4,1</code> (Chapter 7). <code>run.py</code> prints the kernel cycles measured on the PEs. The whole-run simulated cycle count is in <code>sim_stats.json</code>: <code style="word-break: break-all">python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"</code>.</p>
+</div>
+
 <h2>Program 03 · Row reduction</h2>
-<p>P PEs in a row each hold a vector <code>v[M]</code>. PE 0 sends its vector east. Every middle PE receives the running sum from the west, adds its own vector <em>while the data passes through</em>, and sends the result east. The last PE adds into memory. One instruction per PE.</p>
+<p>P PEs in a row each hold a vector <code>v[M]</code>. PE 0 sends its vector east. Each middle PE receives the running sum from the west, adds its own vector <em>while the data passes through</em>, and sends the result east. The last PE adds into memory. Each PE runs one instruction.</p>
 
 <figure>
-<svg viewBox="0 0 760 200" width="760" role="img" aria-label="Row reduction roles and colors">
+<svg viewBox="0 0 760 200" width="760" role="img" aria-label="Row reduction roles and colors, P = 6 shown">
   <defs>
     <marker id="r0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
     <marker id="r1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
   </defs>
   <g id="red"></g>
 </svg>
-<figcaption><b>Roles by position, colors by parity.</b> First PE: <code>@fmovs(out, v)</code>. Middle PEs: <code>@fadds(out, in, v)</code>. Last PE: <code>@fadds(v, in, v)</code>. Even columns send on c0, odd on c1 (Chapter 4).</figcaption>
+<figcaption><b>Roles by position, colors by parity.</b> First PE: <code>@fmovs(out, v)</code>. Middle PEs: <code>@fadds(out, in, v)</code>. Last PE: <code>@fadds(v, in, v)</code>. Even columns send on c0 (orange), odd columns on c1 (blue) (Chapter 4). Drawn with P = 6. The program defaults to P = 8, where PE 7 holds the result.</figcaption>
 </figure>
 
+<div class="filename">course/programs/03-row-reduce/commands.sh</div>
+<pre><code>#!/usr/bin/env bash
+set -e
+P=${P:-8}; M=${M:-32}
+cslc --arch=${ARCH:-wse3} ./<span class="k">layout</span>.csl --fabric-dims=$((P+7)),3 --fabric-offsets=4,1 \
+  --params=P:$P,M:$M -o out --memcpy --channels 1
+cs_python run.py --name out</code></pre>
 <div class="filename">course/programs/03-row-reduce/layout.csl</div>
 <pre><code><span class="c">// 03-row-reduce: P PEs in a row each hold a vector v[M]. The sum of all</span>
 <span class="c">// vectors flows west -&gt; east: every PE adds its own v to the stream as it</span>
@@ -183,38 +202,105 @@ kernel on the last PE: 101 cycles (host I/O excluded)
 SUCCESS!
 [6861 simulated cycles, WSE-3]</code></pre>
 
+<h3>Reading the code: roles are compile-time params</h3>
+<p>The <code>layout</code> loop runs at compile time. For each column x it computes three values and passes them to <code>@set_tile_code</code>: <code>role</code> (0 first, 1 middle, 2 last), <code>send_color</code> and <code>recv_color</code>. Inside <code>pe_program.csl</code> they are <code>param</code>s, so the compiler knows their values. <code>if (role == 0)</code> in <code>reduce()</code> is folded away, and each PE's binary holds only its own branch. The compiler builds one binary per unique set of params (Chapter 9). For P = 8 that is 4 binaries: first, last, and two middle ones with the colors swapped.</p>
+<p>The guards follow one rule: <em>configure only what this PE uses</em>. Every PE except the last sends, so it gets a <code>send_c</code> route (RAMP → EAST) and an output queue bound to <code>send_c</code>. Every PE except the first receives, so it gets a <code>recv_c</code> route (WEST → RAMP) and an input queue bound to <code>recv_c</code>. A middle PE has both, on two different colors: that is the checkerboard from Chapter 4, and the stepper below shows why it needs two colors.</p>
+<p><b>Two chips, one source.</b> On WSE-3, <code>@initialize_queue</code> binds an output queue to one color, and the DSD names only the queue. On WSE-2 the color goes on the <code>fabout_dsd</code> (<code>.fabric_color</code>), and the queue is initialized without one. Input queues are bound to a color on both chips. The <code>@is_arch</code> expressions select the right form at compile time (Chapter 5, WSE-2 vs WSE-3 table).</p>
+
+<div class="callout">
+<strong>Why output queue 2 and input queue 2 are safe here, but were not in Lab 3</strong>
+On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's rule is that two <em>concurrent</em> operations must not share a microthread, and on WSE-3 a queue's microthread defaults to its queue ID. A middle PE runs <em>one</em> operation, <code>@fadds(out, in, v)</code>. That op uses both queues on one microthread, so nothing clashes. Lab 3 runs several ops at once, which is why it needs distinct input queues. Program 05 uses input queue 4 only out of habit: no PE there uses both queues.
+</div>
+
+<h3>What happens inside, in order</h3>
+<ol>
+<li><code>memcpy_h2d(vs, V.ravel(), 0, 0, P, 1, M)</code> writes a P × 1 rectangle with M floats per PE, so PE x gets row x of <code>V</code>. This is the only host copy into the row.</li>
+<li><code>launch('start_timer')</code> runs on <em>every</em> PE in the rectangle. Each PE resets its own timestamp counter (TSC) and unblocks.</li>
+<li><code>launch('reduce')</code> also reaches every PE. Each PE stamps <code>t_start</code>, starts one async DSD op and returns at once. The command stream stays blocked until that PE calls <code>unblock_cmd_stream()</code>.</li>
+<li>The PEs do not start at exactly the same moment, and they don't need to. A middle PE's <code>@fadds</code> takes <code>in_dsd</code> as an operand, so it waits for each wavelet to arrive. If a PE downstream has not started yet, its input queue fills and back-pressure stalls the PE upstream. Nothing is lost (Chapter 5). <em>Arrival orders the computation, not the host.</em></li>
+<li>Each PE's op ends after its M-th wavelet, which activates <code>exit_task</code>: stamp <code>t_end</code>, unblock. PE 0 finishes first, once its M wavelets have <em>left the CE</em>. They may still be sitting in queues and routers: with M ≤ ~16, PE 0 is done before PE 1 has consumed anything. PE P−1 finishes last, when the total is in its <code>v</code>.</li>
+<li><code>launch</code> returns on the host only after every PE has unblocked. <code>memcpy_d2h</code> then reads <code>v</code> from PE P−1 alone, plus the two 48-bit timestamps from every PE.</li>
+</ol>
+
+<h3>Why two colors? Step through the routers</h3>
+<div class="widget" id="rtw">
+<h4>Router stepper: checkerboard vs one color</h4>
+<p class="hint">Four PEs. Each router has one route per color: every input in <code>rx</code> goes to every output in <code>tx</code>. Step through to watch the running sum travel. Then switch to one color: a middle router would need <code>rx {WEST, RAMP} → tx {RAMP, EAST}</code>, and the sum breaks.</p>
+<div class="controls">
+<label>Colors <select id="rt-mode"><option value="two">two (c0/c1 by parity), as in program 03</option><option value="one">one color for every PE</option></select></label>
+<button class="btn" id="rt-step" type="button">Step</button>
+<button class="btn secondary" id="rt-reset" type="button">Reset</button>
+</div>
+<svg id="rt-svg" viewBox="0 0 760 250" width="760" role="img" aria-label="Router stepper"></svg>
+<div class="readout" id="rt-out"></div>
+</div>
+
 <h3>Why it is fast: streaming, not store-and-forward</h3>
-<p>A middle PE does not wait for the whole vector before forwarding. <code>@fadds(out_dsd, in_dsd, v_dsd)</code> processes element <em>i</em> as soon as wavelet <em>i</em> arrives and emits it immediately. The vector moves through the row as a wavefront, so the reduction takes about <strong>M + P</strong> steps, not <strong>M × P</strong>.</p>
+<p>A middle PE does not wait for the whole vector before forwarding. <code>@fadds(out_dsd, in_dsd, v_dsd)</code> processes element <em>i</em> as soon as wavelet <em>i</em> arrives and emits it immediately. The vector moves through the row as a wavefront. The reduction takes about <strong>M + c·(P − 1)</strong> cycles, plus a fixed few tens, not <strong>P × M</strong>. Here c is the cost of one CE-forwarded hop: the router hop, ramp up, the CE's <code>@fadds</code> pipeline and ramp down. It is measured below at ≈ 9 cycles on WSE-3 and ≈ 6 on WSE-2 <span class="tag measured">Measured</span>. Throughput stays one wavelet per cycle per link, so c only shifts the wavefront.</p>
+<p>The SDK's gemv-06/07/08 tutorials do <code>@fadds(y, in, y)</code> into memory and send in a separate step. That is store-and-forward per PE, a fine choice when the PE has other work to do on the data. For a pure chain, the measured cost differs a lot.</p>
 
 <div class="widget" id="pipe">
-<h4>Streaming vs store-and-forward</h4>
-<p class="hint">Each cell is one element of the vector at one PE. Watch the wavefront. Store-and-forward makes each PE receive the full vector before sending.</p>
+<h4>Race: streaming vs store-and-forward, on one clock</h4>
+<p class="hint">Each cell is one element of the vector at one PE. Both grids advance on the same clock (30 ms per cycle), so the slower one really takes longer. The model uses the measured hop cost c for the chosen chip <span class="tag derived">Derived</span>. The dots in the chart are simulator measurements on the last PE's clock at M = 32 <span class="tag measured">Measured</span>.</p>
 <div class="controls">
-<label>PEs <input type="range" id="w-p" min="2" max="12" value="8"> <span id="w-pv" class="mono"></span></label>
-<label>M <input type="range" id="w-m" min="4" max="24" value="12"> <span id="w-mv" class="mono"></span></label>
-<label>Mode <select id="w-mode"><option value="stream">streaming (@fadds fabric→fabric)</option><option value="saf">store-and-forward</option></select></label>
+<label>PEs <input type="range" id="w-p" min="2" max="16" value="8"> <span id="w-pv" class="mono"></span></label>
+<label>M <input type="range" id="w-m" min="4" max="32" value="12"> <span id="w-mv" class="mono"></span></label>
+<label>Chip <select id="w-arch"><option value="9">WSE-3 (c ≈ 9)</option><option value="6">WSE-2 (c ≈ 6)</option></select></label>
 <button class="btn" id="w-go" type="button">Play</button>
+<button class="btn secondary" id="w-step" type="button">Step</button>
+<button class="btn secondary" id="w-reset" type="button">Reset</button>
 </div>
-<svg id="w-svg" viewBox="0 0 680 260" width="680" role="img" aria-label="Reduction wavefront"></svg>
+<svg id="w-svg" viewBox="0 0 680 372" width="680" role="img" aria-label="Wavefront race between streaming and store-and-forward"></svg>
 <div class="readout" id="w-out"></div>
+<svg id="w-plot" viewBox="0 0 680 230" width="680" role="img" aria-label="Kernel cycles versus number of PEs"></svg>
 </div>
 
-<p>The simulator agrees with the model. With M = 32 and the same host transfers per PE, going from 2 to 16 PEs adds only 866 cycles in total — and part of that is the extra host copies to more PEs <span class="tag measured">Measured</span>:</p>
-<div class="table-wrap"><table>
-<tr><th>PEs (M = 32)</th><th>2</th><th>4</th><th>8</th><th>16</th></tr>
-<tr><td>Total simulated cycles, WSE-3</td><td>4,394</td><td>4,496</td><td>4,748</td><td>5,260</td></tr>
-</table></div>
-<p>Changing M at P = 8 moves the total much more (3,025 cycles at M = 8 → 11,463 at M = 128), because every element must also cross the narrow host link twice. Totals include all host I/O, so treat these as end-to-end numbers, not kernel times.</p>
-
-<h2>Program 05 · Column broadcast by multicast</h2>
-<p>The root PE of a column sends its vector once. Every router below delivers each wavelet to its own CE <em>and</em> forwards it south in the same hop: <code>.tx = .{RAMP, SOUTH}</code>. No PE runs relay code; the router does the copying.</p>
+<h3>Measuring the kernel, not the host</h3>
+<p>The simulator's <code>cycle_count</code> counts the whole run: loading, every host copy, every launch. For this program that total says almost nothing about the reduction. A copy of program 03 whose <code>reduce()</code> does nothing gives <em>identical</em> totals <span class="tag measured">Measured</span>. So program 03 times itself. The <code>&lt;time&gt;</code> library reads the PE's 48-bit timestamp counter (the pattern from the SDK's <code>tutorials/topic-02-libraries</code> <span class="tag sdk">SDK 2.10.1</span>). <code>run.py</code> subtracts the start stamp from the end stamp <em>on the same PE</em>.</p>
 
 <figure>
-<svg viewBox="0 0 760 300" width="760" role="img" aria-label="Column multicast">
-  <defs><marker id="b0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker></defs>
+<svg id="io" viewBox="0 0 760 230" width="760" role="img" aria-label="Kernel cycles versus whole-run cycles"></svg>
+<figcaption><b>The kernel is about 2% of the run.</b> Grey: whole-run simulated cycles of the uninstrumented program 03 at M = 32 (WSE-3). Orange: the reduction kernel on the last PE's own clock. Going from 2 to 16 PEs adds 866 total cycles, but the kernel grows by only 100 <span class="tag measured">Measured</span>.</figcaption>
+</figure>
+
+<div class="table-wrap"><table>
+<tr><th>WSE-3, P (M = 32)</th><th>2</th><th>4</th><th>8</th><th>16</th><th>32</th></tr>
+<tr><td>Kernel on last PE, own clock: streaming (program 03)</td><td>58</td><td>73</td><td>101</td><td>158</td><td>273</td></tr>
+<tr><td>Same, store-and-forward variant (<code>@fadds(v, in, v)</code>, then <code>@fmovs(out, v)</code>)</td><td>58</td><td>154</td><td>348</td><td>733</td><td>–</td></tr>
+<tr><td>Whole-run cycles, uninstrumented program</td><td>4,394</td><td>4,496</td><td>4,748</td><td>5,260</td><td>–</td></tr>
+</table></div>
+<p>All of these are <span class="tag measured">Measured</span> with the SDK 2.10.1 simulator. At P = 8 the kernel takes 77 / 101 / 199 / 588 cycles for M = 8 / 32 / 128 / 512, so about 1 cycle per element: the link rate of one wavelet per cycle. Each op here has only one memory operand stream, so the bank clash that halves a memory-to-memory <code>@fmacs</code> when its two source arrays start at addresses equal mod 4 words (Chapter 10) cannot occur. The whole run grows from 3,025 cycles (M = 8) to 11,463 (M = 128) because the host copies P × M elements in and M results out. On WSE-2 the kernel takes 54 / 64 / 84 / 124 / 204 cycles for P = 2 / 4 / 8 / 16 / 32. With the timer in place, the program's own total rises to 6,861 cycles: one more launch and two more small reads, all of it host I/O again. Whole-run totals also wander by tens to hundreds of cycles between identical runs, more when the host is busy. TSC differences repeat exactly.</p>
+
+<div class="callout warn">
+<strong>Only subtract timestamps from the same PE</strong>
+<p>Each PE's counter starts when <code>start_timer</code> <em>reaches that PE</em>, so the counters are not synchronized. The launch also reaches PEs at different times, and that offset cancels out of any one PE's stamps. Comparing PE 3's end against PE 0's start would mix two clocks. That is why <code>run.py</code> prints <code>t_end − t_start</code> per PE. The SDK's <code>benchmarks/bandwidth-test</code> builds an explicit fabric sync for the same reason ("the tsc counters of all PEs are not synchronized").</p>
+<p>So the per-PE list in the output (50, 58, 65, 73, …) is not a wavefront measured on one clock. Its step of ~7.2 cycles per PE (5.0 on WSE-2) is the hop cost <em>minus</em> however much later each PE's clock started. To get the hop cost itself, time a round trip on one PE.</p>
+</div>
+
+<h3>The hop cost, on one clock: a round trip</h3>
+<p>A variant of program 03 (in <code>tmp/fix-ch11/rt</code>) makes the last PE send its sum back west on a third color. That path is pure router hops. PE 0 then times "send v → receive the sum back" on its own counter. A second variant with no CE work in the middle PEs (the middle routers just pass c0 through) measures the router-only round trip. The slope of each against P gives the per-hop costs <span class="tag measured">Measured</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>Round trip on PE 0 (M = 32)</th><th>P = 2</th><th>8</th><th>16</th><th>24</th><th>32</th><th>slope per PE</th></tr>
+<tr><td>WSE-3: CE chain east + router hops back</td><td>76</td><td>142</td><td>231</td><td>321</td><td>410</td><td>11.1</td></tr>
+<tr><td>WSE-3: router hops east + router hops back</td><td>76</td><td>99</td><td>131</td><td>163</td><td>195</td><td>4.0</td></tr>
+<tr><td>WSE-2: CE chain east + router hops back</td><td>93</td><td>108</td><td>164</td><td>220</td><td>276</td><td>7.0 (P ≥ 12)</td></tr>
+<tr><td>WSE-2: router hops east + router hops back</td><td>93</td><td>105</td><td>94</td><td>110</td><td>126</td><td>2.0 (P ≥ 12)</td></tr>
+</table></div>
+<p>A pure router hop therefore costs <b>2.0 cycles on WSE-3 and 1.0 on WSE-2</b>, the same as Chapter 4's router-hop measurement. A <b>CE-forwarded hop</b> (route up to the CE, <code>@fadds</code>, route back out) costs 11.1 − 2.0 ≈ <b>9.2 cycles on WSE-3</b> and 7.0 − 1.0 = <b>6.0 on WSE-2</b> <span class="tag derived">Derived</span>. That is the c in the model. The per-PE "own clock" step (7.2 / 5.0) is exactly one router hop less than this, which fits each PE's clock starting one hop later than its west neighbour's <span class="tag derived">Derived</span>. At small P the WSE-2 round trips have a ~90-cycle floor that hides the slope, so fit it only from P ≥ 12. With c ≈ 9, the P term equals the M term once P ≈ M / 9: around 30 PEs at M = 256. Past that point a tree or 2-D decomposition starts to beat one long chain.</p>
+
+<h3>When a PE is late: back-pressure</h3>
+<p>The depth review delayed only the last PE (a busy loop before its <code>@fadds</code>), at P = 8. A delay shorter than the wavefront's arrival time (about 50 cycles there) changes nothing. With M = 128 and a ~590-cycle delay, PE 0 still finished on schedule: the 7 hops between it and the stalled PE held all 128 wavelets. With M = 512 every PE waited, and as the chain drained, adjacent PEs finished about 16 cycles apart. Each hop (output queue + router + input queue) holds roughly 16 wavelets <span class="tag measured">Measured</span> (from per-PE own-clock readings, so ±2 cycles per hop). Rule of thumb: a chain of P PEs buffers ≈ 16·(P − 1) wavelets. If M fits, upstream PEs finish even while the consumer is stalled. If not, everyone waits for the slowest PE.</p>
+
+<h2>Program 05 · Column broadcast by multicast</h2>
+<p>The root PE of a column sends its vector once. Every middle router delivers each wavelet to its own CE <em>and</em> forwards it south in the same hop: <code>.tx = .{RAMP, SOUTH}</code>. The bottom router only delivers (<code>.tx = .{RAMP}</code>). Forwarding SOUTH there would push wavelets out of your rectangle into memcpy's frame. No PE runs relay code: the router does the copying, at router-hop cost.</p>
+
+<figure>
+<svg viewBox="110 0 560 380" width="560" role="img" aria-label="Column multicast, R = 6">
+  <defs><marker id="b0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
+  <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-pur"/></marker></defs>
   <g id="bc"></g>
 </svg>
-<figcaption><b>One send, R receivers.</b> Each PE then scales its copy by its own <code>s</code>. A single color serves the whole column because traffic only ever flows one way.</figcaption>
+<figcaption><b>One send, R − 1 fabric receivers, R results.</b> The host copies <code>x</code> to the root only and one scale <code>s</code> to every PE. The root's route has no RAMP in <code>tx</code>, so it computes <code>y = 1·x</code> from its own copy. A single color serves the whole column because traffic only ever flows one way. Drawn with R = 6, the default.</figcaption>
 </figure>
 
 <div class="filename">course/programs/05-column-broadcast/layout.csl</div>
@@ -325,6 +411,46 @@ SUCCESS!
   <span class="b">@export_symbol</span>(t_start_ptr, <span class="s">&quot;t_start&quot;</span>);
   <span class="b">@export_symbol</span>(t_end_ptr, <span class="s">&quot;t_end&quot;</span>);
 }</code></pre>
+<div class="filename">course/programs/05-column-broadcast/run.py</div>
+<pre><code>#!/usr/bin/env cs_python
+<span class="k">import</span> argparse, json
+<span class="k">import</span> numpy as np
+<span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder  <span class="c"># pylint: disable=no-name-in-module</span>
+
+p = argparse.ArgumentParser(); p.add_argument(&#x27;--name&#x27;); p.add_argument(&#x27;--cmaddr&#x27;)
+args = p.parse_args()
+prm = json.load(open(f<span class="s">&quot;{args.name}/out.json&quot;</span>))[&#x27;params&#x27;]
+R, M = int(prm[&#x27;R&#x27;]), int(prm[&#x27;M&#x27;])
+
+x = np.linspace(-1, 1, M, dtype=np.float32)
+s = np.arange(1, R + 1, dtype=np.float32)          <span class="c"># PE row y gets scale y+1</span>
+
+rt = SdkRuntime(args.name, cmaddr=args.cmaddr)
+xs, ys, ss = rt.get_id(&#x27;x&#x27;), rt.get_id(&#x27;y&#x27;), rt.get_id(&#x27;s&#x27;)
+rt.load(); rt.run()
+kw = dict(streaming=<span class="k">False</span>, order=MemcpyOrder.ROW_MAJOR, data_type=MemcpyDataType.MEMCPY_32BIT, nonblock=<span class="k">False</span>)
+rt.launch(&#x27;start_timer&#x27;, nonblock=<span class="k">False</span>)          <span class="c"># first command: all TSCs reset together</span>
+rt.memcpy_h2d(xs, x, 0, 0, 1, 1, M, **kw)          <span class="c"># only the root gets x from the host</span>
+rt.memcpy_h2d(ss, s, 0, 0, 1, R, 1, **kw)          <span class="c"># one scale per PE</span>
+rt.launch(&#x27;go&#x27;, nonblock=<span class="k">False</span>)
+y = np.zeros(R * M, dtype=np.float32)
+rt.memcpy_d2h(y, ys, 0, 0, 1, R, M, **kw)
+
+<span class="k">def</span> read_tsc(name):    <span class="c"># R timestamps; 16-bit words arrive in u32 slots</span>
+  w = np.zeros(3 * R, dtype=np.uint32)
+  rt.memcpy_d2h(w, rt.get_id(name), 0, 0, 1, R, 3, **dict(kw, data_type=MemcpyDataType.MEMCPY_16BIT))
+  w = (w &amp; 0xffff).astype(np.int64).reshape(R, 3)
+  <span class="k">return</span> w[:, 0] + (w[:, 1] &lt;&lt; 16) + (w[:, 2] &lt;&lt; 32)
+t0, t1 = read_tsc(&#x27;t_start&#x27;), read_tsc(&#x27;t_end&#x27;)
+rt.stop()
+
+np.testing.assert_allclose(y.reshape(R, M), np.outer(s, x), rtol=1e-6)
+print(f<span class="s">&quot;one send <span class="k">from</span> the root reached all {R} PEs; y[row, :3] =&quot;</span>)
+print(y.reshape(R, M)[:, :3])
+<span class="c"># Each number below uses one PE&#x27;s own clock only (it was reset by start_timer).</span>
+print(<span class="s">&quot;start_timer -&gt; go(), per PE:&quot;</span>, t0.tolist())
+print(<span class="s">&quot;go() -&gt; x sent/received, per PE:&quot;</span>, (t1 - t0).tolist())
+print(<span class="s">&quot;SUCCESS!&quot;</span>)</code></pre>
 <div class="filename">course/programs/05-column-broadcast/expected_output.txt</div>
 <pre class="output"><code>one send from the root reached all 6 PEs; y[row, :3] =
 [[-1.         -0.9354839  -0.87096775]
@@ -338,97 +464,307 @@ go() -&gt; x sent/received, per PE: [50, 431, 433, 434, 436, 439]
 SUCCESS!
 [7620 simulated cycles, WSE-3]</code></pre>
 
+<p>Look at the host side. <code>x</code> is copied to the root only (a 1 × 1 rectangle), and the fabric fills every other PE's <code>x</code>. <code>s</code> goes to all R PEs, one float each. So the broadcast replaces R − 1 host copies. On the device, the non-root PEs run <code>@fmovs(x_dsd, in_dsd)</code>: fabric in, memory out. That is the opposite of program 03, where the incoming stream never touches memory. The receivers need <code>x</code> stored before <code>@fmuls</code> can read it. <code>t_send</code> and <code>t_recv</code> do the same work. They are separate only to show that the root's completion means "sent" and a receiver's means "received". Exercise 4 merges them.</p>
+
+<h3>What happens inside, in order</h3>
+<ol>
+<li><code>launch('start_timer')</code> is the first command, so every PE resets its counter at the same point in its command stream.</li>
+<li><code>memcpy_h2d(xs, x, 0, 0, 1, 1, M)</code> sends <code>x</code> to the root only. <code>memcpy_h2d(ss, s, 0, 0, 1, R, 1)</code> sends one scale to each of the R PEs.</li>
+<li><code>launch('go')</code> runs everywhere. The root's <code>@fmovs(out_dsd, x_dsd)</code> pushes M wavelets SOUTH. Each receiver's <code>@fmovs(x_dsd, in_dsd)</code> fills its <code>x</code> as the multicast passes.</li>
+<li>When its op completes, each PE runs <code>t_send</code> (root) or <code>t_recv</code> (others): stamp, <code>y = s · x</code>, unblock. Then the host reads the R × M block of <code>y</code> from all PEs.</li>
+</ol>
+
+<div class="callout warn">
+<strong>Timing the broadcast, and a trap: command-stream skew</strong>
+<p>Each PE's memcpy commands form its own queue. The receivers skip the <code>x</code> copy, so they reach <code>go()</code> earlier than the root: 2,248 cycles after their timer reset, against 2,610 for the root. That gap of about 362 cycles is the root's extra host copy <span class="tag measured">Measured</span>. A receiver's own <code>go() → x received</code> span is therefore 431–439 cycles, and almost all of it is idle waiting for the root. The root itself finishes sending in 50.</p>
+<p>Subtracting the skew, the last receiver has <code>x</code> about 69–78 cycles after the root starts. That is about 2 cycles per row on top of M + ~37 <span class="tag derived">Derived</span>, consistent with a pure router hop (2.0 cycles on WSE-3). Multicast forwarding never involves the CE, so each row costs a router hop, not program 03's ~9-cycle CE hop. On WSE-2 the skew is 348 cycles and the arrivals come 85–89 cycles after the root starts.</p>
+<p>Lesson: "kernel time" on one PE can be another PE's host I/O. If you time kernels, give every PE the same command history (for example, copy <code>x</code> to all PEs while timing), or synchronize clocks over the fabric as <code>bandwidth-test</code> does.</p>
+</div>
+
 <div class="callout">
 <strong>CSL detail learned the hard way</strong>
-<code>if (a) stmt; else if (b) stmt; else stmt;</code> without braces is a compile error ("Unexpected character"). Statement-form <code>if/else</code> needs braces; expression-form (<code>const c = if (x) c0 else c1;</code>) does not.
+A lone statement <code>if</code> without braces is fine (program 03: <code>if (role != 2) @set_color_config(...);</code>). Add an <code>else</code>, and braces become mandatory: <code>if (a) stmt; else stmt;</code> fails with "Unexpected character". That is why program 05's three-way route choice and its queue setup use <code>{ }</code>. Expression-form <code>if</code> chains need no braces: <code>const role = if (x == 0) 0 else if (x == P - 1) 2 else 1;</code>.
+</div>
+
+<h3>Going 2-D: one color for every column</h3>
+<p>To broadcast down C columns at once, loop over x as well as y, and pass <code>memcpy.get_params(x)</code>. One color still works: routes are per PE, and no wavelet ever crosses from one column into another. The changes to program 05 (a copy is in <code>tmp/fix-ch11/b2d</code>):</p>
+<pre><code>param C: i16;                                         // new: columns
+const memcpy = @import_module("&lt;memcpy/get_params&gt;", .{ .width = C, .height = R });
+@set_rectangle(C, R);
+for (@range(i16, C)) |x| { for (@range(i16, R)) |y| {   // was: x fixed at 0
+  @set_tile_code(x, y, ..., .{ .memcpy_params = memcpy.get_params(x), ... });
+  @set_color_config(x, y, bcast, ...);                 // same three cases, same color
+}}
+// run.py: x to row 0 (width C), s and y over C x R;  commands.sh: --fabric-dims=$((C+7)),$((R+2))</code></pre>
+<div class="table-wrap"><table>
+<tr><th>WSE-3, R = 6, M = 32</th><th>C = 1</th><th>C = 4</th><th>C = 16</th></tr>
+<tr><td>Last receiver has x, cycles after its root starts (every column)</td><td>~78</td><td>~78</td><td>~78</td></tr>
+<tr><td>Skew: receivers reach <code>go()</code> ahead of the roots</td><td>362</td><td>508</td><td>1,231</td></tr>
+<tr><td>Whole-run cycles</td><td>7,619</td><td>11,674</td><td>28,138</td></tr>
+</table></div>
+<p>All columns broadcast fully in parallel: the time after the roots start does not change with C <span class="tag measured">Measured</span> (the subtraction is <span class="tag derived">Derived</span>). What grows is host I/O, and with it the skew, because the root row's <code>x</code> copy is C times larger.</p>
+
+<h3>The library version: <code>&lt;collectives_2d&gt;</code></h3>
+<p>The SDK packages both shapes as a library, used in <code>tutorials/topic-11</code> and <code>benchmarks/gemv-collectives_2d</code> <span class="tag sdk">SDK 2.10.1</span>. Its <code>broadcast</code> and <code>reduce_fadds</code> are programs 05 and 03 in library form. Each dimension gets 2 colors and 2 entrypoints, and the reduce network is the same alternating C0/C1 checkerboard as program 03. Unlike our static routes, it rewrites routes at runtime (switches, filters, <code>reset_routes</code>), sends teardown wavelets after every op, and lets the root sit anywhere. At the root it receives into memory and then adds its own copy, a second M-length pass.</p>
+<pre><code>// layout: per PE
+const c2d = @import_module("&lt;collectives_2d/params&gt;");
+const params = c2d.get_params(x, 0, .{ .x_colors = .{cx0, cx1}, .x_entrypoints = .{ep0, ep1},
+                                       .y_colors = .{@get_color(4), @get_color(5)},          // needed even in 1-D
+                                       .y_entrypoints = .{@get_local_task_id(12), @get_local_task_id(13)} });
+// pe_program
+const mpi_x = @import_module("&lt;collectives_2d/pe&gt;", .{ .dim_params = c2d_params.x, .queues = [2]u16{2,4},
+  .dest_dsr_ids = [1]u16{1}, .src0_dsr_ids = [1]u16{1}, .src1_dsr_ids = [1]u16{1} });
+fn f_init() void { mpi_x.init(); sys_mod.unblock_cmd_stream(); }
+fn reduce() void { mpi_x.reduce_fadds(W - 1, &amp;v, &amp;r, M, cb_id); }  // root = last PE; cb_id runs when done</code></pre>
+<div class="table-wrap"><table>
+<tr><th>WSE-3, kernel on the root's own clock</th><th>P = 2, M = 32</th><th>8, 32</th><th>32, 32</th><th>8, 512</th></tr>
+<tr><td>Program 03 (static routes)</td><td>58</td><td>101</td><td>273</td><td>588</td></tr>
+<tr><td><code>reduce_fadds</code> (<code>init()</code> not timed)</td><td>754</td><td>818</td><td>1,002</td><td>1,538</td></tr>
+</table></div>
+<p>The slope per PE is about the same, but the library pays ~700 cycles of fixed cost (reconfiguration, teardown, the extra root pass) <span class="tag measured">Measured</span>. One gotcha: passing only <code>x_colors</code>/<code>x_entrypoints</code> fails to compile on WSE-3 with <code>params.csl:25: expected task ID in the range [8,31), got: 0</code>, because the missing dimension defaults to task ID 0. Pass unused <code>y_colors</code>/<code>y_entrypoints</code> too <span class="tag measured">Measured</span>. The trade-off: use the library for flexibility (any root, scatter and gather, chaining through one callback). Hand-write the static-route version on the hot path.</p>
+
+<div class="callout bug">
+<strong>When it goes wrong</strong>
+<ul>
+<li><b>The simulator never finishes, or cs_python aborts after a few seconds with "received length (0 bytes) is not expected … could be a kernel stall".</b> A wavelet has nowhere to go, or nothing consumes it, or some PE never unblocks. Check that every sender has a matching receiver route on the <em>same</em> color (mind the parity!). Check that the last PE has no EAST route and the bottom PE no SOUTH route. P must be at least 2: with P = 1, PE 0 is both first and last.</li>
+<li><b>It hangs only after you add a second async op.</b> Two concurrent ops share a microthread (Chapter 5). Renumber the queues, or give the ops distinct <code>.ut_id</code>s.</li>
+<li><b>The result is all zeros or just your own input.</b> You read the wrong PE: the sum lives on PE P−1, not PE 0.</li>
+<li><b>Compile error about a color or queue on one PE.</b> A guard is missing: a PE initialized a queue for a color it has no route for, or the other way round.</li>
+<li><b>Bisect like Lab 1.</b> Set P = 2 (first + last, no middle), then P = 3. Read <code>v</code> back from every PE with one <code>memcpy_d2h(..., 0, 0, P, 1, M)</code> to see how far the sum got.</li>
+</ul>
 </div>
 
 <h2>Composing the two: a distributed GEMV</h2>
-<p>Put program 05 and program 03 together and you have the SDK's gemv-08 pattern: broadcast <code>x</code> slices down columns, let each PE multiply its block of <code>A</code>, then reduce partial results along rows with alternating colors. The SDK tutorials gemv-05 through gemv-09 walk through exactly this.</p>
+<p>Put program 05 and program 03 together and you have the SDK's gemv-08 pattern: multicast the <code>x</code> slices down the columns, let each PE multiply its block of <code>A</code>, then reduce the partial results along the rows with alternating colors. The SDK tutorials gemv-06 to gemv-08 build up to exactly this <span class="tag sdk">SDK 2.10.1</span>. gemv-08 is the full pattern, with 3 colors. It consumes <code>x</code> with a wavelet-triggered task rather than a bulk copy, and its per-PE reduction step stores into memory before sending, which is store-and-forward.</p>
 <figure>
-<svg viewBox="0 0 760 260" width="760" role="img" aria-label="GEMV composed from broadcast and reduction">
+<svg viewBox="110 0 600 270" width="600" role="img" aria-label="GEMV composed from broadcast and reduction">
+  <defs>
+    <marker id="g0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>
+    <marker id="g1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
+    <marker id="g2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-pur"/></marker>
+    <marker id="g3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-grn"/></marker>
+  </defs>
   <g id="gemv"></g>
 </svg>
-<figcaption><b>Broadcast down, compute, reduce across.</b> Blue arrows: column multicast of x. Orange/teal: checkerboard row reduction of partial y.</figcaption>
+<figcaption><b>Broadcast down, compute, reduce across.</b> Purple: the host loads <code>x</code> slices into the top row, and each column multicasts its slice down. Orange/blue: checkerboard row reduction of partial <code>y</code> west to east (even columns send on one color, odd on the other, as in program 03). Green: <code>b</code> enters at the left column, and <code>y</code> is read from the rightmost column.</figcaption>
 </figure>
+<p>Try it: open <code>/home/user/cerebras-sdk/extras/csl-extras-202604101435-6-d2f7d96e/examples/tutorials/gemv-08-routes-3/</code>. In its <code>layout.csl</code>, find the route that matches program 05's multicast and the color pair that matches program 03's checkerboard.</p>
 
 <h3>Exercises</h3>
-<ol>
-<li>Make program 03 compute a <em>maximum</em> instead of a sum. (Hint: is there a fabric-capable max builtin? If not, receive into memory and compare.)</li>
-<li>Extend program 05 to a 2-D rectangle where row 0 multicasts down every column. How many colors do you need?</li>
-<li>Run program 03 with <code>ARCH=wse2</code> and compare cycles with WSE-3.</li>
+<ol class="quiz">
+<li>Make program 03 compute an element-wise <em>maximum</em> instead of a sum. Hint: look for an <code>@fadds</code>-like builtin for max. Does it take fabric DSDs the same way? Update the check in <code>run.py</code> to <code>V.max(axis=0)</code>.
+<details><summary>Expected result</summary><code>@fmaxs</code> is a drop-in replacement. <code>@fmaxs(out_dsd, in_dsd, v_dsd, ...)</code> and <code>@fmaxs(v_dsd, in_dsd, v_dsd, ...)</code> accept fabric operands exactly like <code>@fadds</code>, and the program prints SUCCESS! on WSE-3 <span class="tag measured">Measured</span>. The SDK's own allreduce uses <code>@fmaxs</code> with a fabric source (<code>benchmarks/benchmark-libs/allreduce/pe.csl</code>).</details></li>
+<li>Extend program 05 to a C × R rectangle where row 0 multicasts its own <code>x</code> down every column. Hint: loop over x as well as y, pass <code>memcpy.get_params(x)</code>, and widen <code>--fabric-dims</code> to <code>$((C+7)),$((R+2))</code>. How many colors do you need?
+<details><summary>Expected result</summary>One color: routes are per PE, and columns never exchange wavelets. At C = 16, R = 6 every column's broadcast still finishes ~78 cycles after its root starts. Only the host I/O grows (see "Going 2-D" above).</details></li>
+<li>Reproduce the kernel table: <code>for P in 2 4 8 16; do P=$P bash commands.sh | grep "last PE"; done</code>. Then repeat with <code>ARCH=wse2</code>. Which term differs between the chips, M or P?
+<details><summary>Expected result</summary>WSE-3: 58 / 73 / 101 / 158. WSE-2: 54 / 64 / 84 / 124 <span class="tag measured">Measured</span>. The M term is the same on both chips (≈ 1 cycle per element). The per-PE term differs: 7.2 vs 5.0 on the own-clock readings, or 9.2 vs 6.0 for the true CE-forwarded hop. WSE-3's queue-based fabric I/O adds hop latency in this microbenchmark.</details></li>
+<li>Merge <code>t_send</code> and <code>t_recv</code> in program 05 into one task. What else do you have to change?
+<details><summary>Expected result</summary>Delete <code>t_send</code> and its <code>@bind_local_task</code>, and make the root's <code>@fmovs</code> activate <code>recv_done</code> too. Nothing else changes, because each PE runs exactly one of the two ops, so the shared task can never be activated twice on one PE. It passes on WSE-3 and WSE-2 <span class="tag measured">Measured</span>. Contrast Chapter 5, where one PE runs several ops, and one shared completion task does hang.</details></li>
 </ol>
 </main>
 <script src="assets/course.js"></script>
 <script>
 (function () {
-  // reduction diagram
+  const T = (tag, attrs, parent, text) => { const n = el(tag, attrs, parent); if (text !== undefined) n.textContent = text; return n; };
+
+  // ---------- reduction-roles diagram (P = 6 shown) ----------
   const g = $("#red");
   for (let i = 0; i < 6; i++) {
     const x = 20 + i * 125, role = i === 0 ? "first" : i === 5 ? "last" : "middle";
-    el("rect", { x, y: 50, width: 95, height: 70, rx: 8, class: role === "middle" ? "box" : "acc", "stroke-width": 1.5 }, g);
-    el("text", { x: x + 47, y: 78, "text-anchor": "middle", "font-weight": 700 }, g).textContent = `PE ${i}`;
-    el("text", { x: x + 47, y: 98, "text-anchor": "middle", "font-size": 11, class: "muted" }, g).textContent = role;
-    el("text", { x: x + 47, y: 145, "text-anchor": "middle", "font-size": 11, class: "mono" }, g).textContent = i === 0 ? "@fmovs(out,v)" : i === 5 ? "@fadds(v,in,v)" : "@fadds(out,in,v)";
+    T("rect", { x, y: 50, width: 95, height: 70, rx: 8, class: role === "middle" ? "box" : "grn", "stroke-width": 1.5 }, g);
+    T("text", { x: x + 47, y: 78, "text-anchor": "middle", "font-weight": 700 }, g, `PE ${i}`);
+    T("text", { x: x + 47, y: 98, "text-anchor": "middle", "font-size": 11, class: "muted" }, g, role);
+    T("text", { x: x + 47, y: 145, "text-anchor": "middle", "font-size": 11, class: "mono" }, g, i === 0 ? "@fmovs(out,v)" : i === 5 ? "@fadds(v,in,v)" : "@fadds(out,in,v)");
     if (i < 5) { const ev = i % 2 === 0;
-      el("path", { d: `M${x + 96} 85 H${x + 122}`, stroke: cssVar(ev ? "--accent" : "--blue"), "stroke-width": 3, "marker-end": `url(#r${ev ? 0 : 1})` }, g);
-      el("text", { x: x + 110, y: 75, "text-anchor": "middle", "font-size": 11 }, g).textContent = ev ? "c0" : "c1"; }
+      T("path", { d: `M${x + 96} 85 H${x + 122}`, class: ev ? "s-acc" : "s-blu", "stroke-width": 3, fill: "none", "marker-end": `url(#r${ev ? 0 : 1})` }, g);
+      T("text", { x: x + 110, y: 75, "text-anchor": "middle", "font-size": 11, "font-weight": 700, class: ev ? "f-acc" : "f-blu" }, g, ev ? "c0" : "c1"); }
   }
-  el("text", { x: 380, y: 30, "text-anchor": "middle", "font-size": 13 }, g).textContent = "running sum flows east; PE 5 ends with Σ v";
-  el("text", { x: 380, y: 185, "text-anchor": "middle", "font-size": 12, class: "muted" }, g).textContent = "middle PE routes: c_recv rx WEST → tx RAMP · c_send rx RAMP → tx EAST";
+  T("text", { x: 380, y: 30, "text-anchor": "middle", "font-size": 13 }, g, "running sum flows east; PE 5 ends with Σ v   (P = 6 shown)");
+  T("text", { x: 380, y: 185, "text-anchor": "middle", "font-size": 12, class: "muted" }, g, "middle PE routes:  recv_c: rx WEST → tx RAMP  ·  send_c: rx RAMP → tx EAST");
 
-  // broadcast diagram
-  const b = $("#bc");
-  for (let r = 0; r < 5; r++) {
-    const y = 20 + r * 54;
-    el("rect", { x: 250, y, width: 110, height: 40, rx: 8, class: r === 0 ? "acc" : "box", "stroke-width": 1.5 }, b);
-    el("text", { x: 305, y: y + 25, "text-anchor": "middle", "font-size": 12 }, b).textContent = `PE (0,${r}) · s=${r + 1}`;
-    const route = r === 0 ? "rx RAMP → tx SOUTH" : r === 4 ? "rx NORTH → tx RAMP" : "rx NORTH → tx {RAMP, SOUTH}";
-    el("text", { x: 380, y: y + 25, "font-size": 12, class: "mono" }, b).textContent = route;
-    if (r < 4) el("path", { d: `M305 ${y + 41} V${y + 52}`, stroke: cssVar("--accent"), "stroke-width": 3, "marker-end": "url(#b0)" }, b);
-    el("text", { x: 230, y: y + 25, "text-anchor": "end", "font-size": 12, class: "muted" }, b).textContent = r === 0 ? "sends x once" : `y = ${r + 1}·x`;
+  // ---------- router stepper ----------
+  const rs = $("#rt-svg"); let rtStep = 0;
+  const cx = k => 95 + k * 190;
+  const linkX = k => cx(k) + 95;            // midpoint of link k → k+1
+  const ROUTES = {
+    two: [["c0: RAMP → EAST"], ["c0: WEST → RAMP", "c1: RAMP → EAST"], ["c1: WEST → RAMP", "c0: RAMP → EAST"], ["c0: WEST → RAMP"]],
+    one: [["c: RAMP → EAST"], ["c: {WEST,RAMP} →", "   {RAMP,EAST}"], ["c: {WEST,RAMP} →", "   {RAMP,EAST}"], ["c: WEST → RAMP"]]
+  };
+  // tokens: [x, y, label, kind]  kind: acc | blu | grn | bad
+  const FRAMES = {
+    two: [
+      [[], "Press Step. Each PE holds its own v_k; nothing is on the fabric yet."],
+      [[[cx(0), 45, "v0", "acc"]], "PE 0's @fmovs pushes v0 into its output queue on c0. Router 0, c0: rx RAMP → tx EAST."],
+      [[[linkX(0), 140, "v0", "acc"]], "The wavelets cross to router 1. On c0, router 1 has rx WEST → tx RAMP, so they go up to CE 1 only."],
+      [[[cx(1), 45, "v0+v1", "blu"]], "CE 1's @fadds adds v1 element by element and sends on c1, its own send color."],
+      [[[linkX(1), 140, "v0+v1", "blu"]], "Router 1, c1: rx RAMP → tx EAST. Router 2, c1: rx WEST → tx RAMP. Each color has one unambiguous route."],
+      [[[cx(2), 45, "+v2", "acc"]], "CE 2 adds v2 and sends on c0 (even column). Colors alternate by parity."],
+      [[[linkX(2), 140, "Σ so far", "acc"]], "Router 3, c0: rx WEST → tx RAMP."],
+      [[[cx(3), 45, "Σ v ✓", "grn"]], "PE 3 (last) adds into memory: v = in + v. Correct sum, M wavelets per hop, nothing left over."]
+    ],
+    one: [
+      [[], "Press Step. Now every PE uses the same color c."],
+      [[[cx(0), 45, "v0", "acc"]], "PE 0 sends v0 on c. Router 0: rx RAMP → tx EAST. Fine so far."],
+      [[[linkX(0), 140, "v0", "acc"]], "Router 1 must receive from WEST and also send its CE's output EAST, on one color, with one route: rx {WEST, RAMP} → tx {RAMP, EAST}. Every input goes to every output."],
+      [[[cx(1), 45, "v0", "acc"], [linkX(1), 140, "raw v0 ✗", "bad"]], "So the raw v0 is copied up to CE 1 AND straight on EAST, before anything is added."],
+      [[[cx(1), 45, "v0+v1", "acc"], [cx(1) - 50, 100, "↺ back to CE 1 ✗", "bad"], [linkX(1), 140, "v0+v1", "acc"]], "CE 1's output enters router 1 from RAMP and is sent to EAST and back to its own RAMP."],
+      [[[cx(2), 45, "2M wavelets ✗", "bad"]], "PE 2 sees raw v0 and v0+v1 interleaved: twice the wavelets it expects. Its sum is wrong, and the extras have no consumer."],
+      [[[cx(3), 45, "wrong / stall ✗", "bad"]], "Result: a wrong answer or a stalled run. Fix: alternate two colors by column parity (switch back to 'two')."]
+    ]
+  };
+  function rtDraw() {
+    const mode = $("#rt-mode").value, fr = FRAMES[mode], f = fr[Math.min(rtStep, fr.length - 1)];
+    rs.innerHTML = "";
+    for (let k = 0; k < 4; k++) {
+      const x = cx(k), mid = k > 0 && k < 3;
+      T("rect", { x: x - 55, y: 22, width: 110, height: 46, rx: 8, class: mid ? "box" : "grn", "stroke-width": 1.3 }, rs);
+      T("text", { x, y: 18, "text-anchor": "middle", "font-size": 11, class: "muted" }, rs, `PE ${k} CE`);
+      T("rect", { x: x - 45, y: 116, width: 90, height: 48, rx: 6, class: "box", "stroke-width": 1.3 }, rs);
+      T("text", { x, y: 144, "text-anchor": "middle", "font-size": 11, class: "muted" }, rs, "router");
+      T("path", { d: `M${x} 68 V116`, class: "s-muted", "stroke-width": 1.5, "stroke-dasharray": "3 3", fill: "none" }, rs);
+      T("text", { x: x + 4, y: 96, "font-size": 10, class: "muted" }, rs, "RAMP");
+      if (k < 3) T("path", { d: `M${x + 45} 140 H${x + 145}`, class: "s-muted", "stroke-width": 1.5, fill: "none" }, rs);
+      ROUTES[mode][k].forEach((r, j) => T("text", { x, y: 186 + j * 15, "text-anchor": "middle", "font-size": 11, class: "mono" + (mode === "one" && mid ? " f-red" : "") }, rs, r));
+    }
+    for (const [x, y, label, kind] of f[0]) {
+      const w = Math.max(44, label.length * 7.2 + 14);
+      T("rect", { x: x - w / 2, y: y - 12, width: w, height: 24, rx: 12, class: kind === "bad" ? "red" : kind, "stroke-width": 1.5 }, rs);
+      T("text", { x, y: y + 4, "text-anchor": "middle", "font-size": 12, "font-weight": 700 }, rs, label);
+    }
+    $("#rt-out").textContent = `step ${Math.min(rtStep, fr.length - 1)} / ${fr.length - 1}: ${f[1]}`;
+    $("#rt-step").disabled = rtStep >= fr.length - 1;
   }
+  $("#rt-step").onclick = () => { rtStep++; rtDraw(); };
+  $("#rt-reset").onclick = () => { rtStep = 0; rtDraw(); };
+  $("#rt-mode").onchange = () => { rtStep = 0; rtDraw(); };
+  rtDraw();
 
-  // gemv diagram
-  const gm = $("#gemv");
-  for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) {
-    const x = 200 + c * 100, y = 30 + r * 70;
-    el("rect", { x, y, width: 70, height: 48, rx: 6, class: "box", "stroke-width": 1.3 }, gm);
-    el("text", { x: x + 35, y: y + 29, "text-anchor": "middle", "font-size": 11 }, gm).textContent = `A[${r},${c}]`;
-    if (c < 3) el("line", { x1: x + 71, y1: y + 30, x2: x + 99, y2: y + 30, stroke: cssVar(c % 2 ? "--green" : "--accent"), "stroke-width": 3 }, gm);
-    if (r < 2) el("line", { x1: x + 20, y1: y + 49, x2: x + 20, y2: y + 69, stroke: cssVar("--blue"), "stroke-width": 3 }, gm);
+  // ---------- kernel vs whole run ----------
+  const io = $("#io");
+  const IO = [[2, 4394, 58], [4, 4496, 73], [8, 4748, 101], [16, 5260, 158]];
+  const X0 = 70, W = 520, MAX = 5500, sx = v => X0 + v / MAX * W;
+  for (let v = 0; v <= 5000; v += 1000) {
+    T("path", { d: `M${sx(v)} 14 V188`, class: "line", "stroke-width": 1, fill: "none" }, io);
+    T("text", { x: sx(v), y: 204, "text-anchor": "middle", "font-size": 11, class: "muted" }, io, v.toLocaleString());
   }
-  for (let c = 0; c < 4; c++) el("text", { x: 235 + c * 100, y: 20, "text-anchor": "middle", "font-size": 12, class: "f-blu" }, gm).textContent = `x[${c}] ↓`;
-  for (let r = 0; r < 3; r++) el("text", { x: 600, y: 60 + r * 70, "font-size": 12, class: "f-acc" }, gm).textContent = `→ y[${r}]`;
+  T("text", { x: X0 + W / 2, y: 222, "text-anchor": "middle", "font-size": 11, class: "muted" }, io, "simulated cycles (WSE-3, M = 32)");
+  IO.forEach(([P, tot, k], j) => {
+    const y = 22 + j * 42;
+    T("text", { x: X0 - 10, y: y + 18, "text-anchor": "end", "font-size": 12 }, io, `P = ${P}`);
+    const bar = T("rect", { x: X0, y, width: sx(tot) - X0, height: 26, rx: 4, class: "box", "stroke-width": 1 }, io);
+    T("title", {}, bar, `P = ${P}: whole run ${tot.toLocaleString()} cycles (host I/O + launches)`);
+    const kb = T("rect", { x: X0, y, width: Math.max(3, sx(k) - X0), height: 26, rx: 3, class: "f-acc" }, io);
+    T("title", {}, kb, `P = ${P}: kernel ${k} cycles on the last PE's clock`);
+    T("text", { x: sx(tot) + 8, y: y + 17, "font-size": 12 }, io, `${tot.toLocaleString()} total · kernel ${k} (${(100 * k / tot).toFixed(1)}%)`);
+  });
 
-  // wavefront widget
-  const svg = $("#w-svg"); let timer = null;
-  function frame(t, P, M, mode) {
-    svg.innerHTML = "";
-    const cw = Math.min(24, 600 / M), ch = Math.min(26, 220 / P);
+  // ---------- race widget + cycles-vs-P plot ----------
+  const svg = $("#w-svg"), plot = $("#w-plot"); let timer = null, t = 0;
+  const MEAS = { // last PE, own clock, M = 32
+    9: { stream: { 2: 58, 4: 73, 8: 101, 16: 158 }, saf: { 2: 58, 4: 154, 8: 348, 16: 733 } },
+    6: { stream: { 2: 54, 8: 84, 16: 124 }, saf: { 8: 307, 16: 643 } }
+  };
+  const params = () => ({ P: +$("#w-p").value, M: +$("#w-m").value, c: +$("#w-arch").value });
+  const totals = ({ P, M, c }) => ({ s: (P - 1) * c + M, f: (P - 1) * (M + c) + M });
+  function grid(y0, label, P, M, c, mode, total) {
+    const cw = 600 / M, ch = Math.min(22, 148 / P), finished = t >= total;
+    T("text", { x: 44, y: y0 - 6, "font-size": 12, "font-weight": 700 }, svg, label);
+    T("text", { x: 644, y: y0 - 6, "text-anchor": "end", "font-size": 12, class: finished ? "f-grn" : "muted", "font-weight": finished ? 700 : 400 }, svg, finished ? `done at cycle ${total} ✓` : `finishes at cycle ${total}`);
+    T("rect", { x: 40, y: y0 - 2, width: 608, height: P * ch + 3, rx: 4, fill: "none", class: finished ? "s-grn" : "line", "stroke-width": finished ? 2 : 1 }, svg);
     for (let p = 0; p < P; p++) {
-      el("text", { x: 36, y: 20 + p * ch + ch / 2 + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = `PE ${p}`;
+      const ry = y0 + p * ch;
+      if (ch >= 10 && (P <= 8 || p % 2 === 0 || p === P - 1)) T("text", { x: 36, y: ry + (ch - 2) / 2, "text-anchor": "end", "dominant-baseline": "middle", "font-size": Math.min(11, ch - 1), class: "muted" }, svg, `PE ${p}`);
       for (let i = 0; i < M; i++) {
-        // time element i is processed at PE p
-        const tp = mode === "stream" ? p * 2 + i : p * (M + 2) + i;
+        const tp = mode === "s" ? p * c + i : p * (M + c) + i;
+        const arrived = mode === "f" && p > 0 && t > (p - 1) * (M + c) + i + c;
         const done = t > tp, now = t === tp;
-        el("rect", { x: 44 + i * cw, y: 14 + p * ch, width: cw - 2, height: ch - 3, rx: 2,
-          fill: cssVar(now ? "--accent" : done ? "--green" : "--surface-2"), opacity: done && !now ? .55 : 1 }, svg);
+        const st = now ? "fill:var(--accent)" : done ? "fill:var(--green);opacity:.55" : arrived ? "fill:var(--blue-soft);stroke:var(--blue)" : "fill:var(--surface-2);stroke:var(--border)";
+        T("rect", { x: 44 + i * cw, y: ry, width: Math.max(1, cw - 2), height: ch - 2, rx: 2, style: st + ";stroke-width:.6" }, svg);
       }
     }
-    const total = mode === "stream" ? (P - 1) * 2 + M : (P - 1) * (M + 2) + M;
-    $("#w-out").textContent = `cycle ${Math.min(t, total)} / ${total}   (model: ${mode === "stream" ? "≈ M + 2P" : "≈ P × M"}; one element per cycle per link, ~2-cycle hop+ramp)`;
-    return total;
   }
+  function drawPlot() {
+    const { P, M, c } = params(); plot.innerHTML = "";
+    const px = p => 70 + (p - 2) / 14 * 540, maxY = (15) * (Math.max(M, 32) + 9) + Math.max(M, 32), py = v => 190 - v / maxY * 165;
+    for (let v = 0; v <= maxY; v += maxY > 600 ? 200 : 100) { T("path", { d: `M70 ${py(v)} H610`, class: "line", "stroke-width": 1, fill: "none" }, plot); T("text", { x: 62, y: py(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, plot, v); }
+    [2, 4, 8, 12, 16].forEach(p => T("text", { x: px(p), y: 206, "text-anchor": "middle", "font-size": 11, class: "muted" }, plot, p));
+    T("text", { x: 340, y: 224, "text-anchor": "middle", "font-size": 11, class: "muted" }, plot, `PEs in the row (P)  ·  model lines at M = ${M}; measured dots at M = 32`);
+    const line = (f, cls) => { let d = ""; for (let p = 2; p <= 16; p++) d += (p === 2 ? "M" : "L") + px(p) + " " + py(f(p)); T("path", { d, class: cls, "stroke-width": 2, fill: "none" }, plot); };
+    line(p => (p - 1) * c + M, "s-acc"); line(p => (p - 1) * (M + c) + M, "s-blu");
+    const m = MEAS[c];
+    for (const [k, cls] of [["stream", "f-acc"], ["saf", "f-blu"]]) for (const p in m[k]) {
+      const d = T("circle", { cx: px(+p), cy: py(m[k][p]), r: 5, class: cls, style: "stroke:var(--surface);stroke-width:2" }, plot);
+      T("title", {}, d, `${k === "stream" ? "streaming" : "store-and-forward"}, P = ${p}, M = 32: ${m[k][p]} cycles (measured, last PE's clock)`);
+    }
+    T("path", { d: `M${px(P)} 20 V190`, class: "s-muted", "stroke-width": 1, "stroke-dasharray": "4 3", fill: "none" }, plot);
+    const tt = totals({ P, M, c });
+    T("text", { x: 616, y: py((15) * (M + c) + M) + 4, "font-size": 11, class: "f-blu" }, plot, "store-and-fwd");
+    T("text", { x: 616, y: py(15 * c + M) + 4, "font-size": 11, class: "f-acc" }, plot, "streaming");
+    T("text", { x: px(P) + 6, y: 30, "font-size": 11 }, plot, `P = ${P}: ×${(tt.f / tt.s).toFixed(1)}`);
+  }
+  function frame() {
+    const pr = params(), { P, M, c } = pr, tt = totals(pr);
+    svg.innerHTML = "";
+    grid(24, "streaming: @fadds(out, in, v), fabric → fabric", P, M, c, "s", tt.s);
+    grid(206, "store-and-forward: receive all M into memory, add, then send", P, M, c, "f", tt.f);
+    T("text", { x: 44, y: 368, "font-size": 11, class: "muted" }, svg, "■ orange: element being processed   ■ green: done   ■ blue: arrived in buffer, waiting   □ not yet arrived");
+    $("#w-out").textContent = `cycle ${Math.min(t, tt.f)}   ·   streaming: M + c(P−1) = ${M} + ${c}·${P - 1} = ${tt.s}   ·   store-and-forward: (P−1)(M+c) + M = ${tt.f}   ·   ratio ×${(tt.f / tt.s).toFixed(1)}`;
+    return tt.f;
+  }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } $("#w-go").textContent = t > 0 && t < totals(params()).f ? "Resume" : "Play"; }
   function play() {
-    if (timer) clearInterval(timer);
-    const P = +$("#w-p").value, M = +$("#w-m").value, mode = $("#w-mode").value;
-    $("#w-pv").textContent = P; $("#w-mv").textContent = M;
-    let t = 0; const total = frame(0, P, M, mode);
-    timer = setInterval(() => { t++; frame(t, P, M, mode); if (t > total) clearInterval(timer); }, Math.max(20, 2400 / total));
+    if (timer) { stop(); return; }
+    if (t >= totals(params()).f) t = 0;
+    $("#w-go").textContent = "Pause";
+    timer = setInterval(() => { t++; const end = frame(); if (t >= end) stop(); }, 30);
   }
-  ["#w-p", "#w-m", "#w-mode"].forEach(s => $(s).oninput = () => { $("#w-pv").textContent = $("#w-p").value; $("#w-mv").textContent = $("#w-m").value; frame(0, +$("#w-p").value, +$("#w-m").value, $("#w-mode").value); });
-  $("#w-go").onclick = play; $("#w-pv").textContent = 8; $("#w-mv").textContent = 12; frame(0, 8, 12, "stream");
+  function reset() { stop(); t = 0; $("#w-pv").textContent = $("#w-p").value; $("#w-mv").textContent = $("#w-m").value; frame(); drawPlot(); stop(); }
+  ["#w-p", "#w-m", "#w-arch"].forEach(s => $(s).oninput = reset);
+  $("#w-go").onclick = play;
+  $("#w-step").onclick = () => { stop(); if (t < totals(params()).f) t++; frame(); stop(); };
+  $("#w-reset").onclick = reset;
+  reset();
+
+  // ---------- broadcast diagram (R = 6) ----------
+  const b = $("#bc"), R = 6;
+  T("rect", { x: 250, y: 6, width: 110, height: 30, rx: 6, class: "pur", "stroke-width": 1.3 }, b);
+  T("text", { x: 305, y: 26, "text-anchor": "middle", "font-size": 12, "font-weight": 700 }, b, "host");
+  T("path", { d: "M305 37 V58", class: "s-pur", "stroke-width": 2, fill: "none", "marker-end": "url(#b1)" }, b);
+  T("text", { x: 315, y: 52, "font-size": 11, class: "mono" }, b, "memcpy_h2d: x → root only");
+  for (let r = 0; r < R; r++) {
+    const y = 62 + r * 50;
+    T("rect", { x: 250, y, width: 110, height: 34, rx: 8, class: r === 0 ? "acc" : "box", "stroke-width": 1.5 }, b);
+    T("text", { x: 305, y: y + 22, "text-anchor": "middle", "font-size": 12 }, b, `PE (0,${r}) · s=${r + 1}`);
+    const route = r === 0 ? "rx RAMP → tx SOUTH" : r === R - 1 ? "rx NORTH → tx RAMP" : "rx NORTH → tx {RAMP, SOUTH}";
+    T("text", { x: 372, y: y + 22, "font-size": 12, class: "mono" }, b, route);
+    if (r < R - 1) T("path", { d: `M305 ${y + 35} V${y + 49}`, class: "s-acc", "stroke-width": 3, fill: "none", "marker-end": "url(#b0)" }, b);
+    T("text", { x: 238, y: y + 22, "text-anchor": "end", "font-size": 12, class: "muted" }, b, r === 0 ? "sends x · y = 1·x" : `receives x · y = ${r + 1}·x`);
+  }
+  T("path", { d: `M600 62 H610 V${62 + (R - 1) * 50 + 34} H600`, class: "s-pur", "stroke-width": 1.5, fill: "none" }, b);
+  T("text", { x: 618, y: 62 + (R * 50) / 2 - 8, "font-size": 11, class: "f-pur" }, b, "s: one float");
+  T("text", { x: 618, y: 62 + (R * 50) / 2 + 8, "font-size": 11, class: "f-pur" }, b, "to each PE");
+
+  // ---------- gemv diagram ----------
+  const gm = $("#gemv");
+  for (let c = 0; c < 4; c++) {
+    const x = 200 + c * 100;
+    T("text", { x: x + 35, y: 16, "text-anchor": "middle", "font-size": 12, class: "f-pur", "font-weight": 700 }, gm, `x[${c}]`);
+    T("path", { d: `M${x + 35} 22 V40`, class: "s-pur", "stroke-width": 2.5, fill: "none", "marker-end": "url(#g2)" }, gm);
+  }
+  for (let r = 0; r < 3; r++) {
+    const y = 44 + r * 72;
+    T("text", { x: 150, y: y + 29, "text-anchor": "end", "font-size": 12, class: "f-grn", "font-weight": 700 }, gm, `b[${r}]`);
+    T("path", { d: `M156 ${y + 24} H196`, class: "s-grn", "stroke-width": 2.5, fill: "none", "marker-end": "url(#g3)" }, gm);
+    T("path", { d: `M571 ${y + 24} H612`, class: "s-grn", "stroke-width": 2.5, fill: "none", "marker-end": "url(#g3)" }, gm);
+    T("text", { x: 618, y: y + 29, "font-size": 12, class: "f-grn", "font-weight": 700 }, gm, `y[${r}]`);
+    for (let c = 0; c < 4; c++) {
+      const x = 200 + c * 100;
+      T("rect", { x, y, width: 70, height: 48, rx: 6, class: "box", "stroke-width": 1.3 }, gm);
+      T("text", { x: x + 35, y: y + 29, "text-anchor": "middle", "font-size": 11 }, gm, `A[${r},${c}]`);
+      if (c < 3) T("path", { d: `M${x + 71} ${y + 24} H${x + 98}`, class: c % 2 ? "s-blu" : "s-acc", "stroke-width": 3, fill: "none", "marker-end": `url(#g${c % 2})` }, gm);
+      if (r < 2) T("path", { d: `M${x + 35} ${y + 49} V${y + 70}`, class: "s-pur", "stroke-width": 2.5, fill: "none", "marker-end": "url(#g2)" }, gm);
+    }
+  }
 })();
 </script>
 </body>
