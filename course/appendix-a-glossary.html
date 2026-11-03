@@ -56,6 +56,7 @@
     main .tag { white-space: normal; }
     /* phones: no inner scroll box; the page scrolls, and the search box and letter bar stay in view */
     .gl-scroll { max-height: none; overflow: visible; }
+    .widget#gl { overflow: visible; } /* course.css makes widgets scroll sideways on phones, which would stop the sticky header */
     .gl-head { position: sticky; top: var(--gl-top, 48px); z-index: 5; margin: 0 -12px; padding: 6px 12px 2px; border-bottom: 1px solid var(--border); }
     .letters { flex-wrap: nowrap; overflow-x: auto; gap: 2px; margin: 4px 0 4px; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
     .letters a, .letters span { min-width: 28px; min-height: 28px; line-height: 22px; flex: 0 0 auto; }
@@ -689,7 +690,7 @@ const fmtNum = v => !Number.isFinite(v) ? String(v) : v === 0 ? (Object.is(v, -0
       const v = decode(f, code);
       if (!Number.isFinite(v)) { render(undefined, "no next value: this is not a finite number"); return; }
       const nu = nextUp(f, code);
-      if (nu === v) { render(undefined, "already the largest finite value: the next step up is " + (hasInf(f) ? "infinity" : "beyond the format")); return; }
+      if (nu === v || !Number.isFinite(nu)) { render(undefined, "already the largest finite value: the next step up is " + (hasInf(f) ? "infinity" : "beyond the format")); return; }
       setCode(encode(f, nu)[1]); return;
     }
     inp.value = b.dataset.v; fromValue();

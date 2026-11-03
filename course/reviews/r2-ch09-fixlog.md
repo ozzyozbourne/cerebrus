@@ -38,8 +38,8 @@ Validated with Playwright at 1100 and 390 px, light and dark, plus the ◐ toggl
 
 ## Medium/low items
 - **SRAM budget (P2, A7, D5):**
-  - Weights are 38.9 KB per PE: 81% of 48 KB and 88% of the ~44 KB usable. That leaves ~9 KB raw, or ~4.5 KB after code.
-  - KV section: ≤ ~13 users is an upper bound. After 4.6 KB/PE × 3.6 M PEs ≈ 16.6 GB of code, ~19 GB remains: ~59k tokens, or ~7 users at 8K. Quiz Q3 matches. The Ch 10 #memory link has been added.
+  - Weights are 38.9 KB per PE: 81% of 48 KB and 88% of the ~44 KB usable. That leaves ~9 KB raw, or ~5 KB after code (88% → 89% after the note-13 update to ~4.2 KB).
+  - KV section: ≤ ~13 users is an upper bound. After ~4.2 KB/PE (note 13 updated: SAXPY 4,240 B) × 3.6 M PEs ≈ 15 GB of code, ~21 GB remains: ~63k tokens, or ~7 users at 8K. Quiz Q3 matches. The Ch 10 #memory link has been added.
 - **"~18,000" sentence (A5, P3):** deleted.
 - **"note 22/19" references (P1):** replaced with links to Ch 6 #collisions and #op-speed, Ch 12 #hop-cost, and Appendix C #tsc.
 - **Terms (P10):** Δt is defined in prose before convperf. LAIR/XLA, WSE-3T (with a Ch 2 reference) and AFD are now glossed.
@@ -90,10 +90,10 @@ Validated with Playwright at 1100 and 390 px, light and dark, plus the ◐ toggl
 4. **New cross-chapter note (speculation on a wafer):**
    - The draft is latency-bound, so on the wafer c ≈ 0.3–0.4 (range 0.15–0.4). With α = 0.8 and k = 4 the speedup is ≈ 1.4×, against 2.8× on a GPU (c = 0.05).
    - Verification is pipelined (+k/S), not batched in a region (~(k+1)×).
-   - At 8K, KV limits a 4 × CS-3 Llama-70B deployment to ≤ ~13 users (~7 after the 4.6 KB/PE code overhead), so ≤13 of 80 pipe slots are busy and speculation is nearly free system-wide.
+   - At 8K, KV limits a 4 × CS-3 Llama-70B deployment to ≤ ~13 users (~7 after the ~4.2 KB/PE code overhead), so ≤13 of 80 pipe slots are busy and speculation is nearly free system-wide.
    - Aggregate throughput is ≤ ~27,000 tok/s per 4 × CS-3 at 8K.
    - Ch 18's cost discussion could use the last two points.
-5. **New note (KV capacity):** 4 × CS-3 Llama-70B leaves 36 GB raw, which is ≤ ~110k tokens (~13 users at 8K). After ~16.6 GB of code and task tables it is ~19 GB, ~59k tokens, or ~7 users. Any chapter that quotes "13 users" should say "at most".
+5. **New note (KV capacity):** 4 × CS-3 Llama-70B leaves 36 GB raw, which is ≤ ~110k tokens (~13 users at 8K). After ~15 GB of code and task tables (4,240 B/PE) it is ~21 GB, ~63k tokens, or ~7 users. Any chapter that quotes "13 users" should say "at most".
 6. **New note (precision):** native 4-bit with 16-bit compute is a capacity gain (wafers, KV), not a per-token speed gain.
 7. **New note (405B):** the 969 → 539 tok/s drop at 100K context is not explained by KV reads in the budget model (+~6% per layer). Ch 8 and Ch 18 should not attribute it to attention bandwidth.
 8. **Appendix A glossary:** consider entries for LAIR, AFD (Attention-FFN disaggregation), and "draft cost c". **Appendix B/E:** the f16 GEMV constants (7.5 B/cycle WSE-3, 3.8 WSE-2) and the 8-wide option.

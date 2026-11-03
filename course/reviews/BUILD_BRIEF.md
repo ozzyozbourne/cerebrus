@@ -25,7 +25,7 @@ Decision record: reviews/PHASE3_SUMMARY.md and reviews/phase3-*.md.
   a chip is unsupported and make commands.sh exit 0 with a SKIP message (prefer supporting both).
 - SDK: `source /home/user/cerebras-sdk/env.sh`; see .claude/skills/cerebras-sdk/SKILL.md. Never run cs_python under /tmp.
   Scratch under /home/user/cerebras-sdk/tmp/<your-task>/ and delete it at the end. Clean sim outputs from program dirs.
-- Kernel timing: on-tile TSC (<time> module), same-PE start/end (notes 17, 19). Whole-run cycles are noisy (+1–4%).
+- Kernel timing: on-tile TSC (<time> module), same-PE start/end (notes 17, 19). Whole-run cycles are noisy (a few percent, up to ~40% seen).
 - Respect licensing: SDK examples may be adapted with attribution in a header comment ("Adapted from Cerebras SDK 2.10.1
   benchmarks/…"); keep the course's own code style and comments.
 

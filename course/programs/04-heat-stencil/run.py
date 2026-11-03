@@ -26,7 +26,7 @@ rt.launch('run', np.uint32(args.steps), np.float32(args.alpha), nonblock=False)
 res = np.zeros(P * (n + 2), dtype=np.float32)
 rt.memcpy_d2h(res, us, 0, 0, P, 1, n + 2, **kw)
 # Kernel timing: read each PE's TSC at run() start and at the final unblock.
-# Each PE's counter starts when the launch reaches it, so only compare two
+# Each PE zeroes its counter in enable_tsc() when the launch reaches it, so only compare two
 # readings from the SAME PE; we report one interior PE.
 rt.launch('pack', nonblock=False)
 tw = np.zeros(P * 6, dtype=np.uint32)        # one u16 per 32-bit word
