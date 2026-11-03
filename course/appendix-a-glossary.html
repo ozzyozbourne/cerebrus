@@ -569,7 +569,7 @@ const fmtNum = v => !Number.isFinite(v) ? String(v) : v === 0 ? (Object.is(v, -0
     parts.forEach(([k, n]) => {
       for (let i = 0; i < n; i++) el("rect", { x: x + i * bw, y: yc, width: bw - 2, height: h, rx: 2, class: cls[k], "stroke-width": 1, "stroke-dasharray": dashed ? "3 2" : "none" }, svg);
       // label above the field, never on the cell borders; always letter + width
-      el("text", { x: x + (n * bw - 2) / 2, y: yc - 3, "text-anchor": "middle", "font-size": 10.5, class: "mono muted" }, svg).textContent = k === "s" ? "S" : `${lab[k]}${n}`;
+      el("text", { x: x + (n * bw - 2) / 2, y: yc - 3, "text-anchor": "middle", "font-size": 10.5, class: "mono muted" }, svg).textContent = k === "s" ? "S" : k === "i" ? `${n} integer bits` : `${lab[k]}${n}`;
       x += n * bw;
     });
     el("text", { x: x + 6, y: yc + 14, "font-size": 11.5, class: "muted" }, svg).textContent = `${parts.reduce((a, p) => a + p[1], 0)} bits`;
@@ -597,8 +597,8 @@ const fmtNum = v => !Number.isFinite(v) ? String(v) : v === 0 ? (Object.is(v, -0
       x += per * cw + 1.2;
     }
     if (extra) {
-      el("rect", { x: x + 8, y: y + 2, width: 104, height: h - 4, rx: 3, class: cls.k, "stroke-dasharray": "3 2", "stroke-width": 1 }, svg);
-      el("text", { x: x + 60, y: y + 14, "text-anchor": "middle", "font-size": 10.5, class: "mono" }, svg).textContent = extra;
+      el("rect", { x: x + 8, y: y + 2, width: 128, height: h - 4, rx: 3, class: cls.k, "stroke-dasharray": "3 2", "stroke-width": 1 }, svg);
+      el("text", { x: x + 72, y: y + 14, "text-anchor": "middle", "font-size": 10.5, class: "mono" }, svg).textContent = extra;
     }
     el("text", { x: x0, y: y + h + 13, "font-size": 11.5, class: "muted" }, svg).textContent = `${scaleLab} + ${nv} values`;
     el("text", { x: x0, y: y + h + 27, "font-size": 11.5, class: "muted" }, svg).textContent = note;
@@ -676,7 +676,7 @@ const fmtNum = v => !Number.isFinite(v) ? String(v) : v === 0 ? (Object.is(v, -0
       }
     }
     if (note) lines.push(note);
-    if (Number.isFinite(v)) { const nu = nextUp(f, code); if (nu !== v) lines.push(`next value up: ${fmtNum(nu)} (gap ${fmtNum(nu - v)})`); }
+    if (Number.isFinite(v)) { const nu = nextUp(f, code); if (nu !== v && Number.isFinite(nu)) lines.push(`next value up: ${fmtNum(nu)} (gap ${fmtNum(nu - v)})`); }
     lines.push(`largest finite ${fmtNum(maxFinite(f))}` + (f.kind !== "int" ? ` · smallest normal ${fmtNum(2 ** (1 - f.bias))} · relative step 2^-${f.m} = ${fmtNum(2 ** -f.m)}` : ""));
     if (sel.value === "cb16") lines.push("cb16: the bit split and bias are an unverified assumption (see the table).");
     out.textContent = lines.join("\n");
