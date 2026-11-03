@@ -175,7 +175,7 @@ rt.stop()</code></pre>
 
 <div class="callout cuda">
 <strong>If you know CUDA</strong>
-<p><code>memcpy_h2d</code> is <code>cudaMemcpy</code> with the decomposition made explicit: you name a rectangle of PEs and the elements per PE. <code>rt.launch()</code> stands where <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> does, but no threads start: it is an RPC queued in every PE's command stream, and the resident program's exported function runs once per PE. "Launch returned" only means the command was sent. As with an asynchronous CUDA launch, a kernel that never finishes shows up at the next copy, here as "could be a kernel stall" (<a href="10-csl-toolchain.html#errors">Chapter 10</a>).</p>
+<p><code>memcpy_h2d</code> is <code>cudaMemcpy</code> with the decomposition made explicit: you name a rectangle of PEs and the elements per PE. <code>rt.launch()</code> stands where <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> does, but no threads start: it is an RPC queued in every PE's command stream, and the resident program's exported function runs once per PE. "Launch returned" only means the command was sent. As with an asynchronous CUDA launch, a kernel that never finishes shows up at the next copy, but where a CUDA <code>cudaMemcpy</code> would block forever, here the copy errors after about 4 s with "could be a kernel stall" (<a href="10-csl-toolchain.html#errors">Chapter 10</a>).</p>
 </div>
 
 <h2 id="command-stream">The command stream</h2>

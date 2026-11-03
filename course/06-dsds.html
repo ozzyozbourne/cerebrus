@@ -69,7 +69,7 @@
 
 <div class="callout cuda">
 <strong>If you know CUDA</strong>
-<p>A DSD is the whole loop, not one lane of it: <code>@fmacs(y_dsd, y_dsd, x_dsd, a)</code> replaces a grid-stride loop, and the descriptor's extent, stride and offset do the job of <code>threadIdx</code>. The CUDA habit of one element per thread becomes one long DSD per PE. Scalar code that moves a DSD around in a loop costs about 35 cycles per step <span class="tag measured">Measured, simulator</span>, so keep loops inside descriptors (<a href="#dsrs">below</a>).</p>
+<p>A DSD is the whole loop, not one lane of it: <code>@fmacs(y_dsd, y_dsd, x_dsd, a)</code> replaces a grid-stride loop, and the descriptor's extent, stride and offset do the job of <code>threadIdx</code>. The CUDA habit of one element per thread becomes one long DSD per PE. Scalar code that moves a DSD around in a loop costs about 33–35 cycles per step <span class="tag measured">Measured, simulator</span>, so keep loops inside descriptors (<a href="#dsrs">below</a>).</p>
 </div>
 
 <h2 id="moving-dsd">Two spellings, and moving a DSD</h2>
