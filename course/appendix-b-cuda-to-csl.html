@@ -7,7 +7,8 @@
 <link rel="stylesheet" href="assets/course.css">
 <style>
   /* appendix-local styles */
-  .rosetta td:first-child { font-weight: 650; white-space: nowrap; }
+  .rosetta td:first-child { font-weight: 650; width: 21%; }
+  .rosetta td:nth-child(2) { width: 50%; }
   .rosetta td { font-size: 14px; }
   .rosetta .why { color: var(--muted); display: block; margin-top: 3px; font-size: 13.5px; }
   .rosetta tr.hide { display: none; }
@@ -25,15 +26,25 @@
   .bud-grid small { color: var(--muted); font-size: 12.5px; display: block; }
   table.chk td:nth-child(2) { white-space: nowrap; font-family: var(--mono); font-size: 13.5px; }
   .pill { display: inline-block; font: 700 11.5px/1 var(--sans); padding: 4px 7px; border-radius: 999px; white-space: nowrap; }
-  .pill.ok { background: var(--green-soft); color: var(--green); }
+  .pill.ok { background: var(--green-soft); color: color-mix(in srgb, var(--green) 78%, var(--text)); }
   .pill.warn { background: var(--amber-soft); color: var(--amber); }
   .pill.bad { background: var(--red-soft); color: var(--red); }
   .meter { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; margin-top: 4px; min-width: 80px; }
   .meter i { display: block; height: 100%; background: var(--green); }
   .meter i.warn { background: var(--amber); } .meter i.bad { background: var(--red); }
-  .consts td:nth-child(2), .consts td:nth-child(3) { white-space: nowrap; }
+  /* page-local: only the short single-span number cells stay on one line; Notes always wrap */
   .consts td { font-size: 14px; }
-  @media (max-width: 680px) { main .tag { white-space: normal; } .rosetta td:first-child { white-space: normal; } }
+  .consts td.n { white-space: nowrap; }
+  .consts td:nth-last-child(2) { min-width: 14em; }
+  #bu-cmd { white-space: pre; overflow-x: auto; margin: 8px 0 0; font-size: 13px; }
+  #bu-note { margin: 6px 0 0; }
+  #bu-note:empty { display: none; }
+  .sbs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  .sbs > div { min-width: 0; }
+  .sbs h4 { margin: 0 0 6px; font-size: 15px; }
+  .sbs pre { margin: 0 0 10px; font-size: 12.5px; }
+  .sbs .filename { margin: 8px 0 2px; }
+  @media (max-width: 680px) { main .tag { white-space: normal; } .sbs { grid-template-columns: 1fr; } .consts td.n { white-space: normal; } }
 </style>
 </head>
 <body>
@@ -54,7 +65,7 @@
 <p>Tags as in the chapters: <span class="tag vendor">Vendor</span> <span class="tag indep">Independent</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span>. Every number here is copied from the linked chapter or from the course's cross-chapter notes; nothing new was measured for this page. Terms are defined in <a href="appendix-a-glossary.html">Appendix A</a>.</p>
 
 <h2 id="rosetta">CUDA &rarr; CSL &rarr; TT-Metalium</h2>
-<p>The short version: CUDA launches many identical threads over one shared memory and lets hardware schedule and cache. CSL places a resident program on every PE, gives each one private memory, and moves data only along routes you declared. TT-Metalium sits between: per-core programs and explicit transfers, but large local memory and DRAM behind every core (<a href="18-comparison.html#programming-model">Chapter 18</a>). Rows marked <span class="noeq">no equivalent</span> are where CUDA intuition misleads.</p>
+<p>The short version: CUDA launches many identical threads over one shared memory and lets hardware schedule and cache. CSL places a resident program on every PE, gives each one private memory, and moves data only along routes you declared. TT-Metalium sits between: per-core programs and explicit transfers, but large local memory and GDDR6 beside the chip that every core reaches over the NoC (<a href="18-comparison.html#programming-model">Chapter 18</a>, <a href="16-tenstorrent.html">Ch. 16</a>). Rows marked <span class="noeq">no equivalent</span> are where CUDA intuition misleads.</p>
 
 <div class="controls">
 <div class="chips" role="group" aria-label="Show rows">
@@ -73,19 +84,19 @@
 
 <tr class="g-exec"><th class="grp" colspan="3">Execution</th></tr>
 <tr class="g-exec"><td>kernel (<code>__global__</code> function)</td><td>A <b>PE program</b> (<code>pe_program.csl</code>) resident on every PE of the rectangle, with tasks and host-callable functions. It is placed at load time and stays for the whole run.<span class="why">Code is placed, not launched: cslc builds one ELF per group of identical PEs (<a href="10-csl-toolchain.html#builds">Ch. 10</a>).</span></td><td class="tt">a reader, a compute and a writer kernel per core (<a href="16-tenstorrent.html#programming">Ch. 16</a>)</td></tr>
-<tr class="g-exec"><td>grid</td><td>The <b>PE rectangle</b>, <code>@set_rectangle(W, H)</code> in layout.csl, fixed at compile time; the simulated fabric is W + 7 by H + 2, and a CS-2 allows at most 743 &times; 992 <span class="tag sdk">SDK</span>.<span class="why">There is no run-time grid size: a different size is a recompile (<a href="10-csl-toolchain.html#fabric-size">Ch. 10</a>).</span></td><td class="tt"><code>CoreRange</code>, a grid of cores</td></tr>
+<tr class="g-exec"><td>grid</td><td>The <b>PE rectangle</b>, <code>@set_rectangle(W, H)</code> in layout.csl, fixed at compile time; the simulated fabric must be at least W + 7 by H + 2 (<a href="#fabric-fig">figure below</a>), and a CS-2 allows at most 743 &times; 992 <span class="tag sdk">SDK</span>.<span class="why">There is no run-time grid size: a different size is a recompile (<a href="10-csl-toolchain.html#fabric-size">Ch. 10</a>).</span></td><td class="tt"><code>CoreRange</code>, a grid of cores</td></tr>
 <tr class="g-exec"><td>thread block</td><td><span class="noeq">no equivalent</span>. The nearest is one PE, whose 48 KB is its "shared memory", or a region of PEs.<span class="why">PEs share no memory at all; a group of PEs cooperates only by wavelets (<a href="17-gpu.html#saxpy-twice">Ch. 17</a>).</span></td><td class="tt">one Tensix core</td></tr>
 <tr class="g-exec"><td>thread, <code>threadIdx</code> / <code>blockIdx</code></td><td>A <b>PE</b>. Its identity comes from layout params or <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code>; which data it owns is decided by how the host's memcpy splits the arrays.<span class="why">Each PE has its own instruction stream (MIMD), so about 900,000 PEs play the part of the threads you would launch (<a href="10-csl-toolchain.html#hardware-parts">Ch. 10</a>).</span></td><td class="tt">no global thread ID: runtime args per core</td></tr>
-<tr class="g-exec"><td>warp (32 lanes in lockstep)</td><td>One <b>DSD instruction</b> over a vector inside one PE (8-wide FP16 SIMD on WSE-3 <span class="tag vendor">Vendor</span>). There is no warp of PEs.<span class="why">Neighbouring PEs can branch differently for free; lockstep exists only inside one vector op (<a href="06-dsds.html#one-instruction">Ch. 6</a>).</span></td><td class="tt">one FPU op on a 32 &times; 32 tile; 32-lane SFPU</td></tr>
-<tr class="g-exec"><td>grid-stride or per-element loop</td><td>A DSD's <b>extent</b>: <code>@fmacs(y_dsd, y_dsd, x_dsd, a)</code> is the whole loop. Outer loops move the DSD with <code>@increment_dsd_offset</code>.<span class="why">A scalar loop around a DSD costs about 35 cycles per step, a DSR-based <code>@map</code> about 2 (<a href="06-dsds.html#dsrs">Ch. 6</a>).</span></td><td class="tt">loop over tiles in the kernel</td></tr>
-<tr class="g-exec"><td>Tensor Cores</td><td><span class="noeq">no equivalent</span>: no separate matrix unit. The SIMD datapath does FMACs, about 1 f32 or 3.2 f16 per cycle on WSE-3 <span class="tag measured">Measured</span>.<span class="why">FLOPs come from 900,000 thin datapaths, not a few fat matrix engines (<a href="03-processing-element.html#pe-speed">Ch. 3</a>).</span></td><td class="tt">the matrix FPU (8 &times; 16 &middot; 16 &times; 16 per cycle)</td></tr>
+<tr class="g-exec"><td>warp (32 lanes in lockstep)</td><td>One <b>DSD instruction</b> over a vector inside one PE (8-wide FP16 SIMD on WSE-3 <span class="tag vendor">Vendor</span>). There is no warp of PEs.<span class="why">Neighbouring PEs can branch differently for free; lockstep exists only inside one vector op (<a href="06-dsds.html#one-instruction">Ch. 6</a>). The 8 lanes are a ceiling: measured f16 FMAC runs at 3.2&ndash;4 per cycle on WSE-3 <span class="tag measured">Measured</span>, because each element also reads y and A and writes y in SRAM, so memory traffic, not lane count, appears to set the rate (an inference; <a href="03-processing-element.html#pe-speed">Ch. 3</a>, <a href="06-dsds.html#op-speed">Ch. 6</a>).</span></td><td class="tt">one FPU op on a 32 &times; 32 tile; 32-lane <a href="appendix-a-glossary.html#g-fpu-sfpu">SFPU</a></td></tr>
+<tr class="g-exec"><td>grid-stride or per-element loop</td><td>A DSD's <b>extent</b>: <code>@fmacs(y_dsd, y_dsd, x_dsd, a)</code> is the whole loop. Outer loops move the <a href="appendix-a-glossary.html#g-dsd-data-structure-descriptor">DSD</a> with <code>@increment_dsd_offset</code>.<span class="why">A scalar loop around a DSD costs about 33&ndash;35 cycles per step, a DSR-based <code>@map</code> about 2 (<a href="06-dsds.html#dsrs">Ch. 6</a>).</span></td><td class="tt">loop over tiles in the kernel</td></tr>
+<tr class="g-exec"><td>Tensor Cores</td><td><span class="noeq">no equivalent</span>: no separate matrix unit. The SIMD datapath does FMACs, about 1 f32 or 3.2 f16 per cycle on WSE-3 <span class="tag measured">Measured</span>.<span class="why">FLOPs come from 900,000 thin datapaths, not a few fat matrix engines (<a href="03-processing-element.html#pe-speed">Ch. 3</a>).</span></td><td class="tt">the matrix <a href="appendix-a-glossary.html#g-fpu-sfpu">FPU</a> (8 &times; 16 &middot; 16 &times; 16 per cycle)</td></tr>
 <tr class="g-exec"><td>a thread waiting on a condition</td><td><span class="noeq">no equivalent</span>: a task must <b>run to completion</b>. Waiting becomes a state machine of tasks that activate each other.<span class="why">A synchronous fabric op inside a task can deadlock the PE (<a href="05-tasks.html#rules">Ch. 5</a>, <a href="05-tasks.html#state-machine">state machine</a>).</span></td><td class="tt">kernels block in <code>cb_wait_front</code>; allowed</td></tr>
 
 <tr class="g-mem"><th class="grp" colspan="3">Memory</th></tr>
-<tr class="g-mem"><td>shared memory (<code>__shared__</code>)</td><td>The PE's <b>48 KB SRAM</b>: private, single-cycle, holding code and data; about 44.5 KB is left for your arrays on WSE-3 <span class="tag measured">Measured</span>.<span class="why">It is the only memory there is; nothing is shared with other PEs (<a href="03-processing-element.html#memory-map">Ch. 3</a>).</span></td><td class="tt">1,536 KiB L1 (Blackhole) holding CBs and buffers</td></tr>
-<tr class="g-mem"><td>registers</td><td>16 GPRs for scalars and 48 DSRs for descriptors (WSE-3) <span class="tag vendor">Vendor</span>. Vectors stay in SRAM: ops stream memory to memory.<span class="why">SRAM answers in one cycle, so there is no register file to tile into (<a href="03-processing-element.html#simd">Ch. 3</a>).</span></td><td class="tt">SrcA, SrcB, Dst</td></tr>
-<tr class="g-mem"><td>global memory (HBM)</td><td><span class="noeq">no equivalent</span> on the wafer. "Global" data is the union of 900,000 private SRAMs (44 GB), reachable only by routing. Off the wafer: the host through memcpy, and MemoryX in training.<span class="why">The design removes the large slow memory instead of hiding it (<a href="03-processing-element.html#no-caches">Ch. 3</a>, <a href="08-systems.html#memoryx">Ch. 8</a>).</span></td><td class="tt">GDDR6 behind every core, interleaved or sharded</td></tr>
-<tr class="g-mem"><td>L1 / L2 caches</td><td><span class="noeq">no equivalent</span> (a 512 B software-managed cache exists on WSE-3, but CSL does not expose it <span class="tag vendor">Vendor</span>).<span class="why">Local memory is already single-cycle (<a href="03-processing-element.html#no-caches">Ch. 3</a>).</span></td><td class="tt">none: no hardware caches</td></tr>
+<tr class="g-mem"><td>shared memory (<code>__shared__</code>)</td><td>The PE's <b>48 KB SRAM</b>: private, single-cycle, holding code and data; about 44,500 B (&asymp; 43.5 KB) is left for your arrays on WSE-3 <span class="tag measured">Measured</span>, 43,600&ndash;44,900 B depending on how much code the program has.<span class="why">It is the only memory there is; nothing is shared with other PEs (<a href="03-processing-element.html#memory-map">Ch. 3</a>).</span></td><td class="tt">1,536 KiB L1 (Blackhole) holding <a href="appendix-a-glossary.html#g-circular-buffer-cb">CBs</a> and buffers</td></tr>
+<tr class="g-mem"><td>registers</td><td>16 <a href="appendix-a-glossary.html#g-gpr">GPRs</a> for scalars and 48 <a href="appendix-a-glossary.html#g-dsr-data-structure-register">DSRs</a> for descriptors (WSE-3) <span class="tag vendor">Vendor</span>. Vectors stay in SRAM: ops stream memory to memory.<span class="why">SRAM answers in one cycle, so there is no register file to tile into (<a href="03-processing-element.html#simd">Ch. 3</a>).</span></td><td class="tt">SrcA, SrcB, Dst</td></tr>
+<tr class="g-mem"><td>global memory (HBM)</td><td><span class="noeq">no equivalent</span> on the wafer. "Global" data is the union of 900,000 private SRAMs (44 GB), reachable only by routing. Off the wafer: the host through memcpy, and MemoryX in training.<span class="why">The design removes the large slow memory instead of hiding it (<a href="03-processing-element.html#no-caches">Ch. 3</a>, <a href="08-systems.html#memoryx">Ch. 8</a>).</span></td><td class="tt">GDDR6 beside the chip, reachable from every core over the NoC (interleaved or sharded)</td></tr>
+<tr class="g-mem"><td>L1 / L2 caches</td><td><span class="noeq">no equivalent</span> (a 512 B <a href="appendix-a-glossary.html#g-software-managed-cache">software-managed cache</a> exists on WSE-3 <span class="tag vendor">Vendor</span>, but we found no CSL API for it).<span class="why">Local memory is already single-cycle (<a href="03-processing-element.html#no-caches">Ch. 3</a>).</span></td><td class="tt">none: no hardware caches</td></tr>
 <tr class="g-mem"><td>constant memory, kernel arguments</td><td><code>param</code> for compile-time values (<code>--params</code> takes unsigned integers only) and RPC arguments for run-time scalars, such as SAXPY's <code>a</code>.<span class="why">Floats and negative numbers reach the device at run time (<a href="10-csl-toolchain.html#language">Ch. 10</a>).</span></td><td class="tt">compile-time and runtime args</td></tr>
 <tr class="g-mem"><td><code>cudaMalloc</code>, dynamic allocation</td><td>Arrays are static, sized at compile time; overflow is a link error (&ldquo;ran out of PE memory&rdquo;). A <code>&lt;malloc&gt;</code> library exists <span class="tag sdk">SDK</span>.<span class="why">48 KB leaves no room for a heap you did not plan (<a href="10-csl-toolchain.html#memory">Ch. 10</a>).</span></td><td class="tt"><code>CreateBuffer</code> in DRAM or L1</td></tr>
 <tr class="g-mem"><td>peer / device-to-device copy</td><td><b>Wavelets on colors you routed</b>, via fabric DSDs. No PE can address another PE's memory.<span class="why">Routes are static, so every communication pattern is planned at compile time and costs colors (<a href="04-fabric.html#routes">Ch. 4</a>).</span></td><td class="tt"><code>noc_async_read/write</code> to any core's L1 or DRAM by address</td></tr>
@@ -106,7 +117,7 @@
 <tr class="g-host"><td>CUDA graphs</td><td>Not needed: the program is resident, and tasks fire on every arriving wavelet without the host.<span class="why">Streaming mode starts compute by data arrival, no launch at all (<a href="07-host-io.html#modes">Ch. 7</a>).</span></td><td class="tt">trace capture and replay</td></tr>
 
 <tr class="g-perf"><th class="grp" colspan="3">Performance</th></tr>
-<tr class="g-perf"><td>occupancy</td><td><span class="noeq">no equivalent</span>: nothing to oversubscribe. The limits that play its part are the per-PE budgets below: ~44.5 KB of arrays, 8 microthreads, task IDs, queues and colors.<span class="why">Local memory needs no latency hiding (<a href="#budget">budget card</a>).</span></td><td class="tt">L1 size and CB count (32 / 64)</td></tr>
+<tr class="g-perf"><td>occupancy</td><td><span class="noeq">no equivalent</span>: nothing to oversubscribe. The limits that play its part are the per-PE budgets below: about 44,500 B (&asymp; 43.5 KB) of arrays, 8 <a href="appendix-a-glossary.html#g-microthread">microthreads</a>, task IDs, queues and colors.<span class="why">Local memory needs no latency hiding (<a href="#budget">budget card</a>).</span></td><td class="tt">L1 size and CB count (32 / 64)</td></tr>
 <tr class="g-perf"><td>latency hiding by many warps</td><td><b>Dataflow</b>: a task runs when its data arrives, and up to 8 async ops (one per microthread) overlap send, receive and compute.<span class="why">Microthreads buy overlap, not FLOPs (<a href="03-processing-element.html#microthreads">Ch. 3</a>).</span></td><td class="tt">double-buffered circular buffers</td></tr>
 <tr class="g-perf"><td>coalescing</td><td>Not needed for local SRAM, and strided DSDs work, but stride still costs: a 256-element f32 add takes 162 cycles at stride 1 and 546 at stride 4 on WSE-3 <span class="tag measured">Measured</span>.<span class="why">Bank stripes, not cache lines (<a href="03-processing-element.html#bank-model">Ch. 3</a>).</span></td><td class="tt">tile layout; sharding</td></tr>
 <tr class="g-perf"><td>shared-memory bank conflicts</td><td>The <b>operand-collision rule</b>: <code>@fmacs</code> runs at half speed when its two sources start at addresses equal mod 4 words; pad one word <span class="tag measured">Measured, empirical</span>.<span class="why">The exact rule is undocumented and differs by chip at N = 64 (<a href="06-dsds.html#collisions">Ch. 6</a>).</span></td><td class="tt">not covered in this course</td></tr>
@@ -115,16 +126,65 @@
 <tr class="g-tools"><th class="grp" colspan="3">Tools</th></tr>
 <tr class="g-tools"><td><code>nvcc</code>, compute capability</td><td><code>cslc --arch=wse2|wse3</code>. The default is wse2, so leaving it out silently builds for WSE-2. <code>@is_arch</code> selects per-chip code.<span class="why">WSE-2 and WSE-3 differ in queues, task IDs and routes (<a href="05-tasks.html#portability">Ch. 5</a>, <a href="10-csl-toolchain.html#flags">Ch. 10</a>).</span></td><td class="tt">one build per architecture (not covered)</td></tr>
 <tr class="g-tools"><td><code>printf</code></td><td><code>&lt;simprint&gt;</code> prints to sim.log; <code>&lt;debug&gt;</code> fills trace buffers the host reads after <code>stop()</code>.<span class="why">(<a href="10-csl-toolchain.html#hangs">Ch. 10</a>)</span></td><td class="tt">not covered in this course</td></tr>
-<tr class="g-tools"><td>Nsight, profilers</td><td>The PE's timestamp counter (<code>&lt;time&gt;</code>), the instruction trace, <code>sim_stats.json</code>, and <code>csdb</code>.<span class="why">Time kernels on one PE's TSC; whole-run cycles move with host load (<a href="10-csl-toolchain.html#sim-outputs">Ch. 10</a>).</span></td><td class="tt">not covered in this course</td></tr>
+<tr class="g-tools"><td>Nsight, profilers</td><td>The PE's <a href="appendix-a-glossary.html#g-timestamp-counter-tsc">timestamp counter</a> (TSC, <code>&lt;time&gt;</code>), the instruction trace, <code>sim_stats.json</code>, and <code>csdb</code>.<span class="why">Time kernels on one PE's TSC; whole-run cycles move with host load (<a href="10-csl-toolchain.html#sim-outputs">Ch. 10</a>).</span></td><td class="tt">not covered in this course</td></tr>
 <tr class="g-tools"><td>a GPU to run on</td><td>The SDK's cycle-level <b>simulator</b>; every lab here runs on it, none on hardware.<span class="why">(<a href="10-csl-toolchain.html#source-to-sim">Ch. 10</a>)</span></td><td class="tt">ttsim ISA simulator</td></tr>
 </table></div>
 
+<h2 id="saxpy">One kernel, both ways: SAXPY</h2>
+<p>The same y = a&middot;x + y in CUDA and in the course's <a href="11-lab-first-programs.html#saxpy">program 01</a> (Chapter 10 tours its three files line by line, <a href="10-csl-toolchain.html#tour">Ch. 10</a>). Comments name the Rosetta row each line maps to. The CSL is trimmed to the lines that matter; the full files are in <code>course/programs/01-saxpy/</code>.</p>
+<div class="sbs">
+<div>
+<h4>CUDA</h4>
+<div class="filename">saxpy.cu: kernel</div>
+<pre><code><span class="k">__global__</span> <span class="k">void</span> saxpy(<span class="k">int</span> n, <span class="k">float</span> a,
+                      <span class="k">const float</span> *x, <span class="k">float</span> *y) {
+  <span class="c">// grid-stride loop: one element per thread</span>
+  <span class="k">for</span> (<span class="k">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
+       i &lt; n; i += gridDim.x * blockDim.x)
+    y[i] = a * x[i] + y[i];
+}</code></pre>
+<div class="filename">saxpy.cu: host</div>
+<pre><code>cudaMalloc(&amp;dx, n * 4); cudaMalloc(&amp;dy, n * 4);  <span class="c">// cudaMalloc</span>
+cudaMemcpy(dx, x, n * 4, cudaMemcpyHostToDevice);  <span class="c">// cudaMemcpy</span>
+cudaMemcpy(dy, y, n * 4, cudaMemcpyHostToDevice);
+saxpy&lt;&lt;&lt;blocks, 256&gt;&gt;&gt;(n, 2.5f, dx, dy);  <span class="c">// launch</span>
+cudaMemcpy(y, dy, n * 4, cudaMemcpyDeviceToHost);</code></pre>
+</div>
+<div>
+<h4>CSL + host Python</h4>
+<div class="filename">layout.csl</div>
+<pre><code><span class="k">param</span> N: i16;  <span class="c">// constant memory: --params=N:64</span>
+layout {
+  @set_rectangle(1, 1);  <span class="c">// grid: a 1 &times; 1 PE rectangle</span>
+  @set_tile_code(0, 0, <span class="s">"pe_program.csl"</span>, .{ &hellip;, .N = N });
+  @export_name(<span class="s">"y"</span>, [*]f32, true);
+  @export_name(<span class="s">"saxpy"</span>, fn(f32)void);  <span class="c">// RPC</span>
+}</code></pre>
+<div class="filename">pe_program.csl</div>
+<pre><code><span class="k">var</span> x: [N]f32;  <span class="c">// cudaMalloc: static, in the PE's 48 KB</span>
+<span class="k">var</span> y: [N]f32;
+<span class="k">const</span> x_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -&gt; x[i] });
+<span class="k">const</span> y_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -&gt; y[i] });
+<span class="k">fn</span> saxpy(a: f32) <span class="k">void</span> {
+  @fmacs(y_dsd, y_dsd, x_dsd, a);  <span class="c">// the whole loop: DSD extent</span>
+  sys_mod.unblock_cmd_stream();    <span class="c">// let the next host command run</span>
+}</code></pre>
+<div class="filename">run.py</div>
+<pre><code>rt.load(); rt.run()                          <span class="c">// program is resident from here</span>
+rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)    <span class="c">// cudaMemcpy to a PE rectangle</span>
+rt.memcpy_h2d(ys, y, 0, 0, 1, 1, N, **kw)
+rt.launch(<span class="s">'saxpy'</span>, a, nonblock=False)    <span class="c">// &lt;&lt;&lt;&gt;&gt;&gt; becomes an RPC</span>
+rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
+</div>
+</div>
+<p>What changed: there is no thread index, because one PE owns all N elements and a single <code>@fmacs</code> walks them; there is no allocation call, because the arrays are placed at link time; and the "launch" is an RPC to a program that has been running since <code>rt.run()</code>. Forget <code>unblock_cmd_stream()</code> and the <code>launch</code> still returns: the next copy fails after about 4 s with &ldquo;could be a kernel stall&rdquo; <span class="tag measured">Measured</span> (<a href="07-host-io.html#host-side">Ch. 7</a>). Python comments use <code>#</code> in the real file.</p>
+
 <h2 id="budget">One PE's budget</h2>
-<p>Everything a kernel uses on a PE comes out of the limits below. memcpy, the host-I/O runtime, takes its share first (<a href="07-host-io.html#reserves">Chapter 7</a>). WSE-3 is the column to design for; WSE-2 differs in the rows marked in bold.</p>
+<p>Everything a kernel uses on a PE comes out of the limits below. memcpy, the host-I/O runtime, takes its share first (<a href="07-host-io.html#reserves">Chapter 7</a>). WSE-3 is the column to design for; WSE-2 differs in the rows marked in bold. Units: as in the chapters, KB here means 1,024 B, so 48 KB = 49,152 B and 44,500 B &asymp; 43.5 KB.</p>
 
 <div class="stat-row">
 <div class="stat"><div class="v">48 KB</div><div class="l">SRAM per PE, code + data <span class="tag vendor">Vendor</span></div></div>
-<div class="stat"><div class="v">&asymp; 44.5 KB</div><div class="l">left for arrays on WSE-3 <span class="tag measured">Measured</span></div></div>
+<div class="stat"><div class="v">&asymp; 43.5 KB</div><div class="l">(&asymp; 44,500 B) left for arrays on WSE-3, &plusmn; 0.7 KB with code size <span class="tag measured">Measured</span></div></div>
 <div class="stat"><div class="v">20 of 24</div><div class="l">colors free; memcpy owns 20&ndash;23 <span class="tag sdk">SDK</span></div></div>
 <div class="stat"><div class="v">8&ndash;20</div><div class="l">safe local task IDs <span class="tag sdk">SDK</span></div></div>
 <div class="stat"><div class="v">8</div><div class="l">microthreads; two ops never share one <span class="tag sdk">SDK</span></div></div>
@@ -133,28 +193,39 @@
 <div class="table-wrap"><table>
 <tr><th>Resource</th><th>WSE-3</th><th>WSE-2</th><th>What memcpy takes / rule</th><th>Source</th></tr>
 <tr><td>SRAM</td><td>48 KB = 49,152 B, 8 banks</td><td>same</td><td>code, memcpy runtime and its buffers, task table</td><td><span class="tag vendor">Vendor</span> <a href="03-processing-element.html#memory">Ch. 3</a></td></tr>
-<tr><td>fixed overhead, minimal memcpy program</td><td>&asymp; 4,636 B (incl. 1 KB task table)</td><td><b>&asymp; 3,134 B</b></td><td>more code and tasks raise it (SAXPY: 4,240 B on WSE-3)</td><td><span class="tag measured">Measured</span> <a href="03-processing-element.html#memory-map">Ch. 3</a>, <a href="10-csl-toolchain.html#memory">Ch. 10</a></td></tr>
-<tr><td>usable for arrays</td><td>&asymp; 44,500 B (matvec links at 48,736 B used, fails 2 KB later)</td><td><b>&asymp; 45 KB</b> (Lab 3 links to n &asymp; 5,650, 45.2 KB of arrays)</td><td>overflow is a link error, never a run-time one</td><td><span class="tag measured">Measured</span> <a href="03-processing-element.html#memory-map">Ch. 3</a>, <a href="13-lab-stencil.html#fixed-cost">Ch. 13</a></td></tr>
-<tr><td>routable colors</td><td>24</td><td>24</td><td>20 (internal switching), 21 (D2H data), 22 (commands), 23 (H2D data): use 0&ndash;19; streaming H2D/D2H colors (&le; 4 each) come out of those</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#color-budget">Ch. 4</a>, <a href="07-host-io.html#reserves">Ch. 7</a></td></tr>
+<tr><td>fixed overhead (code, memcpy runtime, task table)</td><td>smallest measured: 4,240 B (SAXPY, incl. 1 KB task table); matvec benchmark (N = 8): 4,636 B</td><td><b>smallest: &asymp; 2,850 B (SAXPY); matvec: 3,134 B</b></td><td>grows with your code and tasks: Lab 3 leaves room for only &asymp; 43,600 B of arrays on WSE-3, so its overhead is up to &asymp; 5.5 KB <span class="tag derived">Derived</span></td><td><span class="tag measured">Measured</span> <a href="10-csl-toolchain.html#memory">Ch. 10</a>, <a href="03-processing-element.html#memory-map">Ch. 3</a></td></tr>
+<tr><td>usable for arrays</td><td>&asymp; 43,600&ndash;44,900 B (&asymp; 42.6&ndash;43.9 KB): SAXPY links at N = 5,610 (49,120 B used) and fails at 5,620; Lab 3 at n &asymp; 5,450</td><td><b>&asymp; 45,200&ndash;46,300 B (&asymp; 44&ndash;45 KB)</b>: SAXPY links at N = 5,784; Lab 3 at n &asymp; 5,650</td><td>overflow is a link error, never a run-time one; near the limit, bisect with <code>cs_readelf -m</code></td><td><span class="tag measured">Measured</span> <a href="10-csl-toolchain.html#memory">Ch. 10</a>, <a href="11-lab-first-programs.html#saxpy">Ch. 11</a>, <a href="13-lab-stencil.html#fixed-cost">Ch. 13</a></td></tr>
+<tr><td>routable colors</td><td>24</td><td>24</td><td>20 (context switch), 21 (D2H data), 22 (commands), 23 (H2D data): use 0&ndash;19; streaming H2D/D2H colors (&le; 4 each) come out of those (memcpy routes them; you do not list them twice)</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#color-budget">Ch. 4</a>, <a href="07-host-io.html#reserves">Ch. 7</a></td></tr>
 <tr><td>switch-capable colors</td><td>0&ndash;9, 12, 13, 16, 17, 20, 21</td><td>same</td><td>4 route positions per color</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#switches">Ch. 4</a></td></tr>
-<tr><td>rx directions per route</td><td>exactly 1 (compile error with 2)</td><td><b>several</b> (one-hot)</td><td>tx: any set of the 5 ports</td><td><span class="tag measured">Measured</span> <a href="04-fabric.html#route-register">Ch. 4</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-route-rx-tx">rx</a> directions per route</td><td>exactly 1 (compile error with 2)</td><td><b>several</b> (one-hot)</td><td>tx: any set of the 5 ports</td><td><span class="tag measured">Measured</span> <a href="04-fabric.html#route-register">Ch. 4</a></td></tr>
 <tr><td>fabric inputs per DSD op</td><td>at most 1</td><td><b>more than one</b></td><td>WSE-3 workaround: drain one input into a FIFO</td><td><span class="tag sdk">SDK</span> <a href="06-dsds.html#fabric-dsds">Ch. 6</a></td></tr>
-<tr><td>filters per PE</td><td>6 (one bank)</td><td>6 (4 + 2)</td><td>memcpy uses a counter filter on every row</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#filters">Ch. 4</a></td></tr>
-<tr><td>input / output queues</td><td>8 / 8</td><td><b>8 / 6</b></td><td>queue 0 (and 1 on WSE-3, the command color) belong to memcpy: start at 2</td><td><span class="tag sdk">SDK</span> <a href="07-host-io.html#reserves">Ch. 7</a></td></tr>
+<tr><td>filters per PE</td><td>6 (one bank)</td><td>6 (4 + 2)</td><td>memcpy uses a <a href="appendix-a-glossary.html#g-filter-range-counter">counter filter</a> on every row</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#filters">Ch. 4</a></td></tr>
+<tr><td>input / output queues</td><td>8 / 8</td><td><b>8 / 6</b></td><td>queue 0 (and 1 on WSE-3, the command color) belong to memcpy; queue 1 is free on WSE-2, but start at 2 so the code ports</td><td><span class="tag sdk">SDK</span> <a href="07-host-io.html#reserves">Ch. 7</a></td></tr>
 <tr><td>queue depths (WSE-3)</td><td colspan="2">input 6 / 4 / 2 wavelets for queues 0&ndash;1 / 2&ndash;3 / 4&ndash;7; output 2 / 6 / 2 for 0&ndash;1 / 2&ndash;3 / 4&ndash;5</td><td>small queues are why back-pressure reaches the host fast</td><td><span class="tag sdk">SDK</span> <a href="07-host-io.html#modes">Ch. 7</a></td></tr>
-<tr><td>data tasks</td><td>one per input queue (0&ndash;7): 6 free (2&ndash;7)</td><td><b>one per receive color</b>; task ID = color</td><td>a fabric DSD reading a queue needs its data task unbound or blocked</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#budget">Ch. 5</a></td></tr>
-<tr><td>local task IDs</td><td>8&ndash;30 (compiler); use <b>8&ndash;20</b></td><td><b>0&ndash;30</b>, minus the IDs of colors you receive on</td><td>memcpy: 21, 24, 27, 28, 30; 29 = teardown (never bind); 31 = NOP; 21&ndash;23 also marked reserved on WSE-3</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#budget">Ch. 5</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-data-task">data tasks</a></td><td>one per input queue (0&ndash;7): 6 free (2&ndash;7)</td><td><b>one per receive color</b>; task ID = color</td><td>a fabric DSD reading a queue needs its data task unbound or blocked</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#budget">Ch. 5</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-local-task">local task IDs</a></td><td>8&ndash;30 (compiler); use <b>8&ndash;20</b></td><td><b>0&ndash;30</b>, minus memcpy's and the IDs of colors you receive on: in practice 0&ndash;20, 25, 26</td><td>memcpy: 21, 24, 27, 28, 30; 29 = teardown (never bind); 31 = NOP; 21&ndash;23 also marked reserved on WSE-3; on WSE-2, 22 and 23 are the data tasks of memcpy's colors 22/23; 24 is <code>SYS_EN_MAIN</code> (context switch), reused by the SDK stencil on WSE-2</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#budget">Ch. 5</a></td></tr>
 <tr><td>activatable IDs</td><td colspan="2">below 31 only: the DSD's activate/unblock field is 5 bits</td><td>control wavelets can reach higher IDs</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#portability">Ch. 5</a></td></tr>
-<tr><td>control task IDs</td><td colspan="2">0&ndash;63 (64 is rejected)</td><td>memcpy: 33&ndash;37 and 40</td><td><span class="tag measured">Measured</span> <a href="05-tasks.html#sentinels">Ch. 5</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-control-task">control task IDs</a></td><td colspan="2">0&ndash;63 (64 is rejected)</td><td>memcpy: 33&ndash;37 and 40</td><td><span class="tag measured">Measured</span> <a href="05-tasks.html#sentinels">Ch. 5</a></td></tr>
 <tr><td>task priority</td><td colspan="2">one bit per ID for IDs 0&ndash;31 (HIGH/LOW); order among equals undocumented</td><td>wavelet tasks: set on the color (WSE-2) or queue (WSE-3)</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#priority">Ch. 5</a></td></tr>
-<tr><td>microthreads</td><td>8, IDs 0&ndash;7; <code>.ut_id</code> or default = queue ID</td><td><b>8, always = queue ID</b></td><td>memcpy moves its data with microthread 0; a FIFO takes 2; two concurrent ops must never share one</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#portability">Ch. 5</a>, <a href="06-dsds.html#fifos">Ch. 6</a></td></tr>
-<tr><td>DSRs / GPRs</td><td>48 / 16</td><td>not published</td><td>non-comptime DSDs cost DSRs (<code>--dump-dsr-alloc-graph</code>)</td><td><span class="tag vendor">Vendor</span> <a href="06-dsds.html#dsrs">Ch. 6</a></td></tr>
-<tr><td>software-managed cache</td><td>512 B</td><td>256 B</td><td>not exposed by CSL</td><td><span class="tag vendor">Vendor</span> <a href="03-processing-element.html#feed">Ch. 3</a></td></tr>
-<tr><td>FIFO minimum alignment</td><td>16 B</td><td>8 B</td><td>pad rows to 16 B to avoid bank conflicts</td><td><span class="tag sdk">SDK</span> <a href="03-processing-element.html#bank-model">Ch. 3</a></td></tr>
-<tr><td>fabric around your W &times; H</td><td colspan="2">at least (W + 7) &times; (H + 2) at offsets 4,1; CS-2 hardware is 750 &times; 994, so at most 743 &times; 992</td><td>1 halo + 3 memcpy columns west, 2 + 1 east, 1 halo row above and below</td><td><span class="tag sdk">SDK</span> <a href="10-csl-toolchain.html#fabric-size">Ch. 10</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-microthread">microthreads</a></td><td>8, IDs 0&ndash;7; <code>.ut_id</code> or default = queue ID</td><td><b>8, always = queue ID</b></td><td>memcpy moves its data with microthread 0; a FIFO takes 2; two concurrent ops must never share one</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#portability">Ch. 5</a>, <a href="06-dsds.html#fifos">Ch. 6</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-dsr-data-structure-register">DSRs</a> / <a href="appendix-a-glossary.html#g-gpr">GPRs</a></td><td>48 / 16</td><td>not published</td><td>non-comptime DSDs cost DSRs (<code>--dump-dsr-alloc-graph</code>)</td><td><span class="tag vendor">Vendor</span> <a href="06-dsds.html#dsrs">Ch. 6</a></td></tr>
+<tr><td>software-managed cache</td><td>512 B</td><td>256 B</td><td>no CSL API for it that we found; the CSL standard library never mentions it</td><td><span class="tag vendor">Vendor</span> <a href="03-processing-element.html#feed">Ch. 3</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-fifo">FIFO</a> minimum alignment</td><td>16 B</td><td>8 B</td><td>allocate FIFO buffers on a 16 B (WSE-3) / 8 B (WSE-2) boundary (<code>FIFO_MIN_ALIGNMENT</code>)</td><td><span class="tag sdk">SDK</span> <a href="03-processing-element.html#bank-model">Ch. 3</a></td></tr>
+<tr><td>SRAM banks</td><td colspan="2">8 banks, 16-byte stripe: bank = (byte address &divide; 2) mod 8</td><td>the SDK's matvec pads rows to 16 B &ldquo;to avoid bank conflicts&rdquo;; see also the operand-collision row below</td><td><span class="tag sdk">SDK</span> <a href="03-processing-element.html#bank-model">Ch. 3</a></td></tr>
+<tr><td>fabric around your W &times; H</td><td colspan="2">at least (W + 7) &times; (H + 2) at offsets 4,1; CS-2 hardware is 750 &times; 994, so at most 743 &times; 992</td><td>1 halo + 3 memcpy columns west, 2 memcpy + 1 halo east, 1 halo row above and below (<a href="#fabric-fig">figure</a>)</td><td><span class="tag sdk">SDK</span> <a href="10-csl-toolchain.html#fabric-size">Ch. 10</a></td></tr>
 <tr><td>I/O channels</td><td colspan="2">&le; 16 and &le; your rectangle's rows</td><td>about 7 Gb/s each on hardware</td><td><span class="tag sdk">SDK</span> <a href="07-host-io.html#frame">Ch. 7</a></td></tr>
 <tr><td>clock</td><td>not published (SDK assumes 850 MHz)</td><td><b>1.1 GHz</b> <span class="tag vendor">Vendor, HC22</span></td><td>convert cycles at both when you quote time</td><td><a href="02-the-wafer.html#generations">Ch. 2</a></td></tr>
 </table></div>
+
+<figure id="mem-fig">
+<svg id="memfig-svg" viewBox="0 0 680 170" width="680" role="img" aria-label="Two 48 KB bars, WSE-3 and WSE-2: fixed overhead of code, memcpy runtime and task table at the left, a band where it grows with code, then the space left for arrays"></svg>
+<figcaption><b>Where one PE's 48 KB goes.</b> The fixed part is the smallest measured program (SAXPY: 4,240 B on WSE-3 including a 1 KB task table, &asymp; 2,850 B on WSE-2) <span class="tag measured">Measured, cs_readelf -m</span>; the hatched band is how far it grew for Lab 3 (up to &asymp; 5.5 KB on WSE-3, &asymp; 3.9 KB on WSE-2) <span class="tag derived">Derived</span> from its link limits. Everything right of that is yours. Drawn to scale (1 px &asymp; 77 B).</figcaption>
+</figure>
+
+<figure id="fabric-fig">
+<svg id="fabfig-svg" viewBox="0 0 680 300" width="680" role="img" aria-label="A 5 by 3 user rectangle inside a 12 by 5 simulated fabric: 1 halo and 3 memcpy columns on the west, 2 memcpy and 1 halo columns on the east, one halo row above and below; the first user PE is at offset 4,1"></svg>
+<figcaption><b>Your W &times; H rectangle inside the simulated fabric</b> (drawn for W = 5, H = 3). memcpy adds 3 columns west and 2 east, and a halo ring of 1 surrounds everything, so <code>--fabric-dims</code> must be at least (W + 7) &times; (H + 2) and <code>--fabric-offsets=4,1</code> puts your PE (0, 0) at fabric (4, 1) <span class="tag sdk">SDK</span> (<a href="10-csl-toolchain.html#fabric-size">Ch. 10</a>). The checker below prints these flags for your W and H.</figcaption>
+</figure>
 
 <div class="widget" id="bud">
 <h4>Budget checker: will my kernel fit on one PE?</h4>
@@ -224,7 +295,7 @@
 <tr><th colspan="5">Fabric</th></tr>
 <tr><td>pure router hop</td><td>2.0 cycles</td><td>1.0 cycle</td><td>round trip on one PE; +1 cycle per extra wavelet on WSE-3; WSE-2 streamed about 1 wavelet per 2 cycles in that test</td><td><span class="tag measured">Measured</span> <a href="04-fabric.html#latency">Ch. 4</a></td></tr>
 <tr><td>hop through a PE's program (receive, <code>@fadds</code>, send)</td><td>&asymp; 9.2 cycles</td><td>&asymp; 6.0 cycles</td><td>use c &asymp; 9 / 6 in chain models; own-clock step per PE reads 7.2 / 5.0</td><td><span class="tag derived">Derived</span> from <span class="tag measured">Measured</span> <a href="12-lab-neighbours.html#hop-cost">Ch. 12</a></td></tr>
-<tr><td>chain reduce, streaming (Lab 2, M = 32)</td><td>58 / 73 / 101 / 158 / 273 cycles for P = 2 / 4 / 8 / 16 / 32</td><td>&ndash;</td><td>&asymp; M + 7P on the last PE's own clock; store-and-forward: 348 vs 101 at P = 8</td><td><span class="tag measured">Measured</span> <a href="12-lab-neighbours.html#measuring">Ch. 12</a></td></tr>
+<tr><td>chain reduce, streaming (Lab 2, M = 32)</td><td>58 / 73 / 101 / 158 / 273 cycles for P = 2 / 4 / 8 / 16 / 32</td><td>54 / 64 / 84 / 124 cycles for P = 2 / 4 / 8 / 16</td><td>&asymp; M + 7P (WSE-3) / M + 5P (WSE-2) on the last PE's own clock; store-and-forward: 348 vs 101 at P = 8</td><td><span class="tag measured">Measured</span> <a href="12-lab-neighbours.html#measuring">Ch. 12</a></td></tr>
 <tr><td><code>&lt;collectives_2d&gt;</code> reduce</td><td>&asymp; 700 cycles fixed on top of the static-route version</td><td>&ndash;</td><td>754 vs 58 cycles at P = 2, M = 32</td><td><span class="tag measured">Measured</span> <a href="12-lab-neighbours.html#collectives">Ch. 12</a></td></tr>
 <tr><td>buffering per hop</td><td colspan="2">&asymp; 16 wavelets (output queue + router + input queue)</td><td>a chain of P PEs absorbs &asymp; 16(P &minus; 1) wavelets before the sender stalls</td><td><span class="tag measured">Measured</span> <a href="12-lab-neighbours.html#late-pe">Ch. 12</a></td></tr>
 <tr><th colspan="5">Lab 3 step model (heat stencil, P PEs &times; n cells, TSC slope 10 &rarr; 100 steps)</th></tr>
@@ -241,7 +312,13 @@
 
 <div class="callout">
 <p><strong>Putting the constants to work</strong></p>
-<p>A first estimate for a kernel on one PE is the sum of its vector ops (start-up + elements &divide; rate), plus &asymp; 15 cycles per async transfer with its completion task, plus &asymp; 9 cycles (WSE-3) per PE a value must pass through on the way. Lab 3 is exactly that sum: 90 + 2.5&middot;n. Then measure on the TSC: the bank-clash and operand rules mean the first estimate can be off by 2&times;.</p>
+<p>A first estimate for a kernel on one PE is the sum of:</p>
+<ul>
+<li>its vector ops: start-up + elements &divide; rate. Use &asymp; 15&ndash;17 cycles of start-up for an isolated op and &asymp; 6 (WSE-3) for each further op in the same task;</li>
+<li>&asymp; 14.6 cycles per async transfer with its completion task, plus &asymp; 13 cycles of step bookkeeping if the kernel is a task chain like Lab 3's;</li>
+<li>&asymp; 9 cycles (WSE-3) / 6 (WSE-2) per PE a value must pass through on the way.</li>
+</ul>
+<p>Lab 3 on WSE-3 rebuilt from these: four transfers 4 &times; 14.6 = 58.4, bookkeeping 13, three consecutive op start-ups 3 &times; &asymp; 6 = 19 (measured), so 58.4 + 13 + 19 &asymp; 90 fixed; the per-cell slope 2.5 = 0.5 (<code>@fadds</code> at 2/cycle) + 1 + 1 (two <code>@fmacs</code> at 1/cycle). That is the measured 90 + 2.5&middot;n <span class="tag derived">Derived</span> (<a href="13-lab-stencil.html#fixed-cost">Ch. 13</a>). Using the isolated 15&ndash;17 for every op would give &asymp; 108: the start-up value matters. Then measure on the TSC: the bank-clash and operand rules mean a first estimate can be off by 2&times;.</p>
 </div>
 
 </main>

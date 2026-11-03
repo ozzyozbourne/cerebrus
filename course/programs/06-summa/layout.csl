@@ -11,7 +11,7 @@
 //
 // Resource map (every PE)
 //   colors        0, 1  row (x) broadcast         2, 3  column (y) broadcast
-//                 (20-23 belong to memcpy and the runtime, Chapter 4)
+//                 (20-23 belong to memcpy and the runtime, Chapter 10)
 //   local tasks   8, 9  x library (FSM, lock)     10, 11  y library (FSM, lock)
 //                 12 exit   13 compute   14 x_done   15 y_done
 //                 (the teardown handler, task 29, is installed by the library)

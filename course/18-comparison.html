@@ -268,7 +268,7 @@ ol.decoder li { margin: 4px 0; }
 <tr><td>B200</td><td>BF16 (~2.25 PF) / FP4 (9 PF)</td><td>1,000 W module</td><td>≈ 2.3 / 9</td></tr>
 <tr><td>Blackhole p150</td><td>BlockFP8 (664 TF)</td><td>300 W card</td><td>≈ 2.2</td></tr>
 </table></div>
-<p>Per peak FLOP the wafer is the <em>least</em> efficient of the four, and the system-vs-module mismatch only partly explains it. Its energy case, where it exists, comes from not moving data: wires between cores are under 1 mm <span class="tag indep">Press, STH on HC34</span>, and the MD paper's authors report one to two orders of magnitude better energy efficiency than the GPU runs <span class="tag measured">Peer-reviewed, with Cerebras co-authors</span>. On compute-bound work GPUs do more FLOPs per watt; on bandwidth-bound work with resident data the wafer can win. Neither has been independently measured in tokens per joule.</p>
+<p>Per peak FLOP the wafer is the <em>least</em> efficient of the four, and the system-vs-module mismatch only partly explains it. Its energy case, where it exists, comes from not moving data: wires between cores are under 1 mm <span class="tag indep">Press, STH on HC34</span>, and the MD paper's authors report one to two orders of magnitude better energy efficiency than the GPU runs <span class="tag indep">Peer-reviewed, with Cerebras co-authors</span>. On compute-bound work GPUs do more FLOPs per watt; on bandwidth-bound work with resident data the wafer can win. Neither has been independently measured in tokens per joule.</p>
 
 <h2>What the evidence shows</h2>
 <div class="table-wrap"><table class="mini">
@@ -339,11 +339,11 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 <div class="rd" id="lab-out" aria-live="polite"></div>
 </div>
 
-<h2>Choosing</h2>
+<h2 id="choosing">Choosing</h2>
 <div class="table-wrap"><table class="mini">
 <tr><th>If you need…</th><th>Lean</th><th>Because (evidence above)</th><th>What is missing</th></tr>
 <tr><td>Lowest latency per user, if you can hold the model's weights in the SRAM of enough wafers</td><td><span class="pill cb">Cerebras</span></td><td>Kimi K2.6 981 tok/s, Llama 3.3-70B 2,314 tok/s <span class="tag indep">Indep</span>; 44 GB per wafer, so 70B FP16 takes 4 CS-3s (Ch. 8)</td><td>independent $/token; concurrency per instance</td></tr>
-<tr><td>Stencil or particle science that fits on one wafer, needing strong scaling</td><td><span class="pill cb">Cerebras</span></td><td>MD 179× <span class="tag measured">Peer-reviewed</span>, with the authors' caveat; Lab 3's flat weak scaling; stencil extrapolation above</td><td>problems larger than a wafer</td></tr>
+<tr><td>Stencil or particle science that fits on one wafer, needing strong scaling</td><td><span class="pill cb">Cerebras</span></td><td>MD 179× <span class="tag indep">Peer-reviewed</span>, with the authors' caveat; Lab 3's flat weak scaling; stencil extrapolation above</td><td>problems larger than a wafer</td></tr>
 <tr><td>Iterative sparse solvers or FFTs on grids that fit on the wafer</td><td><span class="pill cb">Cerebras</span>, try it</td><td>the SDK ships CG, preconditioned CG, BiCGStab, Cholesky, FFT 1-D/2-D/3-D, SpMV and power-method benchmarks <span class="tag sdk">SDK</span>; CS-1 BiCGStab ~1/3 of peak</td><td>performance comparisons: the tag says the patterns exist, not that they win</td></tr>
 <tr><td>Highest throughput per dollar at big batches</td><td><span class="pill nv">NVIDIA</span></td><td>~$0.10–0.25 vs $0.60 per M tokens <span class="tag analyst">Analyst</span> / <span class="tag vendor">Vendor</span>; batching shares each weight byte (ridge ≈ 295)</td><td>an independent TCO study</td></tr>
 <tr><td>Huge models, long context, large KV caches</td><td><span class="pill nv">NVIDIA</span></td><td>capacity per device 80–192 GB; NVL72 ~13.4 TB</td><td>—</td></tr>
@@ -367,7 +367,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 
 <h2>Back to the memory wall</h2>
 <p>Chapter 1 asked how to feed compute that grows faster than memory bandwidth. <strong>NVIDIA</strong> buys more HBM bandwidth each generation and raises intensity with batching and fused kernels; the ridge still climbs (295 → ~2,600 FLOP/byte from H100 to Rubin). Since 2026 it also adds small SRAM chips (Groq 3 LPX) for decode, which concedes the wafer's point about bandwidth while keeping the chips reticle-sized. <strong>Tenstorrent</strong> keeps tiles in a large per-core SRAM, streams weights from cheap GDDR6, and spreads models across chips over Ethernet that costs it almost no bandwidth. <strong>Cerebras</strong> makes the SRAM big enough to hold the working set and pays in capacity, power per system and communication between PEs. The labs confirmed that answer from the inside: memory was never the bottleneck, messages and their completion tasks were, and every byte had to be placed by hand.</p>
-<h3>Where to go next</h3>
+<h3 id="next">Where to go next</h3>
 <ul>
 <li>The SDK tutorials, in order (gemv-00 → 09, then the topic tutorials): <code>cerebras-sdk/extras/csl-extras-*/examples/tutorials</code> <span class="tag sdk">SDK 2.10.1</span>.</li>
 <li>The benchmarks, especially <code>7pt-stencil-spmv</code>, <code>25-pt-stencil</code>, <code>gemm-collectives_2d</code>, <code>single-tile-matvec</code>, <code>conjugate-gradient</code> and <code>fft-3d</code>: <code>examples/benchmarks</code>.</li>

@@ -194,7 +194,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <h3>Does overlapping communication help?</h3>
 <p>On a GPU or with MPI you would compute the interior while the halo is in flight. Measured here, it makes things slower. A correct version that computes the interior Laplacian (<code>n − 2</code> cells, two vector instructions) right after issuing the four transfers, then the two edge Laplacians with a 2-element strided DSD once the ghosts arrive, then one <code>@fmacs</code> over all n cells, costs <strong>178.0 cycles per step against 130.2</strong> <span class="tag measured">Measured</span>, and still matches numpy. There is almost no latency to hide: the four completion tasks already run back to back, and they cannot run at all while the CE is busy with the interior instructions. Meanwhile the change added two vector instructions (≈6 cycles each to start) and made every inlined completion task larger. Overlap pays off when transfers are long (many wavelets per message), or when the receive itself does the arithmetic.</p>
 
-<h3>How the SDK's stencils differ</h3>
+<h3 id="sdk-stencils">How the SDK's stencils differ</h3>
 <p>Both SDK stencil benchmarks are 3-D: x and y are spread over the 2-D PE grid, and each PE holds a whole z-column ("pencil") in its memory.</p>
 <div class="table-wrap"><table>
 <tr><th></th><th>Lab 3 (program 04)</th><th>7-point stencil SpMV</th><th>25-point stencil</th></tr>

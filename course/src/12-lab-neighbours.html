@@ -54,7 +54,7 @@
 {{code:programs/03-row-reduce/run.py}}
 {{out:programs/03-row-reduce/expected_output.txt}}
 
-<h3>Reading the code: roles are compile-time params</h3>
+<h3 id="roles">Reading the code: roles are compile-time params</h3>
 <p>The <code>layout</code> loop runs at compile time. For each column x it computes three values and passes them to <code>@set_tile_code</code>: <code>role</code> (0 first, 1 middle, 2 last), <code>send_color</code> and <code>recv_color</code>. Inside <code>pe_program.csl</code> they are <code>param</code>s, so the compiler knows their values. <code>if (role == 0)</code> in <code>reduce()</code> is folded away, and each PE's binary holds only its own branch. The compiler builds one binary per unique set of params (Chapter 10). For P = 8 that is 4 binaries: first, last, and two middle ones with the colors swapped.</p>
 <p>The guards follow one rule: <em>configure only what this PE uses</em>. Every PE except the last sends, so it gets a <code>send_c</code> route (RAMP → EAST) and an output queue bound to <code>send_c</code>. Every PE except the first receives, so it gets a <code>recv_c</code> route (WEST → RAMP) and an input queue bound to <code>recv_c</code>. A middle PE has both, on two different colors: that is the checkerboard from Chapter 4, and the stepper below shows why it needs two colors.</p>
 <p><b>Two chips, one source.</b> On WSE-3, <code>@initialize_queue</code> binds an output queue to one color, and the DSD names only the queue. On WSE-2 the color goes on the <code>fabout_dsd</code> (<code>.fabric_color</code>), and the queue is initialized without one. Input queues are bound to a color on both chips. The <code>@is_arch</code> expressions select the right form at compile time (Chapter 5, WSE-2 vs WSE-3 table).</p>
