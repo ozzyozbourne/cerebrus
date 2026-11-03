@@ -42,7 +42,7 @@
   .sbs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
   .sbs > div { min-width: 0; }
   .sbs h4 { margin: 0 0 6px; font-size: 15px; }
-  .sbs pre { margin: 0 0 10px; font-size: 12.5px; }
+  .sbs pre { margin: 0 0 10px; font-size: 12px; padding: 10px 12px; }
   .sbs .filename { margin: 8px 0 2px; }
   @media (max-width: 680px) { main .tag { white-space: normal; } .sbs { grid-template-columns: 1fr; } .consts td.n { white-space: normal; } }
 </style>
@@ -131,53 +131,57 @@
 </table></div>
 
 <h2 id="saxpy">One kernel, both ways: SAXPY</h2>
-<p>The same y = a&middot;x + y in CUDA and in the course's <a href="11-lab-first-programs.html#saxpy">program 01</a> (Chapter 10 tours its three files line by line, <a href="10-csl-toolchain.html#tour">Ch. 10</a>). Comments name the Rosetta row each line maps to. The CSL is trimmed to the lines that matter; the full files are in <code>course/programs/01-saxpy/</code>.</p>
+<p>The same y = a&middot;x + y in CUDA and in the course's <a href="11-lab-first-programs.html#saxpy">program 01</a> (Chapter 10 tours its three files line by line, <a href="10-csl-toolchain.html#tour">Ch. 10</a>). The list under the code names the Rosetta row each line maps to. The CSL is trimmed to the lines that matter; the full files are in <code>course/programs/01-saxpy/</code>.</p>
 <div class="sbs">
 <div>
 <h4>CUDA</h4>
 <div class="filename">saxpy.cu: kernel</div>
-<pre><code><span class="k">__global__</span> <span class="k">void</span> saxpy(<span class="k">int</span> n, <span class="k">float</span> a,
+<pre><code><span class="k">__global__ void</span> saxpy(<span class="k">int</span> n, <span class="k">float</span> a,
                       <span class="k">const float</span> *x, <span class="k">float</span> *y) {
-  <span class="c">// grid-stride loop: one element per thread</span>
-  <span class="k">for</span> (<span class="k">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
-       i &lt; n; i += gridDim.x * blockDim.x)
+  <span class="c">// grid-stride loop, one element per thread</span>
+  <span class="k">for</span> (<span class="k">int</span> i = blockIdx.x*blockDim.x + threadIdx.x;
+       i &lt; n; i += gridDim.x*blockDim.x)
     y[i] = a * x[i] + y[i];
 }</code></pre>
 <div class="filename">saxpy.cu: host</div>
-<pre><code>cudaMalloc(&amp;dx, n * 4); cudaMalloc(&amp;dy, n * 4);  <span class="c">// cudaMalloc</span>
-cudaMemcpy(dx, x, n * 4, cudaMemcpyHostToDevice);  <span class="c">// cudaMemcpy</span>
-cudaMemcpy(dy, y, n * 4, cudaMemcpyHostToDevice);
-saxpy&lt;&lt;&lt;blocks, 256&gt;&gt;&gt;(n, 2.5f, dx, dy);  <span class="c">// launch</span>
-cudaMemcpy(y, dy, n * 4, cudaMemcpyDeviceToHost);</code></pre>
+<pre><code>cudaMalloc(&amp;dx, n*4); cudaMalloc(&amp;dy, n*4);
+cudaMemcpy(dx, x, n*4, cudaMemcpyHostToDevice);
+cudaMemcpy(dy, y, n*4, cudaMemcpyHostToDevice);
+saxpy&lt;&lt;&lt;blocks, 256&gt;&gt;&gt;(n, 2.5f, dx, dy);
+cudaMemcpy(y, dy, n*4, cudaMemcpyDeviceToHost);</code></pre>
 </div>
 <div>
-<h4>CSL + host Python</h4>
+<h4>CSL + host Python (program 01)</h4>
 <div class="filename">layout.csl</div>
-<pre><code><span class="k">param</span> N: i16;  <span class="c">// constant memory: --params=N:64</span>
+<pre><code><span class="k">param</span> N: i16;              <span class="c">// --params=N:64</span>
 layout {
-  @set_rectangle(1, 1);  <span class="c">// grid: a 1 &times; 1 PE rectangle</span>
-  @set_tile_code(0, 0, <span class="s">"pe_program.csl"</span>, .{ &hellip;, .N = N });
+  @set_rectangle(1, 1);    <span class="c">// the "grid"</span>
+  @set_tile_code(0, 0, <span class="s">"pe_program.csl"</span>,
+                 .{ &hellip;, .N = N });
   @export_name(<span class="s">"y"</span>, [*]f32, true);
-  @export_name(<span class="s">"saxpy"</span>, fn(f32)void);  <span class="c">// RPC</span>
+  @export_name(<span class="s">"saxpy"</span>, fn(f32)void); <span class="c">// RPC</span>
 }</code></pre>
 <div class="filename">pe_program.csl</div>
-<pre><code><span class="k">var</span> x: [N]f32;  <span class="c">// cudaMalloc: static, in the PE's 48 KB</span>
+<pre><code><span class="k">var</span> x: [N]f32;   <span class="c">// static: no cudaMalloc</span>
 <span class="k">var</span> y: [N]f32;
-<span class="k">const</span> x_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -&gt; x[i] });
-<span class="k">const</span> y_dsd = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{N} -&gt; y[i] });
+<span class="k">const</span> x_dsd = @get_dsd(mem1d_dsd,
+    .{ .tensor_access = |i|{N} -&gt; x[i] });
+<span class="k">const</span> y_dsd = @get_dsd(mem1d_dsd,
+    .{ .tensor_access = |i|{N} -&gt; y[i] });
 <span class="k">fn</span> saxpy(a: f32) <span class="k">void</span> {
-  @fmacs(y_dsd, y_dsd, x_dsd, a);  <span class="c">// the whole loop: DSD extent</span>
-  sys_mod.unblock_cmd_stream();    <span class="c">// let the next host command run</span>
+  @fmacs(y_dsd, y_dsd, x_dsd, a); <span class="c">// the loop</span>
+  sys_mod.unblock_cmd_stream(); <span class="c">// host may go on</span>
 }</code></pre>
 <div class="filename">run.py</div>
-<pre><code>rt.load(); rt.run()                          <span class="c">// program is resident from here</span>
-rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)    <span class="c">// cudaMemcpy to a PE rectangle</span>
+<pre><code>rt.load(); rt.run()      <span class="c"># resident from here</span>
+rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)
 rt.memcpy_h2d(ys, y, 0, 0, 1, 1, N, **kw)
-rt.launch(<span class="s">'saxpy'</span>, a, nonblock=False)    <span class="c">// &lt;&lt;&lt;&gt;&gt;&gt; becomes an RPC</span>
+rt.launch(<span class="s">'saxpy'</span>, a, nonblock=False) <span class="c"># &lt;&lt;&lt;&gt;&gt;&gt;</span>
 rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 </div>
 </div>
-<p>What changed: there is no thread index, because one PE owns all N elements and a single <code>@fmacs</code> walks them; there is no allocation call, because the arrays are placed at link time; and the "launch" is an RPC to a program that has been running since <code>rt.run()</code>. Forget <code>unblock_cmd_stream()</code> and the <code>launch</code> still returns: the next copy fails after about 4 s with &ldquo;could be a kernel stall&rdquo; <span class="tag measured">Measured</span> (<a href="07-host-io.html#host-side">Ch. 7</a>). Python comments use <code>#</code> in the real file.</p>
+<p>Line by line, with the Rosetta rows: the CUDA grid becomes <code>@set_rectangle</code> (grid row); <code>cudaMalloc</code> becomes static arrays placed at link time (<code>cudaMalloc</code> row); each <code>cudaMemcpy</code> becomes a <code>memcpy_h2d</code>/<code>memcpy_d2h</code> to a rectangle of PEs, here 1 &times; 1 with N elements per PE (<code>cudaMemcpy</code> row); <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> becomes <code>rt.launch</code>, an RPC to a program that has been running since <code>rt.run()</code> (launch row); and the grid-stride loop with its thread index becomes the extent of one DSD, walked by a single <code>@fmacs</code> (grid-stride row).</p>
+<p>One line has no CUDA counterpart: <code>unblock_cmd_stream()</code>, which tells memcpy the RPC has finished so the host's next command can run. Without it the <code>launch</code> still returns: the next copy fails after about 4 s with &ldquo;could be a kernel stall&rdquo; <span class="tag measured">Measured</span> (<a href="07-host-io.html#host-side">Ch. 7</a>).</p>
 
 <h2 id="budget">One PE's budget</h2>
 <p>Everything a kernel uses on a PE comes out of the limits below. memcpy, the host-I/O runtime, takes its share first (<a href="07-host-io.html#reserves">Chapter 7</a>). WSE-3 is the column to design for; WSE-2 differs in the rows marked in bold. Units: as in the chapters, KB here means 1,024 B, so 48 KB = 49,152 B and 44,500 B &asymp; 43.5 KB.</p>
@@ -218,7 +222,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 </table></div>
 
 <figure id="mem-fig">
-<svg id="memfig-svg" viewBox="0 0 680 170" width="680" role="img" aria-label="Two 48 KB bars, WSE-3 and WSE-2: fixed overhead of code, memcpy runtime and task table at the left, a band where it grows with code, then the space left for arrays"></svg>
+<svg id="memfig-svg" viewBox="0 0 680 196" width="680" role="img" aria-label="Two 48 KB bars, WSE-3 and WSE-2: fixed overhead of code, memcpy runtime and task table at the left, a band where it grows with code, then the space left for arrays"></svg>
 <figcaption><b>Where one PE's 48 KB goes.</b> The fixed part is the smallest measured program (SAXPY: 4,240 B on WSE-3 including a 1 KB task table, &asymp; 2,850 B on WSE-2) <span class="tag measured">Measured, cs_readelf -m</span>; the hatched band is how far it grew for Lab 3 (up to &asymp; 5.5 KB on WSE-3, &asymp; 3.9 KB on WSE-2) <span class="tag derived">Derived</span> from its link limits. Everything right of that is yours. Drawn to scale (1 px &asymp; 77 B).</figcaption>
 </figure>
 
@@ -229,7 +233,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 
 <div class="widget" id="bud">
 <h4>Budget checker: will my kernel fit on one PE?</h4>
-<p class="hint">Enter what one PE of your kernel needs, or load a course program. Lists are comma-separated IDs; ranges like <code>8-12</code> work. For async ops, write each concurrent op's queue as <code>o2</code> (output queue 2) or <code>i4</code> (input queue 4); on WSE-3 add <code>:5</code> to give it <code>.ut_id</code> 5. Every limit comes from the table above. <b>OK</b> means within the documented limit, not that the program is correct.</p>
+<p class="hint">Enter what one PE of your kernel needs, or load a course program. Lists are comma-separated IDs; ranges like <code>8-12</code> work. For async ops, write each concurrent op's queue as <code>o2</code> (output queue 2) or <code>i4</code> (input queue 4); on WSE-3 add <code>:5</code> to give it <code>.ut_id</code> 5. Do not list streaming H2D/D2H colors under "colors you route"; count them in the streaming box. Every limit comes from the table above. <b>OK</b> means within the documented limit, not that the program is correct. Loading a preset explains what it shows; a WSE-3-only preset switches the chip and says so.</p>
 <div class="controls">
 <label>Chip <select id="bu-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
 <label>Load <select id="bu-pre">
@@ -241,16 +245,17 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 <option value="p04">Lab 3 · program 04 heat stencil (n = 16)</option>
 <option value="p04bad">Lab 3 · first version (queues 2,3 / 2,3)</option>
 <option value="p04ut">Lab 3 · queues 2,3 / 2,3 with .ut_id 4,5</option>
-<option value="p25">25-point stencil's task IDs on WSE-3</option>
+<option value="p25">25-point stencil (WSE-2 SDK benchmark) ported to WSE-3</option>
 </select></label>
 </div>
+<p class="hint" id="bu-note" aria-live="polite"></p>
 <div class="bud-grid">
 <fieldset><legend>Memory (per PE)</legend>
 <label>f32 elements <input type="number" id="bu-f32" min="0" value="0"></label>
 <label>f16 elements <input type="number" id="bu-f16" min="0" value="0"></label>
 <label>other bytes <input type="number" id="bu-oth" min="0" value="0"></label>
-<label>fixed overhead, B <input type="number" id="bu-ovh" min="0" value="4636"></label>
-<small>FIFO buffers and timestamp arrays count as "other". Overhead defaults to the measured minimal program for the chip.</small>
+<label>fixed overhead, B <input type="number" id="bu-ovh" min="0" value="4240"></label>
+<small>FIFO buffers and timestamp arrays count as "other". Overhead defaults to the smallest measured program (SAXPY: 4,240 B WSE-3, &asymp; 2,850 B WSE-2); it grows with code (matvec 4,636 / 3,134 B; Lab 3 up to &asymp; 5.5 KB), so treat anything within 0.5 KB of 48 KB as "bisect".</small>
 </fieldset>
 <fieldset><legend>Fabric</legend>
 <label>colors you route <input type="text" id="bu-col" value=""></label>
@@ -264,7 +269,7 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 <label>local task IDs <input type="text" id="bu-loc" value=""></label>
 <label>control task IDs <input type="text" id="bu-ctl" value=""></label>
 <label>data tasks: input queues <input type="text" id="bu-dq" value=""></label>
-<small>On WSE-2 a data task's ID is its color; list those colors under "colors you route" too.</small>
+<small>WSE-3: list the input queues your data tasks bind to. WSE-2: a data task's ID is its color, so list the color under "colors you route" (and not as a local task ID).</small>
 </fieldset>
 <fieldset><legend>Queues and microthreads</legend>
 <label>input queues used <input type="text" id="bu-iq" value=""></label>
@@ -273,8 +278,10 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 <label>FIFOs <input type="number" id="bu-fifo" min="0" value="0"></label>
 </fieldset>
 </div>
+<svg id="bu-mem" viewBox="0 0 680 54" width="680" role="img" aria-label="This PE's 48 KB: overhead, arrays and free space"></svg>
 <div class="table-wrap"><table class="chk" id="bu-out"></table></div>
 <div class="readout" id="bu-sum" aria-live="polite"></div>
+<pre id="bu-cmd"><code></code></pre>
 </div>
 
 <h2 id="constants">Measured cost constants</h2>
@@ -335,21 +342,107 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
   $("#ro-tt").onchange = e => document.querySelectorAll("#ro .tt").forEach(td => td.style.display = e.target.checked ? "" : "none");
 })();
 
+/* ---------- figures ---------- */
+(function () {
+  const SRAM = 49152;
+  // memory bars, to scale
+  const m = $("#memfig-svg"), X0 = 20, WB = 640, k = WB / SRAM;
+  [0, 16, 32, 48].forEach(kb => {
+    const x = X0 + kb * 1024 * k;
+    el("line", { x1: x, y1: 20, x2: x, y2: 26, class: "s-muted" }, m);
+    el("text", { x, y: 15, "text-anchor": kb ? (kb === 48 ? "end" : "middle") : "start", "font-size": 11, class: "muted mono" }, m).textContent = kb + " KB";
+  });
+  const chips = [
+    { y: 28, name: "WSE-3", segs: [["blu", 3216, "code + memcpy runtime"], ["pur", 1024, "task table"]], fixed: 4240, grow: 5520,
+      l1: "fixed: 4,240 B (SAXPY: code + runtime 3,216 B + 1 KB task table)", l2: "hatched: more code, up to ≈ 5.5 KB for Lab 3" },
+    { y: 108, name: "WSE-2", segs: [["blu", 2850, "code + runtime + task table"]], fixed: 2850, grow: 3920,
+      l1: "fixed: ≈ 2,850 B (SAXPY)", l2: "hatched: more code, up to ≈ 3.9 KB for Lab 3" },
+  ];
+  const defs = el("defs", {}, m), pat = el("pattern", { id: "mf-hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+  el("rect", { width: 6, height: 6, fill: cssVar("--amber-soft") }, pat);
+  el("line", { x1: 0, y1: 0, x2: 0, y2: 6, stroke: cssVar("--amber"), "stroke-width": 2 }, pat);
+  chips.forEach(c => {
+    let x = X0;
+    c.segs.forEach(([cls, b]) => { el("rect", { x, y: c.y, width: b * k, height: 26, class: cls }, m); x += b * k; });
+    el("rect", { x, y: c.y, width: (c.grow - c.fixed) * k, height: 26, fill: "url(#mf-hatch)", stroke: cssVar("--amber") }, m);
+    el("rect", { x: X0 + c.grow * k, y: c.y, width: (SRAM - c.grow) * k, height: 26, class: "grn" }, m);
+    const arr = SRAM - c.fixed;
+    el("text", { x: X0 + (c.grow + SRAM) / 2 * k, y: c.y + 17, "text-anchor": "middle", "font-size": 12.5 }, m).textContent =
+      `${c.name}: your arrays, up to ≈ ${(Math.round(arr / 100) * 100).toLocaleString()} B (≈ ${(arr / 1024).toFixed(1)} KB)`;
+    el("text", { x: X0, y: c.y + 41, "font-size": 11.5 }, m).textContent = c.l1;
+    el("text", { x: X0, y: c.y + 55, "font-size": 11.5, class: "muted" }, m).textContent = c.l2;
+  });
+  let gx0 = X0;
+  [["blu", "code + memcpy runtime"], ["pur", "task table (1 KB, WSE-3)"], ["hatch", "grows with code"], ["grn", "your arrays"]].forEach(([cls, t]) => {
+    el("rect", cls === "hatch" ? { x: gx0, y: 180, width: 14, height: 12, fill: "url(#mf-hatch)", stroke: cssVar("--amber") } : { x: gx0, y: 180, width: 14, height: 12, class: cls }, m);
+    const tx = el("text", { x: gx0 + 19, y: 190, "font-size": 11.5 }, m); tx.textContent = t;
+    gx0 += 19 + t.length * 6.4 + 22;
+  });
+
+  // fabric around a W x H rectangle
+  const f = $("#fabfig-svg"), W = 5, H = 3, FW = W + 7, FH = H + 2, C = 36, gx = 124, gy = 40;
+  for (let cx = 0; cx < FW; cx++) {
+    el("text", { x: gx + cx * C + C / 2, y: gy - 8, "text-anchor": "middle", "font-size": 11, class: "muted mono" }, f).textContent = cx;
+    for (let cy = 0; cy < FH; cy++) {
+      const halo = cx === 0 || cx === FW - 1 || cy === 0 || cy === FH - 1;
+      const mc = !halo && (cx <= 3 || cx >= 4 + W);
+      el("rect", { x: gx + cx * C + 1, y: gy + cy * C + 1, width: C - 2, height: C - 2, rx: 4, class: halo ? "box" : mc ? "blu" : "acc" }, f);
+      if (!halo && !mc) el("text", { x: gx + cx * C + C / 2, y: gy + cy * C + C / 2 + 4, "text-anchor": "middle", "font-size": 10.5, class: "mono" }, f).textContent = `${cx - 4},${cy - 1}`;
+    }
+  }
+  for (let cy = 0; cy < FH; cy++) el("text", { x: gx - 8, y: gy + cy * C + C / 2 + 4, "text-anchor": "end", "font-size": 11, class: "muted mono" }, f).textContent = cy;
+  el("text", { x: gx - 30, y: gy - 8, "text-anchor": "end", "font-size": 11, class: "muted" }, f).textContent = "fabric x →";
+  el("text", { x: gx - 30, y: gy + 14, "text-anchor": "end", "font-size": 11, class: "muted" }, f).textContent = "y ↓";
+  // offset arrow to user (0,0) = fabric (4,1)
+  const ux = gx + 4 * C, uy = gy + C;
+  el("path", { d: `M${gx + 2} ${gy + 2} L${ux + 4} ${uy + 4}`, class: "s-acc", "stroke-width": 1.6, fill: "none", "stroke-dasharray": "4 3" }, f);
+  el("circle", { cx: ux + 4, cy: uy + 4, r: 3, class: "f-acc" }, f);
+  // braces / labels under the grid
+  const by = gy + FH * C + 10;
+  const grp = [[0, 1, "1 halo"], [1, 3, "3 memcpy"], [4, W, `your W = ${W} PEs`], [4 + W, 2, "2 memcpy"], [FW - 1, 1, "1 halo"]];
+  grp.forEach(([s, n, t], i) => {
+    const x1 = gx + s * C + 3, x2 = gx + (s + n) * C - 3;
+    el("path", { d: `M${x1} ${by} V${by + 6} H${x2} V${by}`, class: "s-muted", fill: "none" }, f);
+    el("text", { x: (x1 + x2) / 2, y: by + 20 + (i % 2) * 13, "text-anchor": "middle", "font-size": 11.5 }, f).textContent = t;
+  });
+  el("text", { x: gx + FW * C / 2, y: by + 54, "text-anchor": "middle", "font-size": 12, class: "mono" }, f).textContent =
+    `--fabric-dims=${FW},${FH} (at least W + 7, H + 2)   --fabric-offsets=4,1`;
+  // legend on the right
+  const lx = gx + FW * C + 14;
+  [["acc", "your PEs (x, y)"], ["blu", "memcpy columns"], ["box", "halo ring"]].forEach(([cls, t], i) => {
+    el("rect", { x: lx, y: gy + 6 + i * 24, width: 14, height: 14, rx: 3, class: cls }, f);
+    el("text", { x: lx + 20, y: gy + 17 + i * 24, "font-size": 11.5 }, f).textContent = t;
+  });
+  el("text", { x: lx, y: gy + 92, "font-size": 11.5, class: "f-acc" }, f).textContent = "offset 4,1";
+  el("text", { x: lx, y: gy + 106, "font-size": 11, class: "muted" }, f).textContent = "→ your PE (0, 0)";
+  el("text", { x: lx, y: gy + 130, "font-size": 11, class: "muted" }, f).textContent = `H = ${H} rows; 1 halo`;
+  el("text", { x: lx, y: gy + 144, "font-size": 11, class: "muted" }, f).textContent = "row above and below";
+})();
+
 /* ---------- budget checker ---------- */
 (function () {
   const ids = ["chip", "f32", "f16", "oth", "ovh", "col", "str", "rx", "fin", "w", "h", "ch", "loc", "ctl", "dq", "iq", "oq", "ops", "fifo"];
   const E = {}; ids.forEach(k => E[k] = $("#bu-" + k));
   const PRE = {
-    p01: { f32: 128, oth: 0, col: "", str: 0, loc: "", ctl: "", dq: "", iq: "", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 0 },
-    p02: { f32: 4, oth: 0, col: "0", str: 1, loc: "", ctl: "", dq: "2", iq: "2", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 0 },
-    p03: { f32: 32, oth: 12, col: "0,1", str: 0, loc: "9", ctl: "", dq: "", iq: "2", oq: "2", ops: "i2o2", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 },
-    p05: { f32: 65, oth: 12, col: "0", str: 0, loc: "10,11", ctl: "", dq: "", iq: "4", oq: "2", ops: "i4", fifo: 0, w: 1, h: 6, rx: 1, fin: 1 },
-    p04: { f32: 34, oth: 12, col: "0-3", str: 0, loc: "10-13", ctl: "", dq: "", iq: "4,5", oq: "2,3", ops: "o2,o3,i4,i5", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 },
-    p04bad: { f32: 34, oth: 12, col: "0-3", str: 0, loc: "10-13", ctl: "", dq: "", iq: "2,3", oq: "2,3", ops: "o2,o3,i2,i3", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 },
-    p04ut: { f32: 34, oth: 12, col: "0-3", str: 0, loc: "10-13", ctl: "", dq: "", iq: "2,3", oq: "2,3", ops: "o2,o3,i2:4,i3:5", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 },
-    p25: { f32: 0, oth: 0, col: "0-20", str: 0, loc: "2,3,8-20,24-26", ctl: "", dq: "", iq: "", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 1 },
+    p01: { v: { f32: 128, oth: 0, col: "", str: 0, loc: "", ctl: "", dq: "", iq: "", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 0 }, params: "N:64",
+      note: "Program 01 (Ch. 10, 11): two f32 arrays of N = 64. It is the smallest program in the course, so its fixed part is the overhead default. Try f32 = 11,220 (N = 5,610): Ch. 10 measured it linking at 49,120 B; 11,240 (N = 5,620) fails to link." },
+    p02: { v: { f32: 4, oth: 4, col: "", str: 1, loc: "", ctl: "", dq: "2", iq: "2", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 0 }, params: "N:100 --params=MEMCPYH2D_DATA_1_ID:0",
+      note: "Program 02: one streaming H2D color (color 0, chosen by MEMCPYH2D_DATA_1_ID), counted in the streaming box, not under colors. On WSE-3 its data task binds to input queue 2; on WSE-2 to the color itself (task ID 0)." },
+    p03: { v: { f32: 32, oth: 12, col: "0,1", str: 0, loc: "9", ctl: "", dq: "", iq: "2", oq: "2", ops: "i2o2", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 }, params: "P:8,M:32",
+      note: "Program 03 (Lab 2, Ch. 12): a middle PE receives, adds and sends in one async op that uses input queue 2 and output queue 2 (written i2o2), so it needs only one microthread." },
+    p05: { v: { f32: 65, oth: 12, col: "0", str: 0, loc: "10,11", ctl: "", dq: "", iq: "4", oq: "2", ops: "i4", fifo: 0, w: 1, h: 6, rx: 1, fin: 1 }, params: "R:6,M:32",
+      note: "Program 05 (Lab 2): the root broadcasts down one column on one color; the others receive on input queue 4." },
+    p04: { v: { f32: 34, oth: 24, col: "0-3", str: 0, loc: "10-13", ctl: "", dq: "", iq: "4,5", oq: "2,3", ops: "o2,o3,i4,i5", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 }, params: "P:8,n:16",
+      note: "Program 04 (Lab 3, Ch. 13): four concurrent transfers on four microthreads (2, 3, 4, 5). Other bytes = t0, t1 and tsc timestamp arrays (24 B). Works on both chips." },
+    p04bad: { v: { f32: 34, oth: 24, col: "0-3", str: 0, loc: "10-13", ctl: "", dq: "", iq: "2,3", oq: "2,3", ops: "o2,o3,i2,i3", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 }, params: "P:8,n:16",
+      note: "Lab 3's first version: sends and receives on queues 2 and 3 share microthreads 2 and 3. Measured on both chips: FATAL \"trying to term ut_instr[3], but it's not ours\" at cycle 2,123 (WSE-3) / 2,125 (WSE-2), and the host hangs (Ch. 5). Two fixes: input queues 4,5 (the program 04 preset), or, on WSE-3 only, .ut_id 4,5 (next preset)." },
+    p04ut: { v: { f32: 34, oth: 24, col: "0-3", str: 0, loc: "10-13", ctl: "", dq: "", iq: "2,3", oq: "2,3", ops: "o2,o3,i2:4,i3:5", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 }, params: "P:8,n:16", chip: "wse3",
+      note: "The WSE-3-only fix: keep queues 2,3 but give the receives .ut_id 4 and 5, so no two ops share a microthread. WSE-2 has no .ut_id, so this preset is WSE-3 only." },
+    p25: { v: { f32: 0, oth: 0, col: "4-7", str: 0, loc: "2,3,8-20,24-26", ctl: "", dq: "", iq: "", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 1 }, chip: "wse3",
+      note: "The SDK's 25-point stencil (benchmarks/25-pt-stencil) routes colors 4–7 and binds 18 local tasks: 2, 3, 8–20 and 24–26, which works on WSE-2. This preset shows why it does not port to WSE-3 as written: 2 and 3 are below 8, 24 is memcpy's, and 25–26 are outside the safe 8–20 (Ch. 5). Memory is not modelled for it." },
   };
-  const OVH = { wse3: 4636, wse2: 3134 }, USABLE = { wse3: 44500, wse2: 45200 };
+  const OVH = { wse3: 4240, wse2: 2850 }, SRAM = 49152, MARGIN = 512;
+  let curParams = "", note = "";
   function list(s) {
     const out = [], bad = [];
     String(s).split(/[,\s]+/).filter(Boolean).forEach(t => {
@@ -360,63 +453,99 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
     });
     return { v: out, bad };
   }
-  const num = k => Math.max(0, Math.floor(+E[k].value || 0));
-  const dup = a => a.filter((x, i) => a.indexOf(x) !== i);
+  // clamp the field itself so what you see is what is checked
+  function num(k, lo = 0, hi = Infinity) {
+    const raw = E[k].value, v = Math.min(hi, Math.max(lo, Math.floor(+raw || 0)));
+    if (raw !== "" && String(v) !== raw) E[k].value = v;
+    return v;
+  }
+  const dup = a => [...new Set(a.filter((x, i) => a.indexOf(x) !== i))];
+  function drawMem(ovh, arr) {
+    const s = $("#bu-mem"); s.textContent = "";
+    const X0 = 20, WB = 640, tot = ovh + arr, sc = WB / Math.max(SRAM, tot);
+    el("rect", { x: X0, y: 6, width: SRAM * sc, height: 20, class: "box" }, s);
+    el("rect", { x: X0, y: 6, width: ovh * sc, height: 20, class: "blu" }, s);
+    el("rect", { x: X0 + ovh * sc, y: 6, width: Math.max(0, Math.min(arr, SRAM - ovh)) * sc, height: 20, class: tot > SRAM ? "red" : tot > SRAM - MARGIN ? "amb" : "grn" }, s);
+    if (tot > SRAM) el("rect", { x: X0 + SRAM * sc, y: 6, width: (tot - SRAM) * sc, height: 20, class: "red", "stroke-dasharray": "3 2" }, s);
+    el("line", { x1: X0 + SRAM * sc, y1: 2, x2: X0 + SRAM * sc, y2: 30, class: "stroke", "stroke-width": 1.5 }, s);
+    el("text", { x: X0, y: 44, "font-size": 11.5 }, s).textContent = `overhead ${ovh.toLocaleString()} B + arrays ${arr.toLocaleString()} B = ${tot.toLocaleString()} B`;
+    el("text", { x: X0 + SRAM * sc, y: 44, "text-anchor": "end", "font-size": 11.5, class: "muted" }, s).textContent =
+      tot > SRAM ? `${(tot - SRAM).toLocaleString()} B over 48 KB` : `${(SRAM - tot).toLocaleString()} B free of 49,152`;
+  }
   function check() {
     const chip = E.chip.value, w3 = chip === "wse3", rows = [];
-    const add = (name, used, limit, st, msg, frac) => rows.push({ name, used, limit, st, msg, frac });
+    // meter = false where the fraction is meaningless (1-of-1 limits)
+    const add = (name, used, limit, st, msg, frac, meter = true) => rows.push({ name, used, limit, st, msg, frac, meter });
     // memory
-    const arr = 4 * num("f32") + 2 * num("f16") + num("oth"), tot = arr + num("ovh");
-    add("SRAM", `${tot.toLocaleString()} B`, "49,152 B", tot > 49152 ? "bad" : arr > USABLE[chip] ? "warn" : "ok",
-      tot > 49152 ? "over 48 KB: the linker stops with \"ran out of PE memory\"" : arr > USABLE[chip] ? `arrays (${arr.toLocaleString()} B) exceed the measured usable ≈ ${USABLE[chip].toLocaleString()} B; more code than the minimal program will not fit` : `arrays ${arr.toLocaleString()} B + overhead ${num("ovh").toLocaleString()} B`, tot / 49152);
-    // colors
+    const ovh = num("ovh"), arr = 4 * num("f32") + 2 * num("f16") + num("oth"), tot = arr + ovh;
+    add("SRAM", `${tot.toLocaleString()} B`, "49,152 B", tot > SRAM ? "bad" : tot > SRAM - MARGIN ? "warn" : "ok",
+      tot > SRAM ? "over 48 KB: the linker stops with \"ran out of PE memory\""
+        : tot > SRAM - MARGIN ? `within ${MARGIN} B of 48 KB: overhead varies with code (4,240 B for SAXPY, more for bigger programs), so this may or may not link. Bisect with cs_readelf -m`
+        : `arrays ${arr.toLocaleString()} B + overhead ${ovh.toLocaleString()} B; ${(SRAM - tot).toLocaleString()} B to spare`, tot / SRAM);
+    drawMem(ovh, arr);
+    // colors: report every problem
     const C = list(E.col.value), cols = C.v, str = num("str");
     const resC = cols.filter(c => c >= 20 && c <= 23), outC = cols.filter(c => c > 23), dC = dup(cols);
-    const nC = new Set(cols).size + str;
-    add("colors", `${nC}`, "20 (0–19)", resC.length || outC.length || nC > 20 || C.bad.length ? "bad" : dC.length ? "warn" : "ok",
-      outC.length ? `color ${outC.join(", ")} does not exist (24 colors: 0–23)` : resC.length ? `color ${resC.join(", ")} belongs to memcpy (20–23)` : nC > 20 ? "more than the 20 colors memcpy leaves free" : C.bad.length ? `cannot read "${C.bad.join(" ")}"` : dC.length ? `listed twice: ${dC.join(", ")}` : str ? `includes ${str} streaming color${str > 1 ? "s" : ""}, which memcpy routes for you` : "within budget", nC / 20);
+    const nC = new Set(cols).size + str, cm = [], cw = [];
+    if (C.bad.length) cm.push(`cannot read "${C.bad.join(" ")}"`);
+    if (outC.length) cm.push(`color ${outC.join(", ")} does not exist (24 colors: 0–23)`);
+    if (resC.length) cm.push(`color ${resC.join(", ")} belongs to memcpy (20 context switch, 21 D2H, 22 commands, 23 H2D)`);
+    if (nC > 20) cm.push("more than the 20 colors memcpy leaves free");
+    if (dC.length) cw.push(`listed twice: ${dC.join(", ")}`);
+    if (str && (cm.length || cw.length)) cw.push(`plus ${str} streaming color${str > 1 ? "s" : ""}`);
+    add("colors", `${nC}`, "20 (0–19)", cm.length ? "bad" : dC.length ? "warn" : "ok",
+      cm.concat(cw).join("; ") || (str ? `includes ${str} streaming color${str > 1 ? "s" : ""}, which memcpy routes for you (do not list them under colors you route)` : "within budget"), nC / 20);
     if (str > 4) add("streaming colors", `${str}`, "4 + 4", "warn", "memcpy accepts at most 4 streaming H2D and 4 D2H colors", str / 8);
     // routes
-    const rx = num("rx"), fin = num("fin");
+    const rx = num("rx", 0, 5), fin = num("fin", 0, 3);
     add("rx ports on one route", `${rx}`, w3 ? "1" : "several", w3 && rx > 1 ? "bad" : rx > 1 ? "warn" : "ok",
-      w3 && rx > 1 ? "WSE-3 compile error: \"expected at most 1 input direction(s) on 'wse3'\"" : rx > 1 ? "compiles on WSE-2, but merging streams on one color risks same-cycle collisions" : "one input per color", Math.min(1, rx / (w3 ? 1 : 5)));
+      w3 && rx > 1 ? "WSE-3 compile error: \"expected at most 1 input direction(s) on 'wse3'\"" : rx > 1 ? "compiles on WSE-2, but merging streams on one color risks same-cycle collisions" : "one input per color", 0, false);
     add("fabric inputs on one op", `${fin}`, w3 ? "1" : "several", w3 && fin > 1 ? "bad" : "ok",
-      w3 && fin > 1 ? "\"WSE3 does not allow multiple fabric inputs per DSD operation\": drain one into a FIFO first" : "fine", Math.min(1, fin / (w3 ? 1 : 3)));
+      w3 && fin > 1 ? "\"WSE3 does not allow multiple fabric inputs per DSD operation\": drain one into a FIFO first" : "fine", 0, false);
     // local tasks
     const L = list(E.loc.value), loc = L.v, issues = [], warns = [];
-    const memL = [21, 24, 27, 28, 30];
+    const memL = [21, 27, 28, 30];
     loc.forEach(id => {
       if (id === 29) issues.push("29 is the teardown task: \"cannot bind task to teardown task ID '29'\"");
       else if (id >= 31) issues.push(`${id}: IDs ≥ 31 cannot be activated (5-bit field)${w3 ? "; the compiler range is [8,31)" : ""}`);
-      else if (w3 && id < 8) issues.push(`${id}: \"expected task ID in the range [8,31)\" on WSE-3`);
+      else if (w3 && id < 8) issues.push(`${id}: "expected task ID in the range [8,31)" on WSE-3`);
       else if (memL.includes(id)) issues.push(`${id} is taken by memcpy`);
+      else if (id === 24) (w3 ? issues : warns).push(`24 is memcpy's SYS_EN_MAIN (first task after a context switch); the SDK stencil reuses it on WSE-2, so avoid it unless you know your memcpy mode`);
+      else if (!w3 && (id === 22 || id === 23)) issues.push(`${id} is taken by memcpy on WSE-2: the data task of memcpy's color ${id}`);
       else if (w3 && (id === 22 || id === 23)) warns.push(`${id} is marked "reserved (memcpy)" in the WSE-3 task map`);
+      else if (!w3 && id === 20) warns.push("20 is the ID of memcpy's context-switch color on WSE-2");
       else if (id > 20) warns.push(`${id} is outside the safe 8–20`);
       else if (!w3 && cols.includes(id)) warns.push(`${id} is also a color you route; on WSE-2 a data task on that color would take this ID`);
-      else if (!w3 && id >= 20 && id <= 23) warns.push(`${id} is a memcpy color's data-task ID on WSE-2`);
     });
     if (dup(loc).length) issues.push(`listed twice: ${dup(loc).join(", ")}`);
     if (L.bad.length) issues.push(`cannot read "${L.bad.join(" ")}"`);
-    const lim = w3 ? 13 : 21;
-    add("local task IDs", `${loc.length}`, w3 ? "13 safe (8–20)" : "≈ 21 (0–20, minus colors)", issues.length ? "bad" : warns.length ? "warn" : "ok",
+    const lim = w3 ? 13 : 23;
+    add("local task IDs", `${loc.length}`, w3 ? "13 safe (8–20)" : "23 (0–20, 25, 26), minus receive colors", issues.length ? "bad" : warns.length ? "warn" : "ok",
       issues.concat(warns).join("; ") || (loc.length ? "all inside the safe range" : "none used"), loc.length / lim);
     // control tasks
     const K = list(E.ctl.value), ctl = K.v, ci = [];
-    ctl.forEach(id => { if (id > 63) ci.push(`${id}: \"expected control task ID in the range [0,64)\"`); else if ([33, 34, 35, 36, 37, 40].includes(id)) ci.push(`${id} is a memcpy control task`); else if (loc.includes(id)) ci.push(`${id} is also one of your local task IDs`); });
-    if (ctl.length || K.bad.length) add("control task IDs", `${ctl.length}`, "0–63, minus 33–37, 40", ci.length || K.bad.length ? "bad" : "ok", ci.join("; ") || (K.bad.length ? `cannot read "${K.bad.join(" ")}"` : "fine"), ctl.length / 58);
+    ctl.forEach(id => { if (id > 63) ci.push(`${id}: "expected control task ID in the range [0,64)"`); else if ([33, 34, 35, 36, 37, 40].includes(id)) ci.push(`${id} is a memcpy control task`); else if (loc.includes(id)) ci.push(`${id} is also one of your local task IDs`); });
+    if (K.bad.length) ci.push(`cannot read "${K.bad.join(" ")}"`);
+    if (ctl.length || K.bad.length) add("control task IDs", `${ctl.length}`, "0–63, minus 33–37, 40", ci.length ? "bad" : "ok", ci.join("; ") || "fine", ctl.length / 58);
     // queues
-    const IQ = list(E.iq.value).v, OQ = list(E.oq.value).v, DQ = list(E.dq.value).v;
+    const IQl = list(E.iq.value), OQl = list(E.oq.value), DQl = list(E.dq.value);
+    const IQ = IQl.v, OQ = OQl.v, DQ = DQl.v;
     const resQ = w3 ? [0, 1] : [0];
-    const qmsg = [];
-    IQ.forEach(q => { if (q > 7) qmsg.push(`input queue ${q} does not exist (0–7)`); else if (resQ.includes(q)) qmsg.push(`input queue ${q} belongs to memcpy`); });
-    OQ.forEach(q => { const mx = w3 ? 7 : 5; if (q > mx) qmsg.push(`output queue ${q} does not exist on ${w3 ? "WSE-3 (0–7)" : "WSE-2 (0–5)"}`); else if (resQ.includes(q)) qmsg.push(`output queue ${q} belongs to memcpy`); });
-    add("input / output queues", `${IQ.length} / ${OQ.length}`, w3 ? "6 / 6 (2–7)" : "7 / 5 (1–7 / 1–5)", qmsg.length ? "bad" : "ok", qmsg.join("; ") || "start at 2, as the course programs do", Math.max(IQ.length / (w3 ? 6 : 7), OQ.length / (w3 ? 6 : 5)));
+    const qmsg = [], qw = [];
+    if (IQl.bad.length) qmsg.push(`cannot read input queues "${IQl.bad.join(" ")}"`);
+    if (OQl.bad.length) qmsg.push(`cannot read output queues "${OQl.bad.join(" ")}"`);
+    IQ.forEach(q => { if (q > 7) qmsg.push(`input queue ${q} does not exist (0–7)`); else if (resQ.includes(q)) qmsg.push(`input queue ${q} belongs to memcpy`); else if (!w3 && q === 1) qw.push("input queue 1 is free on WSE-2 but memcpy's on WSE-3: start at 2 so the code ports"); });
+    OQ.forEach(q => { const mx = w3 ? 7 : 5; if (q > mx) qmsg.push(`output queue ${q} does not exist on ${w3 ? "WSE-3 (0–7)" : "WSE-2 (0–5)"}`); else if (resQ.includes(q)) qmsg.push(`output queue ${q} belongs to memcpy`); else if (!w3 && q === 1) qw.push("output queue 1 is free on WSE-2 but memcpy's on WSE-3: start at 2 so the code ports"); });
+    if (dup(IQ).length) qw.push(`input queue listed twice: ${dup(IQ).join(", ")}`);
+    if (dup(OQ).length) qw.push(`output queue listed twice: ${dup(OQ).join(", ")}`);
+    add("input / output queues", `${IQ.length} / ${OQ.length}`, w3 ? "6 / 6 (2–7)" : "7 / 5 (1–7 / 1–5); start at 2", qmsg.length ? "bad" : qw.length ? "warn" : "ok", qmsg.concat(qw).join("; ") || "start at 2, as the course programs do", Math.max(IQ.length / (w3 ? 6 : 7), OQ.length / (w3 ? 6 : 5)));
     // data tasks
-    if (DQ.length) {
+    if (DQ.length || DQl.bad.length) {
       const dm = [];
-      if (w3) { DQ.forEach(q => { if (!IQ.includes(q)) dm.push(`queue ${q} is not in your input queues`); if (resQ.includes(q)) dm.push(`queue ${q} belongs to memcpy`); }); }
-      else dm.push("on WSE-2 data tasks bind to colors, not queues: the ID is the color");
-      add("data tasks", `${DQ.length}`, w3 ? "6 (queues 2–7)" : "one per receive color", dm.length ? (w3 ? "bad" : "warn") : "ok", dm.join("; ") || "a fabric DSD must not read a queue whose data task is bound and unblocked", DQ.length / 6);
+      if (DQl.bad.length) dm.push(`cannot read "${DQl.bad.join(" ")}"`);
+      if (w3) DQ.forEach(q => { if (!IQ.includes(q)) dm.push(`queue ${q} is not in your input queues`); if (resQ.includes(q)) dm.push(`queue ${q} belongs to memcpy`); });
+      add("data tasks", `${DQ.length}`, w3 ? "6 (queues 2–7)" : "one per receive color", dm.length ? "bad" : "ok",
+        dm.join("; ") || (w3 ? "a fabric DSD must not read a queue whose data task is bound and unblocked" : "on WSE-2 a data task binds to its color, not a queue, and its ID is the color: the queue list is ignored here"), DQ.length / 6);
     }
     // microthreads
     const ops = E.ops.value.split(/[,\s]+/).filter(Boolean), uts = [], om = [], ow = [];
@@ -435,7 +564,9 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
       uts.push([t, ut]);
     });
     const byUt = {}; uts.forEach(([t, u]) => (byUt[u] = byUt[u] || []).push(t));
-    Object.entries(byUt).forEach(([u, ts]) => { if (ts.length > 1) om.push(`${ts.join(" and ")} share microthread ${u}: measured in Lab 3 as FATAL "trying to term ut_instr[${u}], but it's not ours" on both chips`); });
+    let shared = false;
+    Object.entries(byUt).forEach(([u, ts]) => { if (ts.length > 1) { shared = true; om.push(`${ts.join(" and ")} share microthread ${u}`); } });
+    if (shared) om.push("Lab 3's version of this failed at run time with FATAL \"trying to term ut_instr[3], but it's not ours\" on both chips");
     if (byUt[0]) om.push("microthread 0 moves memcpy's data");
     if (uts.some(([, u]) => u > 7)) om.push("microthread IDs are 0–7");
     const nUt = Object.keys(byUt).length + 2 * num("fifo") + 1;
@@ -443,10 +574,10 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
     add("microthreads", `${nUt}`, "8", om.length ? "bad" : ow.length ? "warn" : "ok",
       [...new Set(om.concat(ow))].join("; ") || (ops.length ? `ops on ${uts.map(([t, u]) => t + "→" + u).join(", ")}${num("fifo") ? ` + ${2 * num("fifo")} for FIFOs` : ""} + memcpy's 0` : "no concurrent async ops"), nUt / 8);
     // fabric dims
-    const W = Math.max(1, num("w")), H = Math.max(1, num("h")), ch = Math.max(1, num("ch"));
+    const W = num("w", 1), H = num("h", 1), ch = num("ch", 1);
     const fd = `--fabric-dims=${W + 7},${H + 2} --fabric-offsets=4,1`;
-    add("fabric size", `${W} × ${H}`, "743 × 992 (CS-2)", W > 743 || H > 992 ? "bad" : "ok", (W > 743 || H > 992 ? "larger than a CS-2's user area; " : "") + `simulate with ${fd}` + (w3 ? "; the WSE-3 user area is not published" : ""), Math.max(W / 743, H / 992));
-    add("I/O channels", `${ch}`, `≤ 16 and ≤ ${H} rows`, ch > 16 || ch > H ? "bad" : "ok", ch > 16 ? "--channels accepts up to 16" : ch > H ? "no more channels than rows in your rectangle" : "fine", ch / Math.min(16, H));
+    add("fabric size", `${W} × ${H}`, "743 × 992 (CS-2)", W > 743 || H > 992 ? "bad" : "ok", (W > 743 || H > 992 ? "larger than a CS-2's user area; " : "") + `simulate with at least ${fd}` + (w3 ? "; the WSE-3 user area is not published" : ""), Math.max(W / 743, H / 992));
+    add("I/O channels", `${ch}`, `≤ 16 and ≤ ${H} row${H > 1 ? "s" : ""}`, ch > 16 || ch > H ? "bad" : "ok", [ch > 16 ? "--channels accepts up to 16" : "", ch > H ? "no more channels than rows in your rectangle" : ""].filter(Boolean).join("; ") || "fine", ch / Math.min(16, H), Math.min(16, H) > 1);
     // render
     const tb = $("#bu-out");
     tb.innerHTML = "<tr><th>Resource</th><th>Used</th><th>Limit</th><th>Status</th><th>Why</th></tr>";
@@ -454,25 +585,36 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
       const tr = document.createElement("tr");
       const label = { ok: "OK", warn: "check", bad: "fails" }[r.st];
       const f = Math.max(0, Math.min(1, r.frac || 0));
-      tr.innerHTML = `<td>${r.name}<div class="meter" aria-hidden="true"><i class="${r.st === "ok" ? "" : r.st}" style="width:${(f * 100).toFixed(0)}%"></i></div></td><td>${r.used}</td><td>${r.limit}</td><td><span class="pill ${r.st}">${label}</span></td><td></td>`;
-      tr.lastChild.textContent = r.msg;
+      const meter = r.meter ? `<div class="meter" aria-hidden="true"><i class="${r.st === "ok" ? "" : r.st}" style="width:${(f * 100).toFixed(0)}%"></i></div>` : "";
+      tr.innerHTML = `<td>${r.name}${meter}</td><td></td><td></td><td><span class="pill ${r.st}">${label}</span></td><td></td>`;
+      tr.children[1].textContent = r.used; tr.children[2].textContent = r.limit; tr.lastChild.textContent = r.msg;
       tb.appendChild(tr);
     });
     const nb = rows.filter(r => r.st === "bad").length, nw = rows.filter(r => r.st === "warn").length;
     $("#bu-sum").textContent = (nb ? `${nb} limit${nb > 1 ? "s" : ""} broken` : nw ? "fits, with " + nw + " thing" + (nw > 1 ? "s" : "") + " to check" : "fits every documented per-PE limit") + ` on ${w3 ? "WSE-3" : "WSE-2"}.` +
-      `\nCompile with: cslc --arch=${chip} layout.csl ${fd} --memcpy --channels ${ch}`;
+      (curParams ? "" : " Compile line (add your own --params):");
+    $("#bu-cmd code").textContent = `cslc --arch=${chip} ./layout.csl ${fd} \\\n  ${curParams ? `--params=${curParams} ` : ""}-o out --memcpy --channels ${ch}\ncs_python run.py --name out`;
   }
-  E.chip.onchange = () => { E.ovh.value = OVH[E.chip.value]; check(); };
-  $("#bu-pre").onchange = e => {
-    const p = PRE[e.target.value]; if (!p) return;
-    Object.entries(p).forEach(([k, v]) => { if (E[k]) E[k].value = v; });
-    E.f16.value = 0; E.ch.value = 1; E.ovh.value = OVH[E.chip.value];
-    if (e.target.value === "p04ut" || e.target.value === "p25") { E.chip.value = "wse3"; E.ovh.value = OVH.wse3; }
+  E.chip.onchange = () => {
+    E.ovh.value = OVH[E.chip.value];
+    const p = PRE[$("#bu-pre").value];
+    $("#bu-note").textContent = p ? (p.chip && p.chip !== E.chip.value ? `${p.note} You switched to WSE-2, but this preset is meant for WSE-3.` : p.note) : "";
     check();
   };
-  ids.forEach(k => { if (k !== "chip") E[k].addEventListener("input", () => { $("#bu-pre").value = ""; check(); }); });
-  E.f32.value = 34; E.oth.value = 12; E.col.value = "0-3"; E.loc.value = "10-13"; E.iq.value = "4,5"; E.oq.value = "2,3"; E.ops.value = "o2,o3,i4,i5"; E.w.value = 8; $("#bu-pre").value = "p04";
-  check();
+  $("#bu-pre").onchange = e => {
+    const p = PRE[e.target.value];
+    if (!p) { curParams = ""; note = ""; $("#bu-note").textContent = ""; check(); return; }
+    Object.entries(p.v).forEach(([k, v]) => { if (E[k]) E[k].value = v; });
+    E.f16.value = 0; E.ch.value = 1;
+    let sw = "";
+    if (p.chip && E.chip.value !== p.chip) { E.chip.value = p.chip; sw = " Chip switched to WSE-3."; }
+    E.ovh.value = OVH[E.chip.value];
+    curParams = p.params || ""; note = p.note + sw;
+    $("#bu-note").textContent = note;
+    check();
+  };
+  ids.forEach(k => { if (k !== "chip") E[k].addEventListener("input", () => { if ($("#bu-pre").value) { $("#bu-pre").value = ""; curParams = ""; note = ""; $("#bu-note").textContent = ""; } check(); }); });
+  $("#bu-pre").value = "p04"; $("#bu-pre").onchange({ target: $("#bu-pre") });
 })();
 </script>
 </body>

@@ -16,8 +16,8 @@
   .callout ul { margin: 6px 0; padding-left: 20px; }
   .callout ol { margin: 6px 0; padding-left: 22px; }
   .widget .controls + .controls { margin-top: 0; }
-  .kgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 16px; margin: 10px 0; font-size: 14px; }
-  .kgrid label { display: flex; align-items: center; gap: 6px; }
+  .kgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px 16px; margin: 10px 0; font-size: 14px; }
+  .kgrid label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
   .kgrid input[type=range] { width: 110px; accent-color: var(--accent); }
   .kgrid .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border); flex: none; }
   pre.formula { font-size: 14px; }
@@ -155,7 +155,7 @@ Cerebras's ML compiler and its production inference kernels are closed. The prim
 <label>Users <input type="range" id="p-u" min="1" max="64" step="1" value="1"> <span id="p-uv" class="mono"></span></label>
 </div>
 <svg id="p-svg" viewBox="0 0 680 200" width="680" role="img" aria-label="Devices needed"></svg>
-<svg id="p-bw" viewBox="0 0 680 210" width="680" role="img" aria-label="Decode speed bound per user, log scale"></svg>
+<svg id="p-bw" viewBox="0 0 680 244" width="680" role="img" aria-label="Decode speed bound per user, log scale"></svg>
 <div class="readout" id="p-out" aria-live="polite"></div>
 </div>
 
@@ -316,7 +316,7 @@ speedup, wafer pipeline (here)   = E / (1 + k/S + k·c)  verification pipelined 
 <tr><td>Llama 3.3-70B · 2,314 tok/s, 170 ms time to first token</td><td>Measured by Artificial Analysis, reported in an interview</td><td><span class="tag indep">Indep</span></td></tr>
 <tr><td>Nov 2024 · Llama 3.1-405B · 969 tok/s (1,000-token prompt); 539 tok/s (100,000-token prompt); 240 ms TTFT</td><td>16-bit, 128K context: ≥ 19 wafers for the weights <span class="tag derived">Derived</span>. The long prompt halves the speed, and Cerebras does not say why. In this chapter's budget, reading a 100K-token KV cache adds only ~6% per layer (0.41 GB against ~6.4 GB of weights per layer), so slower attention kernels, extra wafers or longer pipelines for the ~52 GB of KV, or prefill interference must account for most of it <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span></td><td><span class="tag vendor">Vendor</span>, citing AA</td></tr>
 <tr><td>Feb 2025 · Mistral Large 2 (123B) · &gt;1,100 tok/s</td><td>Speculative decoding co-developed with Mistral</td><td><span class="tag vendor">Vendor</span></td></tr>
-<tr><td>May 2025 · Llama 4 Maverick (MoE, 17B active) · 2,522 tok/s</td><td>vs 1,038 for DGX B200. MoE: few weights streamed per token</td><td><span class="tag indep">Indep</span> AA, via press release</td></tr>
+<tr><td>May 2025 · Llama 4 Maverick (MoE, 17B active) · 2,522 tok/s</td><td>vs 1,038 for DGX B200. MoE: few weights used per token</td><td><span class="tag indep">Indep</span> AA, via press release</td></tr>
 <tr><td>May 2026 · Kimi K2.6 (~1T, MoE) · 981 tok/s, 6.7× the fastest GPU cloud</td><td>Native 4-bit weights, 16-bit compute, expert all-to-all on the wafer fabric, custom kernels and speculative decoding <span class="tag vendor">Vendor</span>; ~20 CS-3s <span class="tag indep">Press</span> <span class="tag unv">Unverified</span></td><td><span class="tag indep">Indep</span> AA for speed</td></tr>
 <tr><td>gpt-oss-120B · ~3,000 tok/s claimed vs ~1,700 measured</td><td>—</td><td><span class="tag vendor">Vendor</span> vs <span class="tag indep">Indep</span></td></tr>
 <tr><td>Aug 2026 · GPT-5.6 Sol · up to 750 tok/s</td><td>"Partitions it at layer boundaries across multiple CS-3 systems … only activations move between stages"; same weights and precision as the standard endpoint</td><td><span class="tag vendor">Vendor</span></td></tr>
@@ -348,15 +348,19 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
 
 <div class="quiz">
 <h3>Check yourself</h3>
+<details><summary>What does the "match" stage of the compile path do, and why does it make the compiler's job a placement problem rather than a code-generation one?</summary><p>Match covers the model's graph with kernels from a hand-written library: each group of operations becomes one parameterised spatial program. The code inside each kernel already exists, so what remains is choosing each kernel's size (how many cores, which splits) and location on the wafer, and routing between them: a floorplanning problem.</p></details>
 <details><summary>In the placement problem, why can making one kernel's rectangle bigger fail to speed the network up?</summary><p>The pipeline runs at the largest Δt over all kernels. Growing a kernel that is not the slowest changes nothing except wire length and area, and it may take area away from the bottleneck. The contest's objective counts maximum compute time, not total.</p></details>
 <details><summary>One user is generating with Llama 70B on four CS-3s. While wafer 3 processes their token, what are wafers 1, 2 and 4 doing?</summary><p>Nothing for that user: the next token cannot start until this one leaves wafer 4 and loops back. The other wafers stay busy only with other users' tokens in flight. That is why per-user speed and total throughput are separate numbers.</p></details>
-<details><summary>Why can't the 36 GB left on a 4-wafer Llama-70B deployment serve 100 users at 8K context?</summary><p>Each token of context costs ~0.33 MB of KV cache per sequence, so 100 × 8,192 tokens ≈ 268 GB, far more than 36 GB. About 13 users at 8K fit <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Why can't the 36 GB left on a 4-wafer Llama-70B deployment serve 100 users at 8K context?</summary><p>Each token of context costs ~0.33 MB of KV cache per sequence, so 100 × 8,192 tokens ≈ 268 GB, far more than 36 GB. At most ~13 users at 8K fit, and only ~7 once each PE's ~4.6 KB of code and task table is counted (Chapter 10), fewer still with buffers <span class="tag derived">Derived</span>.</p></details>
 <details><summary>Roughly how many WSE-3 wafers to hold a 405B model at 16-bit?</summary><p>810 GB of weights ÷ 44 GB ≈ 19 wafers before any KV cache, or about 5 at 4-bit. In the widget, one 8K-context user (~4 GB of KV) still fits in 19; ten such users need 20 <span class="tag derived">Derived</span>.</p></details>
-<details><summary>Using the measured f16 GEMV (7.5 B/cycle per PE) and 38.9 KB of weights per PE, how long does one layer's GEMV take at 850 MHz, and what does that imply for 2,100 tok/s?</summary><p>38,900 ÷ 7.5 ≈ 5,190 cycles ≈ 6.1 µs. Eighty layers in sequence give ~490 µs, already more than the 476 µs per token at 2,100 tok/s, before any reduction or hop. So a higher clock, faster kernels than this naive one, or more than one accepted token per pass (speculation) must make up the difference <span class="tag derived">Derived</span>.</p></details>
-<details><summary>Why is "four WSE-3s have an 84 PB/s ceiling of ~600,000 tok/s" not a per-user bound?</summary><p>It assumes all PEs read weights for the same token. In the region mapping, one user's token is in one of 80 layer regions at a time, so it sees ~1/80 of the bandwidth, which gives ~7,500 tok/s at the headline rate. The 600,000 is a pipe-full total across users <span class="tag derived">Derived</span>.</p></details>
-<details><summary>α = 0.8, k = 4, draft cost c = 0.05. What is the expected speedup on a GPU, and on an 80-stage wafer pipeline? What does the wafer give up?</summary><p>E = (1 − 0.8⁵)/0.2 ≈ 3.36. GPU: 3.36/(1 + 0.2) ≈ 2.8×. Wafer: 3.36/(1 + 0.05 + 0.2) ≈ 2.7×. When the pipe is full, each pass uses 5 stage slots for 3.36 output tokens, so system throughput falls to ~67% of the non-speculative rate <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Using the measured f16 GEMV (7.5 B/cycle per PE) and 38.9 KB of weights per PE, how long does one layer's GEMV take at 850 MHz, and what does that imply for 2,100 tok/s?</summary><p>38,900 ÷ 7.5 ≈ 5,190 cycles ≈ 6.1 µs. Eighty layers in sequence give ~490 µs, already more than the 476 µs per token at 2,100 tok/s, before any reduction or hop. But 7.5 B/cycle is this AXPY kernel's limit (~4 f16 multiply-accumulates per cycle), not the hardware's: at WSE-3's 8-wide f16 SIMD it would be ~2,600 cycles, about half the budget. So a higher clock, faster kernels than this naive one (up to ~2×), or more than one accepted token per pass (speculation) must make up the difference <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Why is "four WSE-3s have an 84 PB/s ceiling of ~600,000 tok/s" not a per-user bound?</summary><p>It assumes all PEs read weights for the same token. In the region mapping, one user's token is in one of 80 layer regions at a time, so it sees ~1/80 of the bandwidth, which gives ~7,500 tok/s at the headline rate (itself an overstatement, since weights can use only the read ports), and ~2,000–4,000 tok/s at a region's GEMV kernel rate (measured vs 8-wide). The 600,000 is a pipe-full total across users <span class="tag derived">Derived</span>.</p></details>
+<details><summary>α = 0.8, k = 4. On a GPU the draft costs c = 0.05; on an 80-stage wafer pipeline it costs c ≈ 0.35. What is the expected speedup on each, why is c so different, and what does the wafer give up when its pipe is full?</summary><p>E = (1 − 0.8⁵)/0.2 ≈ 3.36. GPU: 3.36/(1 + 0.2) ≈ 2.8×. Wafer: 3.36/(1 + 4/80 + 4 × 0.35) = 3.36/2.45 ≈ 1.4×. (With a GPU-style c = 0.05 it would be 2.7×.) On a GPU both models are bandwidth-bound, so c is about the ratio of their sizes; on the wafer the draft's per-layer collectives and hops are latency that does not shrink with model size. When the pipe is full, each pass uses 5 stage slots for 3.36 output tokens, so system throughput falls to ~67% of the non-speculative rate <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Llama-70B on four CS-3s at 8K context: why does speculation with k = 4 cost the system almost no throughput?</summary><p>KV capacity limits the deployment to at most ~13 users (~7 after code), so without speculation at most 13 of the 80 pipe slots are busy. With k = 4 each user puts 5 positions in the pipe, at most ~65 slots: slots that would otherwise sit idle. Speculation costs throughput only when the pipe is full <span class="tag derived">Derived</span>.</p></details>
 <details><summary>Why does an MoE model suit pinned SRAM, and what does it cost?</summary><p>Every expert must be resident (capacity, which SRAM across wafers provides), but only the active ~32B of Kimi's ~1T parameters are streamed per token, so per-token work is like a much smaller dense model. The cost is all-to-all routing of tokens to expert regions, which Cerebras keeps on the wafer fabric, and idle expert regions when few users are in flight.</p></details>
-<details><summary>Why did production inference not use the wafer's unstructured sparsity?</summary><p>Served models are dense (16-bit originals or native 4-bit). A sparse pinned weight needs an index as well as a value, so it saves SRAM only above ~50% sparsity, and accuracy would change. Sparsity was a training-mode feature of weight streaming, where zeros are simply never sent.</p></details>
+<details><summary>Why did production inference not use the wafer's unstructured sparsity?</summary><p>Served models are dense (16-bit originals or native 4-bit). A sparse pinned weight needs an index as well as a value, so it saves SRAM only above ~50% sparsity, and accuracy would change. Sparsity was a training-mode feature of weight streaming, where zeros are simply never sent. (The 50% break-even is for 16-bit indices; a bitmap breaks even near 6%, but skipping zeros in a resident tile still needs slow index-driven gathers.)</p></details>
+<details><summary>Kimi K2.6 is served from its native 4-bit weights with 16-bit compute. Does 4-bit make each token faster on the wafer?</summary><p>Not by itself. It halves the SRAM per weight, so the model needs about half the wafers and leaves more room for KV cache. But with 16-bit compute the GEMV is set by multiply-accumulates per cycle, and the number of those per token is unchanged; the weights must also be unpacked. 4-bit buys capacity, not per-token speed <span class="tag derived">Derived</span>.</p></details>
+<details><summary>Why does a CS-4 disaggregated deployment, with prefill on another platform, need fast wafer I/O?</summary><p>The prompt's KV cache has to move to the wafer before decode starts: ~2.7 GB for one 8K-context Llama-70B request. At 2.4 Tb/s (300 GB/s) that is ~9 ms, about 19 output tokens' worth of time at 2,100 tok/s, so it must overlap with other users' decode <span class="tag derived">Derived</span>.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
@@ -403,86 +407,119 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
     const names = ["L1 conv", "L2 conv", "L3 conv", "L4 attn", "L5 mlp", "L6 head"];
     const colors = ["--blue", "--accent", "--green", "--purple", "--amber", "--red"];
     const work = [9600, 28800, 19200, 38400, 14400, 4800];           // core-cycles per sample (illustrative)
-    const memKB = [[96, 480, 960, 2400, 1440, 192], [2304, 12672, 6912, 11520, 10368, 8064]]; // per layer, by mode
-    let mode = 0, w = [16, 16, 16, 16, 16, 16], order = [0, 1, 2, 3, 4, 5];
+    // per-layer memory by mode (KB). Memory mode: minimum widths 4, 22, 12, 20, 17, 10 columns = 38 + 47,
+    // so the graph order fits in the two 48-column shelves, with little room left to balance.
+    const memKB = [[96, 480, 960, 2400, 1440, 192], [2304, 12672, 6912, 11520, 9792, 5760]];
+    let mode = 0, w = [16, 16, 16, 16, 16, 16], order = [0, 1, 2, 3, 4, 5], note = "";
     const minW = i => Math.max(1, Math.ceil(memKB[mode][i] / 48 / SH));
     const box = $("#kp-sl"), sl = [];
     names.forEach((n, i) => {
       const lab = document.createElement("label");
-      lab.innerHTML = `<span class="sw" style="background:var(${colors[i]})"></span>${n} <input type="range" min="1" max="40" step="1" aria-label="${n} width in columns"> <span class="mono"></span>`;
+      lab.innerHTML = `<span class="sw" style="background:var(${colors[i]})"></span><span class="nm">${n}</span> <input type="range" min="1" max="40" step="1" aria-label="${n} width in columns"> <span class="mono"></span>`;
       box.appendChild(lab);
       const r = lab.querySelector("input"), v = lab.querySelector(".mono");
-      r.oninput = () => { w[i] = Math.max(minW(i), +r.value); draw(); };
+      r.oninput = () => { w[i] = Math.max(minW(i), +r.value); note = ""; draw(); };
       sl.push([r, v]);
     });
+    // serpentine shelf packing of widths ww in `order`: shelf 0 left to right, shelf 1 right to left
+    function pack(ww) {
+      let shelf = 0, x = 0, illegal = false; const pos = [];
+      order.forEach(i => {
+        if (shelf === 0 && x + ww[i] > FW) { shelf = 1; x = 0; }
+        const ill = shelf === 1 && x + ww[i] > FW;
+        if (ill) illegal = true;
+        pos[i] = { c: shelf === 0 ? x : FW - x - ww[i], r: shelf * SH, ill };
+        x += ww[i];
+      });
+      return { pos, illegal };
+    }
+    const dtMaxOf = ww => Math.max(...work.map((x, i) => x / (ww[i] * SH)));
     function balance() {
       const tot = work.reduce((a, b) => a + b, 0);
       w = work.map((x, i) => Math.max(minW(i), Math.floor(2 * FW * x / tot)));
-      // trim if over budget
-      let over = w.reduce((a, b) => a + b, 0) - 2 * FW;
-      while (over > 0) { let j = -1, best = -1; w.forEach((x, i) => { const dt = work[i] / ((x - 1) * SH); if (x > minW(i) && (j < 0 || dt < best)) { j = i; best = dt; } }); if (j < 0) break; w[j]--; over--; }
+      // shrink until the packing in the current order is legal, each time choosing the kernel whose
+      // one-column cut raises the pipeline Δt least
+      let guard = 400;
+      while (pack(w).illegal && guard-- > 0) {
+        let j = -1, best = Infinity;
+        w.forEach((x, i) => {
+          if (x <= minW(i)) return;
+          const t = w.slice(); t[i]--;
+          const m = dtMaxOf(t) + 1e-6 * work[i] / (t[i] * SH);
+          if (m < best) { best = m; j = i; }
+        });
+        if (j < 0) break;
+        w[j]--;
+      }
+      // then hand any spare columns to the slowest kernel that can still grow without breaking the packing
+      if (!pack(w).illegal) for (let grown = true, g2 = 200; grown && g2-- > 0;) {
+        grown = false;
+        const idx = w.map((x, i) => i).sort((p, q) => work[q] / w[q] - work[p] / w[p]);
+        for (const i of idx) { const t = w.slice(); t[i]++; if (t[i] <= 40 && !pack(t).illegal) { w = t; grown = true; break; } }
+      }
+      note = pack(w).illegal ? "Balance found no legal placement in this order, even at minimum widths. Press Graph order.\n" : "";
     }
     function draw() {
       w = w.map((x, i) => Math.max(minW(i), x));
-      sl.forEach(([r, v], i) => { r.value = w[i]; r.min = 1; v.textContent = `${w[i]} col · ${w[i] * SH} cores`; });
+      sl.forEach(([r, v], i) => { r.value = w[i]; r.min = 1; v.textContent = `${w[i]} col`; v.title = `${w[i] * SH} cores`; });
       const svg = $("#kp-svg"); svg.innerHTML = "";
       txt(svg, OX, 16, `fabric ${FW} × ${FH} cores · each core 48 KB`, { "font-size": 12.5, "font-weight": 600 });
       el("rect", { x: OX, y: OY, width: FW * CELL, height: FH * CELL, class: "box", "stroke-width": 1.2 }, svg);
       for (let c = 1; c < FW; c++) el("line", { x1: OX + c * CELL, y1: OY, x2: OX + c * CELL, y2: OY + FH * CELL, class: "line", "stroke-width": 0.5 }, svg);
       for (let r = 1; r < FH; r++) el("line", { x1: OX, y1: OY + r * CELL, x2: OX + FW * CELL, y2: OY + r * CELL, class: "line", "stroke-width": 0.5 }, svg);
-      // serpentine shelf packing in `order`
-      let shelf = 0, x = 0, illegal = false; const pos = [];
-      order.forEach(i => {
-        if (shelf === 0 && x + w[i] > FW) { shelf = 1; x = 0; }
-        let px;
-        if (shelf === 0) px = x; else px = FW - x - w[i];
-        if (shelf === 1 && x + w[i] > FW) illegal = true;
-        pos[i] = { c: px, r: shelf * SH, ill: shelf === 1 && x + w[i] > FW };
-        x += w[i];
-      });
-      let ox = 0; order.forEach(i => { if (pos[i].ill) { pos[i] = { c: ox, r: FH + 1, ill: true }; ox += w[i]; } });
+      const pk = pack(w), pos = pk.pos, illegal = pk.illegal;
+      // kernels that do not fit go to a tray under the fabric, squeezed to the fabric's width if needed
+      const trayW = order.reduce((a, i) => a + (pos[i].ill ? w[i] : 0), 0), tsc = Math.min(1, FW / Math.max(1, trayW));
+      let ox = 0; order.forEach(i => { if (pos[i].ill) { pos[i] = { c: ox, r: FH + 1, ill: true, sc: tsc }; ox += w[i] * tsc; } });
       const dts = work.map((x, i) => x / (w[i] * SH)), dtMax = Math.max(...dts), bott = dts.indexOf(dtMax);
       order.forEach(i => {
-        const p = pos[i], rx = OX + p.c * CELL, ry = OY + p.r * CELL, ww = w[i] * CELL, hh = (p.ill ? 4 : SH) * CELL;
-        el("rect", { x: rx + 1, y: ry + 1, width: ww - 2, height: hh - 2, rx: 3, fill: cssVar(colors[i]), opacity: p.ill ? 0.25 : 0.42, stroke: cssVar(p.ill ? "--red" : i === bott ? "--text" : colors[i]), "stroke-width": i === bott ? 3 : 1.5, "stroke-dasharray": p.ill ? "4 3" : "none" }, svg);
-        if (p.ill) txt(svg, rx + ww / 2, ry + hh / 2 + 4, `${names[i]}: no room`, { "text-anchor": "middle", "font-size": 11.5, "font-weight": 700, class: "f-red" });
+        const p = pos[i], rx = OX + p.c * CELL, ry = OY + p.r * CELL, ww = w[i] * CELL * (p.sc || 1), hh = (p.ill ? 4 : SH) * CELL;
+        el("rect", { x: rx + 1, y: ry + 1, width: ww - 2, height: hh - 2, rx: 3, fill: cssVar(colors[i]), opacity: p.ill ? 0.25 : 0.42, stroke: cssVar(p.ill ? "--red" : i === bott && !illegal ? "--text" : colors[i]), "stroke-width": i === bott && !illegal ? 3 : 1.5, "stroke-dasharray": p.ill ? "4 3" : "none" }, svg);
+        if (p.ill) txt(svg, rx + ww / 2, ry + hh / 2 + 4, ww >= 90 ? `${names[i]}: no room` : `L${i + 1}`, { "text-anchor": "middle", "font-size": 11.5, "font-weight": 700, class: "f-red" });
         else if (ww >= 34) {
-          txt(svg, rx + ww / 2, ry + hh / 2 - 4, names[i], { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: "halo" });
-          txt(svg, rx + ww / 2, ry + hh / 2 + 12, `Δt ${Math.round(dts[i])}`, { "text-anchor": "middle", "font-size": 11.5, class: "halo" });
-        } else txt(svg, rx + ww / 2, ry + hh / 2 + 4, String(i + 1), { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: "halo" });
+          txt(svg, rx + ww / 2, ry + 30, names[i], { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: "halo" });
+          txt(svg, rx + ww / 2, ry + 46, `Δt ${Math.round(dts[i])}`, { "text-anchor": "middle", "font-size": 11.5, class: "halo" });
+        } else txt(svg, rx + ww / 2, ry + 34, String(i + 1), { "text-anchor": "middle", "font-size": 12, "font-weight": 700, class: "halo" });
       });
-      // wires between consecutive layers (graph order L1→L6)
+      // wires between consecutive layers (graph order L1→L6), routed in the lower part of each rectangle, below the labels
       let wire = 0;
+      const wy = p => p.r + (p.ill ? 3 : SH * 0.78);
       for (let i = 0; i < 5; i++) {
         const a = pos[i], b = pos[i + 1];
-        const ax = a.c + w[i] / 2, ay = a.r + (a.ill ? 2 : SH / 2), bx = b.c + w[i + 1] / 2, by = b.r + (b.ill ? 2 : SH / 2);
-        wire += Math.abs(ax - bx) + Math.abs(ay - by);
-        el("path", { d: `M${OX + ax * CELL} ${OY + ay * CELL} L${OX + bx * CELL} ${OY + ay * CELL} L${OX + bx * CELL} ${OY + by * CELL}`, fill: "none", class: "s-muted", "stroke-width": 1.6, "stroke-dasharray": "3 3" }, svg);
+        const ax = a.c + w[i] * (a.sc || 1) / 2, ay = wy(a), bx = b.c + w[i + 1] * (b.sc || 1) / 2, by = wy(b);
+        wire += Math.abs(ax - bx) + Math.abs(a.r - b.r);
+        const ex = a.r === b.r ? bx : bx + w[i + 1] * (b.sc || 1) * 0.3; // vertical leg kept right of the labels
+        el("path", { d: `M${OX + ax * CELL} ${OY + ay * CELL} L${OX + ex * CELL} ${OY + ay * CELL} L${OX + ex * CELL} ${OY + by * CELL} L${OX + bx * CELL} ${OY + by * CELL}`, fill: "none", class: "s-muted", "stroke-width": 1.6, "stroke-dasharray": "3 3" }, svg);
       }
       // side panel: Δt bars
       const PX = OX + FW * CELL + 16, bw = 760 - PX - 8;
       txt(svg, PX, 16, "Δt (cycles)", { "font-size": 12.5, "font-weight": 600 });
       const sc = Math.max(...dts, 1);
       names.forEach((n, i) => {
-        const y = OY + 6 + i * 40;
+        const y = OY + 6 + i * 40, isB = i === bott && !illegal;
         txt(svg, PX, y + 10, `L${i + 1}`, { "font-size": 12 });
-        el("rect", { x: PX + 22, y, width: Math.max(2, (bw - 26) * dts[i] / sc), height: 14, rx: 3, fill: cssVar(colors[i]), opacity: 0.55, stroke: cssVar(i === bott ? "--text" : colors[i]), "stroke-width": i === bott ? 2 : 1 }, svg);
-        txt(svg, PX + 22, y + 28, `${Math.round(dts[i])}${i === bott ? " ← slowest" : ""}`, { "font-size": 11.5, class: i === bott ? "" : "muted" });
+        el("rect", { x: PX + 22, y, width: Math.max(2, (bw - 26) * dts[i] / sc), height: 14, rx: 3, fill: cssVar(colors[i]), opacity: 0.55, stroke: cssVar(isB ? "--text" : colors[i]), "stroke-width": isB ? 2 : 1 }, svg);
+        txt(svg, PX + 22, y + 28, `${Math.round(dts[i])}${isB ? " ← slowest" : ""}`, { "font-size": 11.5, class: isB ? "" : "muted" });
       });
-      const used = w.reduce((a, b) => a + b, 0) * SH, memNote = mode ? "minimum widths come from each layer's pinned weights" : "minimum widths come from activations and small weights";
-      $("#kp-out").textContent =
-        (illegal ? "ILLEGAL: kernels overflow the fabric. Narrow some kernels (or balance).\n" : "") +
-        `pipeline Δt = max = ${Math.round(dtMax)} cycles per sample (bottleneck L${bott + 1}) · relative throughput ${(100 / dtMax).toFixed(2)} samples per 100 cycles\n` +
-        `cores used ${used} of ${FW * FH} (${Math.round(100 * used / (FW * FH))}%) · wire length (L1, consecutive layers) ${wire.toFixed(0)} cores\n` +
-        `${memNote}; balanced Δt ≈ ${Math.round(work.reduce((a, b) => a + b, 0) / (FW * FH))} if every core is used.`;
+      const placed = names.reduce((a, n, i) => a + (pos[i].ill ? 0 : w[i]), 0) * SH;
+      const memNote = mode ? "minimum widths come from each layer's pinned weights" : "minimum widths come from activations and small weights";
+      const minTot = names.reduce((a, n, i) => a + minW(i), 0);
+      $("#kp-out").textContent = note +
+        (illegal
+          ? `ILLEGAL: ${order.filter(i => pos[i].ill).map(i => "L" + (i + 1)).join(", ")} do not fit on the fabric, so there is no pipeline to score.\n` +
+            `pipeline Δt = — · relative throughput — · cores placed ${placed} of ${FW * FH}\n` +
+            `Narrow some kernels, press Balance Δt (it packs to fit), or restore Graph order.\n`
+          : `pipeline Δt = max = ${Math.round(dtMax)} cycles per sample (bottleneck L${bott + 1}) · relative throughput ${(100 / dtMax).toFixed(2)} samples per 100 cycles\n` +
+            `cores used ${placed} of ${FW * FH} (${Math.round(100 * placed / (FW * FH))}%) · wire length (L1, consecutive layers) ${wire.toFixed(0)} cores\n`) +
+        `${memNote} (together ${minTot} of ${2 * FW} columns); balanced Δt ≈ ${Math.round(work.reduce((a, b) => a + b, 0) / (FW * FH))} if every core is used.`;
       svg.setAttribute("viewBox", `0 0 760 ${illegal ? 380 : 330}`);
-      svg.setAttribute("aria-label", `Pipeline delta t ${Math.round(dtMax)} cycles, bottleneck layer ${bott + 1}${illegal ? ", illegal placement" : ""}`);
+      svg.setAttribute("aria-label", illegal ? "Illegal placement: some kernels do not fit on the fabric" : `Pipeline delta t ${Math.round(dtMax)} cycles, bottleneck layer ${bott + 1}`);
     }
     seg("#kp-mode", v => { mode = +v; balance(); draw(); });
     $("#kp-bal").onclick = () => { balance(); draw(); };
-    $("#kp-eq").onclick = () => { w = w.map(() => 16); draw(); };
-    $("#kp-shuf").onclick = () => { for (let i = 5; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; } if (order.join() === "0,1,2,3,4,5") order.reverse(); draw(); };
-    $("#kp-topo").onclick = () => { order = [0, 1, 2, 3, 4, 5]; draw(); };
+    $("#kp-eq").onclick = () => { w = w.map(() => 16); note = ""; draw(); };
+    $("#kp-shuf").onclick = () => { for (let i = 5; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; } if (order.join() === "0,1,2,3,4,5") order.reverse(); note = ""; draw(); };
+    $("#kp-topo").onclick = () => { order = [0, 1, 2, 3, 4, 5]; note = ""; draw(); };
     draw();
   })();
 
@@ -549,10 +586,11 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
       return Math.max(16, Math.round(a[1] + (b[1] - a[1]) * (lg(n) - lg(a[0])) / (lg(b[0]) - lg(a[0]))));
     }
     const measured = { 8: [[1800, "launch 1,800"]], 70: [[450, "Aug 2024: 450"], [2100, "Oct 2024: 2,100"]], 405: [[969, "Nov 2024: 969"]] };
-    const KBW = 7.5 * 0.85e9 * 900000; // measured f16 GEMV rate per PE × 850 MHz × 900k PEs
+    const KBW = 7.5 * 0.85e9 * 900000, KBW8 = 15 * 0.85e9 * 900000; // f16 GEMV rate per PE (measured; 8-wide, not demonstrated) × 850 MHz × 900k PEs
     const devs = [
       { n: "WSE-3", gb: 44, bw: 21e15, cls: "acc", wafer: 1 },
-      { n: "WSE-3 (kernel)", gb: 44, bw: KBW, cls: "acc", wafer: 1, same: 0 },
+      { n: "WSE-3 (kernel)", gb: 44, bw: KBW, cls: "acc", wafer: 1, same: 0, sub: "measured f16 kernel" },
+      { n: "WSE-3 (8-wide)", gb: 44, bw: KBW8, cls: "acc", wafer: 1, same: 0, sub: "8-wide f16 (not shown)" },
       { n: "H100", gb: 80, bw: 3.35e12, cls: "blu" },
       { n: "B200", gb: 192, bw: 8e12, cls: "grn" },
     ];
@@ -565,7 +603,7 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
       const L = layers(n), kvTok = L * 8 * 128 * 2 * 2, wGB = n * b, kvGB = users * ctx * kvTok / 1e9, tot = wGB + kvGB;
       const cnt = d => Math.ceil(tot / d.gb);
       const svg = $("#p-svg"); svg.innerHTML = "";
-      const rows = [devs[0], devs[2], devs[3]];
+      const rows = [devs[0], devs[3], devs[4]];
       let y = 12;
       rows.forEach(d => {
         const c = cnt(d), group = c > 40 ? Math.ceil(c / 40) : 1, boxes = Math.ceil(c / group);
@@ -585,13 +623,13 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
       el("rect", { x: 210, y: y, width: 12, height: 10, fill: cssVar("--purple") }, svg); txt(svg, 227, y + 9, "KV cache", { "font-size": 12 });
       txt(svg, 300, y + 9, "(load spread evenly; empty = free memory)", { "font-size": 12, class: "muted" });
       svg.setAttribute("viewBox", `0 0 680 ${y + 18}`);
-      svg.setAttribute("aria-label", `${cnt(devs[0])} WSE-3 wafers, ${cnt(devs[2])} H100s or ${cnt(devs[3])} B200s needed`);
+      svg.setAttribute("aria-label", `${cnt(devs[0])} WSE-3 wafers, ${cnt(devs[3])} H100s or ${cnt(devs[4])} B200s needed`);
       const bw = $("#p-bw"); bw.innerHTML = "";
-      const x0 = 150, x1 = 660, lo = 0, hi = 7, X = v => x0 + (Math.log10(Math.max(1, v)) - lo) / (hi - lo) * (x1 - x0);
+      const x0 = 150, x1 = 660, lo = 0, hi = 7, GB = 28 + devs.length * 34 - 4, X = v => x0 + (Math.log10(Math.max(1, v)) - lo) / (hi - lo) * (x1 - x0);
       txt(bw, x0, 14, "upper bound on tokens/s for one user (log scale)", { "font-size": 12.5, "font-weight": 600 });
       for (let e = lo; e <= hi; e++) {
-        el("line", { x1: X(Math.pow(10, e)), y1: 22, x2: X(Math.pow(10, e)), y2: 168, class: "line", "stroke-width": 1 }, bw);
-        txt(bw, X(Math.pow(10, e)), 184, e < 3 ? String(Math.pow(10, e)) : e < 6 ? Math.pow(10, e - 3) + "k" : Math.pow(10, e - 6) + "M", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+        el("line", { x1: X(Math.pow(10, e)), y1: 22, x2: X(Math.pow(10, e)), y2: GB, class: "line", "stroke-width": 1 }, bw);
+        txt(bw, X(Math.pow(10, e)), GB + 16, e < 3 ? String(Math.pow(10, e)) : e < 6 ? Math.pow(10, e - 3) + "k" : Math.pow(10, e - 6) + "M", { "text-anchor": "middle", "font-size": 12, class: "muted" });
       }
       const ceil = {}; let pipeFull = 0;
       devs.forEach((d, i) => {
@@ -599,23 +637,23 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
         if (i === 0) pipeFull = agg / (tot * 1e9);
         ceil[d.n] = v;
         const yy = 28 + i * 34;
-        txt(bw, x0 - 8, yy + 12, `${d.n.replace(" (kernel)", "")} × ${c}`, { "text-anchor": "end", "font-size": 12.5, "font-weight": 600 });
-        txt(bw, x0 - 8, yy + 25, d.same === 0 ? "f16 GEMV, measured" : d.wafer ? `headline, ÷ ${L} regions` : "tensor-parallel", { "text-anchor": "end", "font-size": 11, class: "muted" });
+        txt(bw, x0 - 8, yy + 12, `${d.n.replace(/ \(.*\)/, "")} × ${c}`, { "text-anchor": "end", "font-size": 12.5, "font-weight": 600 });
+        txt(bw, x0 - 8, yy + 25, d.sub ? d.sub : d.wafer ? `headline, ÷ ${L} regions` : "tensor-parallel", { "text-anchor": "end", "font-size": 11, class: "muted" });
         el("rect", { x: x0, y: yy, width: Math.max(2, X(v) - x0), height: 18, rx: 3, class: d.cls, "stroke-width": 1.2, opacity: d.same === 0 ? 0.6 : 1 }, bw);
         txt(bw, Math.min(X(v) + 6, x1 - 4), yy + 13, fmt(v), { "font-size": 12, "font-weight": 600, "text-anchor": X(v) + 50 > x1 ? "end" : "start", class: "halo" });
       });
       const ms = (b === 2 && preset && measured[preset]) || [];
       ms.forEach(([v, l], k) => {
-        el("line", { x1: X(v), y1: 24, x2: X(v), y2: 94, class: "s-red", "stroke-width": 2, "stroke-dasharray": "3 2" }, bw);
-        txt(bw, X(v) + (k ? 4 : -4), 200, l, { "text-anchor": k ? "start" : "end", "font-size": 11.5, class: "f-red" });
+        el("line", { x1: X(v), y1: 24, x2: X(v), y2: 28 + 3 * 34 - 10, class: "s-red", "stroke-width": 2, "stroke-dasharray": "3 2" }, bw);
+        txt(bw, X(v) + (k ? 4 : -4), GB + 32, l, { "text-anchor": k ? "start" : "end", "font-size": 11.5, class: "f-red" });
       });
-      bw.setAttribute("viewBox", `0 0 680 ${ms.length ? 210 : 192}`);
+      bw.setAttribute("viewBox", `0 0 680 ${ms.length ? GB + 42 : GB + 24}`);
       const gbs = v => v < 10 ? v.toFixed(1) : v.toFixed(0);
       $("#p-out").textContent =
         `weights ${gbs(wGB)} GB + KV ${gbs(kvGB)} GB (${users} × ${ctx.toLocaleString("en")} tokens × ${(kvTok / 1e6).toFixed(2)} MB, ${L} layers) = ${gbs(tot)} GB\n` +
-        `→ ${cnt(devs[0])} × WSE-3 (${cnt(devs[0]) * 44} GB)  ·  ${cnt(devs[2])} × H100  ·  ${cnt(devs[3])} × B200\n` +
-        `one-user bound: WSE-3 ${fmt(ceil["WSE-3"])} tok/s at 21 PB/s, ${fmt(ceil["WSE-3 (kernel)"])} at the measured f16 kernel rate (850 MHz) · H100 ${fmt(ceil["H100"])} · B200 ${fmt(ceil["B200"])}\n` +
-        `pipe-full total for the wafers (all ${L} regions busy with different users): ${fmt(pipeFull)} tok/s. Per user, the wafer's bound is a region's SRAM rate, not the whole wafer's.`;
+        `→ ${cnt(devs[0])} × WSE-3 (${cnt(devs[0]) * 44} GB)  ·  ${cnt(devs[3])} × H100  ·  ${cnt(devs[4])} × B200\n` +
+        `one-user bound: WSE-3 ${fmt(ceil["WSE-3"])} tok/s at 21 PB/s, ${fmt(ceil["WSE-3 (kernel)"])} at the measured f16 kernel rate, ${fmt(ceil["WSE-3 (8-wide)"])} at 8-wide (850 MHz) · H100 ${fmt(ceil["H100"])} · B200 ${fmt(ceil["B200"])}\n` +
+        `pipe-full total for the wafers (all ${L} regions busy with different users): ${fmt(pipeFull)} tok/s. Per user, the wafer's bound is a region's kernel rate (weights use only the read ports), not the whole wafer's.`;
     }
     $("#p-n").oninput = () => { preset = 0; $("#p-pre").querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", "false")); cap(); };
     seg("#p-pre", v => { preset = +v; $("#p-n").value = Math.log10(+v).toFixed(3); cap(); });
@@ -627,50 +665,113 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
   /* ---------- Latency budget ---------- */
   (function () {
     const L = 80, BPE = 140e9 / (4 * 900000), REGION = 900000 / 20, KVB = 8 * 128 * 2 * 2;
-    const ids = ["clk", "rate", "ctx", "nc", "hops", "cph", "wh", "e"];
+    const ids = ["clk", "rate", "ctx", "nc", "hops", "cph", "wh", "k", "a", "c"];
     const v = id => +$("#lb-" + id).value;
     function draw() {
-      const clk = v("clk"), rate = v("rate"), ctx = v("ctx"), nc = v("nc"), hops = v("hops"), cph = v("cph"), wh = v("wh"), E = v("e");
+      const clk = v("clk"), rate = v("rate"), ctx = v("ctx"), nc = v("nc"), hops = v("hops"), cph = v("cph"), wh = v("wh"), k = v("k"), a = v("a"), c = v("c");
       $("#lb-clkv").textContent = (clk * 1000).toFixed(0) + " MHz";
       $("#lb-ncv").textContent = nc; $("#lb-hopsv").textContent = hops;
-      $("#lb-whv").textContent = wh.toFixed(1) + " µs"; $("#lb-ev").textContent = E.toFixed(1);
+      $("#lb-whv").textContent = wh.toFixed(1) + " µs"; $("#lb-kv").textContent = k ? k : "0 (off)";
+      $("#lb-av").textContent = a.toFixed(2); $("#lb-cv").textContent = c.toFixed(2);
+      ["a", "c"].forEach(id => $("#lb-" + id).disabled = k === 0);
       const cyc = { g: BPE / rate, c: nc * hops * cph, k: ctx * KVB / REGION / rate };
-      const us = c => c * L / (clk * 1e3); // cycles per layer → µs over 80 layers
-      const seg = [["GEMV (weights)", us(cyc.g), "--amber"], ["collectives", us(cyc.c), "--blue"], ["attention / KV", us(cyc.k), "--purple"], ["wafer hops", 4 * wh, "--red"]];
-      const pass = seg.reduce((a, s) => a + s[1], 0), tok = pass / E;
+      const layerUs = (cyc.g + cyc.c + cyc.k) / (clk * 1e3);
+      const us = cc => cc * L / (clk * 1e3); // cycles per layer → µs over 80 layers
+      const trip = us(cyc.g + cyc.c + cyc.k) + 4 * wh;
+      const E = k ? (1 - Math.pow(a, k + 1)) / (1 - a) : 1;
+      const parts = [["GEMV (weights)", us(cyc.g), "--amber"], ["collectives", us(cyc.c), "--blue"], ["attention / KV", us(cyc.k), "--purple"], ["wafer hops", 4 * wh, "--red"],
+        ["extra positions (k stages)", k * layerUs, "--green"], ["draft model", k * c * trip, "--teal"]];
+      const round = parts.reduce((s, p) => s + p[1], 0), tok = round / E;
       const svg = $("#lb-svg"); svg.innerHTML = "";
-      const x0 = 150, x1 = 680, maxU = Math.max(2400, pass * 1.05), X = u => x0 + (x1 - x0) * u / maxU;
+      const x0 = 150, x1 = 680, maxU = Math.max(2400, round * 1.05), X = u => x0 + (x1 - x0) * u / maxU;
       for (let t = 0; t <= maxU; t += maxU > 4000 ? 1000 : 500) {
-        el("line", { x1: X(t), y1: 20, x2: X(t), y2: 150, class: "line", "stroke-width": 1 }, svg);
+        el("line", { x1: X(t), y1: 26, x2: X(t), y2: 150, class: "line", "stroke-width": 1 }, svg);
         txt(svg, X(t), 166, t >= 1000 ? (t / 1000) + " ms" : t + " µs", { "text-anchor": "middle", "font-size": 11.5, class: "muted" });
       }
-      function bar(y, label, sub, scale) {
-        txt(svg, x0 - 8, y + 15, label, { "text-anchor": "end", "font-size": 12.5, "font-weight": 600 });
-        txt(svg, x0 - 8, y + 30, sub, { "text-anchor": "end", "font-size": 11, class: "muted" });
-        let x = x0;
-        seg.forEach(([n, u, c]) => { const w = (X(u * scale) - x0); if (w > 0.2) el("rect", { x, y, width: w, height: 26, fill: cssVar(c), opacity: 0.75, stroke: cssVar("--surface"), "stroke-width": 1 }, svg); x += w; });
-        txt(svg, Math.min(x + 6, x1 - 2), y + 18, `${Math.round(pass * scale)} µs`, { "font-size": 12, "font-weight": 600, "text-anchor": x + 60 > x1 ? "end" : "start", class: "halo" });
-      }
-      bar(30, "one target pass", "80 layers + 4 hops", 1);
-      bar(90, "per output token", `÷ ${E.toFixed(1)} accepted / pass`, 1 / E);
+      // published per-token times: a tick strip above the bars, with a faint guide through them
       [[2222, "450"], [476, "2,100"], [432, "2,314"]].forEach(([u, l], i) => {
         if (u > maxU) return;
-        el("line", { x1: X(u), y1: 22, x2: X(u), y2: 126, class: "s-red", "stroke-width": 1.6, "stroke-dasharray": "4 3" }, svg);
-        txt(svg, X(u) + (i === 2 ? -3 : 3), 20 + (i === 2 ? 0 : 0), l + " tok/s", { "font-size": 11, class: "f-red", "text-anchor": i === 2 ? "end" : "start" });
+        el("line", { x1: X(u), y1: 18, x2: X(u), y2: 146, class: "s-red", "stroke-width": 1.2, "stroke-dasharray": "4 3", opacity: 0.7 }, svg);
+        txt(svg, X(u) + (i === 2 ? -3 : 3), 14, l, { "font-size": 11, class: "f-red", "text-anchor": i === 2 ? "end" : "start" });
       });
-      let lx = x0;
-      seg.forEach(([n, u, c]) => { el("rect", { x: lx, y: 186, width: 12, height: 10, fill: cssVar(c), opacity: 0.75 }, svg); txt(svg, lx + 16, 195, n, { "font-size": 12 }); lx += 26 + n.length * 6.6; });
-      txt(svg, x0, 218, "dashed: published per-token times (2.22 ms, 476 µs, 432 µs)", { "font-size": 11.5, class: "muted" });
-      const pl = c => (c).toFixed(0);
+      txt(svg, x0 - 8, 14, "published tok/s", { "text-anchor": "end", "font-size": 11, class: "f-red" });
+      function bar(y, label, sub, scale) {
+        txt(svg, x0 - 8, y + 12, label, { "text-anchor": "end", "font-size": 12.5, "font-weight": 600 });
+        txt(svg, x0 - 8, y + 27, sub, { "text-anchor": "end", "font-size": 11, class: "muted" });
+        let x = x0;
+        parts.forEach(([n, u, col]) => { const w = (X(u * scale) - x0); if (w > 0.2) el("rect", { x, y, width: Math.min(w, x1 - x), height: 26, fill: cssVar(col), opacity: 0.75, stroke: cssVar("--surface"), "stroke-width": 1 }, svg); x += w; });
+      }
+      bar(34, `one round · ${Math.round(round)} µs`, k ? `draft ${k} + 80 layers + hops` : "80 layers + 4 hops", 1);
+      bar(96, `per token · ${Math.round(tok)} µs`, k ? `÷ E = ${E.toFixed(2)} tokens/round` : "no speculation", 1 / E);
+      let lx = 8, ly = 186;
+      parts.forEach(([n, u, col]) => {
+        const wpx = 26 + n.length * 6.3;
+        if (lx + wpx > 700) { lx = 8; ly += 18; }
+        el("rect", { x: lx, y: ly, width: 12, height: 10, fill: cssVar(col), opacity: 0.75 }, svg); txt(svg, lx + 16, ly + 9, n, { "font-size": 12 }); lx += wpx;
+      });
+      txt(svg, 8, ly + 30, "dashed red: published per-token times (2.22 ms, 476 µs, 432 µs)", { "font-size": 11.5, class: "muted" });
+      svg.setAttribute("viewBox", `0 0 700 ${ly + 38}`);
+      const pl = cc => (cc).toFixed(0);
       $("#lb-out").textContent =
-        `per layer: GEMV ${pl(cyc.g)} + collectives ${pl(cyc.c)} + attention ${pl(cyc.k)} = ${pl(cyc.g + cyc.c + cyc.k)} cycles = ${((cyc.g + cyc.c + cyc.k) / (clk * 1e3)).toFixed(2)} µs at ${(clk * 1000).toFixed(0)} MHz\n` +
-        `one pass = ${Math.round(pass)} µs (${Math.round(1e6 / pass).toLocaleString("en")} passes/s) → per output token ${Math.round(tok)} µs ≈ ${Math.round(1e6 / tok).toLocaleString("en")} tok/s per user\n` +
-        `budget at 2,100 tok/s: 476 µs per token = ${(476 * E).toFixed(0)} µs per pass at ${E.toFixed(1)} tokens/pass · weights per PE ${(BPE / 1000).toFixed(1)} KB, region ≈ ${REGION.toLocaleString("en")} PEs (derived)`;
-      svg.setAttribute("aria-label", `One target pass ${Math.round(pass)} microseconds, about ${Math.round(1e6 / tok)} tokens per second per user`);
+        `per layer: GEMV ${pl(cyc.g)} + collectives ${pl(cyc.c)} + attention ${pl(cyc.k)} = ${pl(cyc.g + cyc.c + cyc.k)} cycles = ${layerUs.toFixed(2)} µs at ${(clk * 1000).toFixed(0)} MHz\n` +
+        `one target trip = ${Math.round(trip)} µs` + (k ? ` · round = trip + ${k} stage-times (${Math.round(k * layerUs)} µs) + draft ${k} × ${c.toFixed(2)} × trip (${Math.round(k * c * trip)} µs) = ${Math.round(round)} µs\n` +
+          `E = (1 − ${a.toFixed(2)}^${k + 1}) / (1 − ${a.toFixed(2)}) = ${E.toFixed(2)} tokens per round → ` : " · no speculation → ") +
+        `per output token ${Math.round(tok)} µs ≈ ${Math.round(1e6 / tok).toLocaleString("en")} tok/s per user\n` +
+        `budget at 2,100 tok/s: 476 µs per token` + (k ? ` = ${(476 * E).toFixed(0)} µs per round at E = ${E.toFixed(2)}` : "") + ` · weights per PE ${(BPE / 1000).toFixed(1)} KB, region ≈ ${REGION.toLocaleString("en")} PEs (derived)`;
+      svg.setAttribute("aria-label", `One round ${Math.round(round)} microseconds, about ${Math.round(1e6 / tok)} tokens per second per user`);
     }
     ids.forEach(id => { const n = $("#lb-" + id); n.oninput = n.onchange = () => { $("#lb-pre").querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", "false")); draw(); }; });
-    const presets = { a: { cph: "9.2", e: 1, nc: 8, hops: 212, rate: "7.5", clk: 0.85, wh: 5 }, b: { cph: "2", e: 2, nc: 8, hops: 212, rate: "7.5", clk: 0.85, wh: 5 } };
-    seg("#lb-pre", k => { const p = presets[k]; Object.keys(p).forEach(id => $("#lb-" + id).value = p[id]); draw(); });
+    const presets = {
+      a: { rate: "7.5", cph: "9.2", nc: 8, hops: 212, clk: 0.85, wh: 5, ctx: "8192", k: 0, a: 0.8, c: 0.35 },
+      b: { rate: "15", cph: "2", nc: 8, hops: 212, clk: 0.85, wh: 5, ctx: "8192", k: 4, a: 0.8, c: 0.35 },
+    };
+    seg("#lb-pre", key => { const p = presets[key]; Object.keys(p).forEach(id => $("#lb-" + id).value = p[id]); draw(); });
+    draw();
+  })();
+
+  /* ---------- Speculative verification through the pipeline ---------- */
+  (function () {
+    const S = 16, colors = ["--accent", "--blue", "--green"];
+    let K = 4, U = 2;
+    function draw() {
+      const svg = $("#sv-svg"); svg.innerHTML = "";
+      const COLS = S + 8 + 1, GX = 70, GY = 34, cw = (690 - GX) / COLS, rh = 14;
+      // which user/position holds (stage, time)? user u starts at offset u*gap; position p at stage s at time off + p + s
+      const gap = Math.floor(S / U), cell = {};
+      for (let u = 0; u < U; u++) for (let p = 0; p <= K; p++) for (let st = 0; st < S; st++) {
+        const t = u * gap + p + st; if (t < COLS) cell[st + "," + t] = [u, p];
+      }
+      txt(svg, GX, 14, "time → (one column = one stage-time)", { "font-size": 12, class: "muted" });
+      for (let st = 0; st < S; st++) {
+        if (st % 3 === 0 || st === S - 1) txt(svg, GX - 8, GY + st * rh + rh - 3, `stage ${st + 1}`, { "text-anchor": "end", "font-size": 11, class: "muted" });
+        for (let t = 0; t < COLS; t++) {
+          const h = cell[st + "," + t];
+          el("rect", { x: GX + t * cw + 0.5, y: GY + st * rh + 0.5, width: cw - 1, height: rh - 1, rx: 1.5,
+            fill: h ? cssVar(colors[h[0]]) : cssVar("--surface-2"), opacity: h ? (h[1] === 0 ? 0.95 : 0.55) : 1, stroke: cssVar("--border"), "stroke-width": 0.5 }, svg);
+        }
+      }
+      // user 0's pass: from entry to last position leaving the last stage
+      const yA = GY + S * rh + 14, end0 = K + S;
+      el("path", { d: `M${GX} ${yA} H${GX + Math.min(COLS, end0) * cw}`, class: "s-acc", "stroke-width": 2, fill: "none" }, svg);
+      el("path", { d: `M${GX + S * cw} ${yA - 5} V${yA + 5}`, class: "s-acc", "stroke-width": 2 }, svg);
+      txt(svg, GX + S * cw - 4, yA + 18, `a plain token: ${S} stage-times`, { "text-anchor": "end", "font-size": 11.5 });
+      if (K) txt(svg, GX + S * cw + 4, yA + 18, `+ ${K} for the extra positions`, { "font-size": 11.5, class: "f-acc" });
+      const occ = U * (K + 1), Ev = K ? (1 - Math.pow(0.8, K + 1)) / 0.2 : 1;
+      el("rect", { x: GX, y: yA + 30, width: 12, height: 10, fill: cssVar("--accent"), opacity: 0.95 }, svg);
+      txt(svg, GX + 16, yA + 39, "position 0 (darker)", { "font-size": 11.5 });
+      el("rect", { x: GX + 150, y: yA + 30, width: 12, height: 10, fill: cssVar("--accent"), opacity: 0.55 }, svg);
+      txt(svg, GX + 166, yA + 39, "draft positions 1…k", { "font-size": 11.5 });
+      el("rect", { x: GX + 320, y: yA + 30, width: 12, height: 10, fill: cssVar("--surface-2"), stroke: cssVar("--border") }, svg);
+      txt(svg, GX + 336, yA + 39, "idle slot", { "font-size": 11.5 });
+      svg.setAttribute("viewBox", `0 0 700 ${yA + 48}`);
+      $("#sv-out").textContent =
+        `${U} user${U > 1 ? "s" : ""} × ${K + 1} position${K ? "s" : ""} = ${occ} of ${S} stage slots busy (${Math.round(100 * occ / S)}%) · each pass takes ${S + K} stage-times instead of ${S} (+${Math.round(100 * K / S)}%)\n` +
+        (K ? `at α = 0.8 a pass yields E = ${Ev.toFixed(2)} tokens for ${K + 1} slots; on the real 80-stage pipe the extra time is ${K}/80 = ${(100 * K / 80).toFixed(1)}%, and ~13 KV-limited users fill at most ${13 * (K + 1)} of 80 slots`
+           : `no speculation: one slot per user per pass; ~13 KV-limited users would fill at most 13 of the real pipe's 80 slots`);
+      svg.setAttribute("aria-label", `${occ} of ${S} pipeline slots busy, pass length ${S + K} stage-times`);
+    }
+    seg("#sv-k", x => { K = +x; draw(); });
+    seg("#sv-u", x => { U = +x; draw(); });
     draw();
   })();
 
@@ -678,10 +779,13 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
   (function () {
     const v = id => +$("#sd-" + id).value;
     const Ef = (a, k) => (1 - Math.pow(a, k + 1)) / (1 - a);
+    const baseIn = $("#sd-base");
     function draw() {
-      const a = v("a"), k = v("k"), c = v("c"), S = v("s"), base = Math.max(1, v("base") || 1);
-      $("#sd-av").textContent = a.toFixed(2); $("#sd-kv").textContent = k; $("#sd-cv").textContent = c.toFixed(2); $("#sd-sv").textContent = S;
-      const gpu = kk => Ef(a, kk) / (1 + kk * c), waf = kk => Ef(a, kk) / (1 + kk / S + kk * c), slot = kk => Ef(a, kk) / (kk + 1);
+      const a = v("a"), k = v("k"), cg = v("cg"), c = v("c"), S = v("s");
+      let base = +baseIn.value;
+      if (!isFinite(base) || baseIn.value === "" || base < 10) base = 10; else if (base > 10000) base = 10000;
+      $("#sd-av").textContent = a.toFixed(2); $("#sd-kv").textContent = k; $("#sd-cgv").textContent = cg.toFixed(2); $("#sd-cv").textContent = c.toFixed(2); $("#sd-sv").textContent = S;
+      const gpu = kk => Ef(a, kk) / (1 + kk * cg), waf = kk => Ef(a, kk) / (1 + kk / S + kk * c), slot = kk => Ef(a, kk) / (kk + 1);
       const svg = $("#sd-svg"); svg.innerHTML = "";
       const x0 = 50, x1 = 560, y0 = 200, y1 = 18;
       let ymax = 1; for (let kk = 1; kk <= 10; kk++) ymax = Math.max(ymax, gpu(kk), waf(kk));
@@ -690,8 +794,8 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
       for (let s = 0; s <= ymax; s++) { el("line", { x1: x0, y1: Y(s), x2: x1, y2: Y(s), class: "line", "stroke-width": 1 }, svg); txt(svg, x0 - 6, Y(s) + 4, s + "×", { "text-anchor": "end", "font-size": 11.5, class: "muted" }); }
       for (let kk = 1; kk <= 10; kk++) txt(svg, X(kk), y0 + 16, String(kk), { "text-anchor": "middle", "font-size": 11.5, class: "muted" });
       txt(svg, (x0 + x1) / 2, y0 + 34, "draft length k", { "text-anchor": "middle", "font-size": 12, class: "muted" });
-      const line = (f, cls, dash) => { let d = ""; for (let kk = 1; kk <= 10; kk++) d += (kk > 1 ? "L" : "M") + X(kk).toFixed(1) + " " + Y(f(kk)).toFixed(1); el("path", { d, fill: "none", class: cls, "stroke-width": 2.4, "stroke-dasharray": dash || "none" }, svg); };
-      line(gpu, "s-blu"); line(waf, "s-acc"); line(slot, "s-muted", "5 4");
+      const line = (f, cls, dash, sw) => { let d = ""; for (let kk = 1; kk <= 10; kk++) d += (kk > 1 ? "L" : "M") + X(kk).toFixed(1) + " " + Y(f(kk)).toFixed(1); el("path", { d, fill: "none", class: cls, "stroke-width": sw || 2.4, "stroke-dasharray": dash || "none" }, svg); };
+      line(gpu, "s-blu"); line(waf, "s-acc"); line(slot, "s-muted", "5 4", 1.6);
       el("line", { x1: X(k), y1: y1, x2: X(k), y2: y0, class: "s-muted", "stroke-width": 1, "stroke-dasharray": "2 3" }, svg);
       [[gpu, "f-blu"], [waf, "f-acc"], [slot, "f-muted"]].forEach(([f, cl]) => el("circle", { cx: X(k), cy: Y(f(k)), r: 5, class: cl }, svg));
       const LX = x1 + 14;
@@ -701,14 +805,17 @@ It needs <code>layout.csl</code>, colors, routes, memcpy and the TSC, which Part
       });
       txt(svg, LX, 110, "per-user speedup", { "font-size": 11, class: "muted" });
       txt(svg, LX, 124, "(solid lines)", { "font-size": 11, class: "muted" });
-      const E = Ef(a, k);
+      const E = Ef(a, k), same = Math.abs(waf(k) - slot(k)) < 0.01;
       $("#sd-out").textContent =
-        `E = (1 − ${a.toFixed(2)}^${k + 1}) / (1 − ${a.toFixed(2)}) = ${E.toFixed(2)} tokens per target pass\n` +
-        `GPU: ${gpu(k).toFixed(2)}× per user → ${Math.round(base * gpu(k)).toLocaleString("en")} tok/s · wafer (S = ${S}): ${waf(k).toFixed(2)}× → ${Math.round(base * waf(k)).toLocaleString("en")} tok/s\n` +
-        `full pipe: ${k + 1} slots per pass for ${E.toFixed(2)} tokens → system throughput × ${slot(k).toFixed(2)} (${slot(k) < 1 ? "speculation trades total throughput for per-user speed" : "no loss"})`;
+        `E = (1 − ${a.toFixed(2)}^${k + 1}) / (1 − ${a.toFixed(2)}) = ${E.toFixed(2)} tokens per target pass` + (base !== +baseIn.value ? ` · base speed clamped to ${base} tok/s` : "") + `\n` +
+        `GPU (c = ${cg.toFixed(2)}): ${gpu(k).toFixed(2)}× per user → ${Math.round(base * gpu(k)).toLocaleString("en")} tok/s · wafer (S = ${S}, c = ${c.toFixed(2)}): ${waf(k).toFixed(2)}× → ${Math.round(base * waf(k)).toLocaleString("en")} tok/s\n` +
+        `full pipe: ${k + 1} slots per pass for ${E.toFixed(2)} tokens → system throughput × ${slot(k).toFixed(2)} (${slot(k) < 1 ? "speculation trades total throughput for per-user speed, but only when the pipe is full" : "no loss"})` +
+        (same ? "\n(the wafer and slot-share curves coincide here)" : "");
       svg.setAttribute("aria-label", `Expected ${E.toFixed(2)} tokens per pass; wafer speedup ${waf(k).toFixed(2)} times`);
     }
-    ["a", "k", "c", "s", "base"].forEach(id => $("#sd-" + id).oninput = draw);
+    ["a", "k", "cg", "c", "s"].forEach(id => $("#sd-" + id).oninput = draw);
+    baseIn.oninput = draw;
+    baseIn.onchange = () => { let b = +baseIn.value; if (!isFinite(b) || baseIn.value === "" || b < 10) b = 10; if (b > 10000) b = 10000; baseIn.value = b; draw(); };
     draw();
   })();
 })();

@@ -33,12 +33,14 @@
   pre.trace .cm { color: var(--muted); }
   table.num td.r, table.num th.r { text-align: right; }
   table.num td:first-child, table.num th:first-child { white-space: nowrap; }
+  table.num { min-width: 780px; }
   mark { background: var(--accent-soft); color: var(--text); padding: 0 3px; border-radius: 3px; }
   #inst td:first-child { white-space: nowrap; }
   @media (max-width: 680px) {
     #inst tr:first-child { display: none; }
     #inst tr { display: block; border-bottom: 1px solid var(--border); padding: 6px 0; }
     #inst td { display: block; border: none; padding: 3px 10px; }
+    #inst td:first-child { font-weight: 700; padding-top: 8px; }
     #inst td[data-l]::before { content: attr(data-l) ": "; font-weight: 700; color: var(--muted); }
   }
   #nest-svg text { fill: var(--text); font-size: 12px; }
@@ -90,9 +92,9 @@
 
 <div class="widget" id="noise">
 <h4>Same program, eight runs</h4>
-<p class="hint">Program 01's timed variant, N = 256, f32, PAD 1 (one padding word between x and y), WSE-3. Runs 1–5 were made when this page was built, run 6 by its reviewer, runs 7–8 when it was revised; runs 5, 7 and 8 had the instruction trace on. Each dot is labelled with its run number and drawn relative to the median of the runs shown.</p>
+<p class="hint">Program 01's timed variant, N = 256, f32, PAD 1 (one padding word between x and y), WSE-3. Runs 1–5 were made when this page was built, runs 6–7 by its reviewer and run 8 when it was revised; runs 5, 7 and 8 had the instruction trace on. Each dot is labelled with its run number and drawn relative to the median of the runs shown.</p>
 <div class="controls"><label><input type="checkbox" id="noise-tr" checked> include the traced runs</label></div>
-<svg id="noise-svg" viewBox="0 0 680 220" width="680" role="img" aria-label="cycle_count varies between runs while the TSC kernel time stays at 271"></svg>
+<svg id="noise-svg" viewBox="0 0 680 250" width="680" role="img" aria-label="cycle_count varies between runs while the TSC kernel time stays at 271"></svg>
 <div class="readout" id="noise-out" aria-live="polite"></div>
 </div>
 
@@ -134,7 +136,7 @@ print(stamp(3) - stamp(0), "cycles")</code></pre>
 <p>Two ways around it, for anything that spans PEs:</p>
 <ul>
 <li><b>Round trip.</b> Send from a PE and time until the answer comes back to the <b>same</b> PE. Chapter 12 (<a href="12-lab-neighbours.html#hop-cost">"The hop cost, on one clock: a round trip"</a>) measures a pure router hop this way: 2.0 cycles/hop on WSE-3 and 1.0 on WSE-2 <span class="tag measured">Measured</span>. A hop through a PE's compute (receive, add, send) costs about 9.2 and 6.0 <span class="tag measured">Measured</span>.</li>
-<li><b>Synchronise, then correct.</b> The SDK's solver and stencil benchmarks run an allreduce to synchronise all PEs, then the bottom-right PE sends a signal and every PE samples a reference stamp, <code>time_ref</code>. The host subtracts <code>time_ref</code> from each PE's start and end, corrects for the signal's travel with <code>(width + height − 2) − (px + py)</code> cycles, and reports <code>max(time_end) − min(time_start)</code> <span class="tag sdk">SDK 2.10.1, 7pt-stencil-spmv/run.py, conjugate-gradient/run.py</span>. That correction assumes 1 cycle per hop. On WSE-3 we measured 2, so the start/end alignment can be off by up to about width + height cycles <span class="tag derived">Derived</span>; harmless for a long solve, visible for a short kernel.</li>
+<li><b>Synchronise, then correct.</b> The SDK's solver and stencil benchmarks run an allreduce to synchronise all PEs, then the bottom-right PE sends a signal and every PE samples a reference stamp, <code>time_ref</code>. The host subtracts <code>time_ref</code> from each PE's start and end, corrects for the signal's travel with <code>(width + height − 2) − (px + py)</code> cycles, and reports <code>max(time_end) − min(time_start)</code> <span class="tag sdk">SDK 2.10.1, 7pt-stencil-spmv/run.py</span> <span class="tag sdk">conjugate-gradient/run.py</span>. That correction assumes 1 cycle per hop. On WSE-3 we measured 2, so the start/end alignment can be off by up to about width + height cycles <span class="tag derived">Derived</span>; harmless for a long solve, visible for a short kernel.</li>
 </ul>
 
 <h2 id="trace">3 · The instruction trace</h2>
@@ -155,47 +157,61 @@ python3 trace_tasks.py sim.log P4.1                    # group into runs of one 
 <p>The course's helper <code>course/programs/01-saxpy/trace_tasks.py</code> groups consecutive instructions of one task on one PE into runs. It prints the task, its first and last cycle, how many instructions it executed, and the notable opcodes, which is the quickest way to see a timeline. The task numbers are memcpy's, and they differ by chip: in our runs your RPC ran inside <b>T01</b> on WSE-3 but <b>T22</b> on WSE-2 <span class="tag measured">Measured</span>. <a href="11-lab-first-programs.html#trace">Chapter 11's</a> task table describes the WSE-3 IDs.</p>
 
 <h2 id="worked">Worked example: one <code>@fmacs</code>, three ways, two chips</h2>
-<p>We ran this in this session with the course's <code>01-saxpy/timed</code> program, copied to a scratch directory: one PE, N = 256 f32, <code>bash commands.sh 256 0 PAD</code> with <code>ARCH=wse3</code> and <code>ARCH=wse2</code>, then once more per chip with the trace on. Everything in this section is <span class="tag measured">Measured</span>.</p>
+<p>We ran this with the course's <code>01-saxpy/timed</code> program, copied to a scratch directory: one PE, N = 256 f32, <code>bash commands.sh 256 0 PAD</code> with <code>ARCH=wse3</code> and <code>ARCH=wse2</code>, and some runs with the trace on. The arguments are <code>N HALF PAD</code> (<a href="11-lab-first-programs.html#kernel-time">Chapter 11</a>): <code>HALF = 0</code> selects f32, and <code>PAD</code> is the number of padding words after <code>x</code>, which shifts where <code>y</code> starts in SRAM. The runs come from three sittings (building, reviewing and revising this page). Everything in this section is <span class="tag measured">Measured</span>.</p>
 <div class="table-wrap"><table class="num">
-<tr><th>Chip</th><th class="r">PAD</th><th class="r">TSC kernel</th><th class="r">FMACS in trace (Seq 0 → 255)</th><th class="r"><code>cycle_count</code></th><th class="r">kernel share</th></tr>
-<tr><td>WSE-3</td><td class="r">0</td><td class="r"><mark>527</mark></td><td class="r">—</td><td class="r">22,126</td><td class="r">2.4 %</td></tr>
-<tr><td>WSE-3</td><td class="r">1</td><td class="r">271</td><td class="r">@3630 → @3885: 256 cycles</td><td class="r">21,631 – 22,844 (29,368 traced)</td><td class="r">1.2 %</td></tr>
-<tr><td>WSE-2</td><td class="r">0</td><td class="r"><mark>526</mark></td><td class="r">—</td><td class="r">20,405</td><td class="r">2.6 %</td></tr>
-<tr><td>WSE-2</td><td class="r">1</td><td class="r">270</td><td class="r">@4156 → @4411: 256 cycles</td><td class="r">19,720 (20,421 traced)</td><td class="r">1.4 %</td></tr>
+<tr><th>Chip</th><th class="r">PAD</th><th class="r">TSC kernel</th><th class="r">FMACS in trace (Seq 0 → 255)</th><th class="r"><code>cycle_count</code>, untraced runs</th><th class="r"><code>cycle_count</code>, traced runs</th><th class="r">kernel share (untraced)</th></tr>
+<tr><td>WSE-3</td><td class="r">0</td><td class="r"><mark>527</mark> (2 runs)</td><td class="r">—</td><td class="r">22,126; 31,193</td><td class="r">—</td><td class="r">1.7–2.4 %</td></tr>
+<tr><td>WSE-3</td><td class="r">1</td><td class="r">271 (8 runs)</td><td class="r">@3630 → @3885: 256 cycles (3 traces)</td><td class="r">21,631 – 24,763 (5 runs)</td><td class="r">21,515; 25,258; 29,368</td><td class="r">1.1–1.3 %</td></tr>
+<tr><td>WSE-2</td><td class="r">0</td><td class="r"><mark>526</mark> (2 runs)</td><td class="r">—</td><td class="r">19,887; 20,405</td><td class="r">—</td><td class="r">2.6 %</td></tr>
+<tr><td>WSE-2</td><td class="r">1</td><td class="r">270 (5 runs)</td><td class="r">@4156 → @4411, once @4157 → @4412: 256 cycles</td><td class="r">19,720; 20,472</td><td class="r">20,421; 25,437; 31,645</td><td class="r">1.3–1.4 %</td></tr>
 </table></div>
+<p class="legend">Highlighted: the unpadded layout, where the x and y operand streams collide and the op runs at half speed. Kernel share = TSC ÷ <code>cycle_count</code> over the untraced runs.</p>
 <p>Three readings of the same run:</p>
 <ul>
-<li><b>TSC:</b> 271 cycles on WSE-3 and 270 on WSE-2 with padding, identical in four WSE-3 reruns. Without padding, 527 and 526: the x/y operand collision doubles the op (notes 22–23, Chapter 6 <a href="06-dsds.html">"Layout matters"</a>).</li>
-<li><b>Trace:</b> 256 FMACS lines, one per element, one cycle apart: exactly 1 element/cycle. The other 15 TSC cycles are the timestamp reads, two DSD loads and the start-up of the op.</li>
+<li><b>TSC:</b> 271 cycles on WSE-3 and 270 on WSE-2 with padding, identical in every rerun. Without padding, 527 and 526: the x/y operand collision doubles the op (<a href="06-dsds.html#collisions">Chapter 6, "Layout matters"</a>).</li>
+<li><b>Trace:</b> 256 FMACS <code>[EX OP]</code> lines, one per element, one cycle apart: exactly 1 element/cycle. The other 15 TSC cycles are, in order: the rest of the first stamp interleaved with three stores that save it (5), the two DSD loads (2), three idle cycles while the FMACS travels from issue to execute (3), four NOPs the compiler placed after it (4) and the second stamp's first read (1).</li>
 <li><b><code>cycle_count</code>:</b> the padded WSE-3 build was <i>slower</i> than the unpadded one in the first pair (22,844 vs 22,126), although its kernel was 256 cycles faster. Host-load noise is larger than the effect you are trying to see.</li>
 </ul>
-<p>The trace also shows the TSC at work. Here is the WSE-3 PE (4,1) around the kernel, with the per-line <code>Id/Instr/Pipe</code> fields and padding removed and comments added:</p>
+<p>How much of the 15 is the instrument? Deleting the <code>@fmacs</code> and timing the two stamps alone gives <b>10 cycles</b> on WSE-3, with or without padding <span class="tag measured">Measured</span>. So "time an empty region and subtract" turns 271 into 261 = 256 + 5, and those 5 (the DSD loads and the pipeline fill) belong to the op itself: you would pay them every time you ran it <span class="tag derived">Derived</span>.</p>
+
+<figure>
+<svg id="nest-svg" viewBox="0 0 760 300" width="760" role="img" aria-label="Nested spans of the three instruments for one WSE-3 run: the whole run, the RPC task run, the TSC window and the FMACS elements"></svg>
+<figcaption>The three instruments measure nested spans of one traced WSE-3 run (PAD 1). Top: the whole run. Below: the kernel RPC zoomed 40×. All cycle stamps are from the trace; the 271 between the two highlighted stamps is exactly the TSC result.</figcaption>
+</figure>
+
+<p>The trace also shows the TSC at work. Here is the WSE-3 PE (4,1) around the kernel, with the per-line <code>Id/Instr/Pipe/Msg</code> fields, the trailing marker and some operand fields trimmed, the <code>[IS OP]</code> lines and some <code>[EX OP]</code> lines omitted, and comments added:</p>
 <pre class="trace"><code><span class="cm"># enable_tsc(): control register = 7, then reset_tsc_counter() writes three zeros</span>
-@3608 P4.1: Seq: 0, [EX OP] | 0x0138: T01 MOVRI  Dest:0007 Imm:0007
-@3609 P4.1: Seq: 0, [EX OP] | 0x013a: T01 ST16   Dest:0007 Imm:7b34
-@3612 P4.1: Seq: 0, [EX OP] | 0x0140: T01 ST16   Dest:0000 Imm:7b30
-@3613 P4.1: Seq: 0, [EX OP] | 0x0142: T01 ST16   Dest:0000 Imm:7b31
-@3614 P4.1: Seq: 0, [EX OP] | 0x0144: T01 ST16   Dest:0000 Imm:7b32
-<span class="cm"># get_timestamp(&amp;t0): three 16-bit loads from the counter; low word = 5</span>
-<span class="hl">@3619 P4.1: Seq: 0, [EX OP] | 0x014e: T01 LD16   Dest:0005 Imm:7b30</span>
-@3621 P4.1: Seq: 0, [EX OP] | 0x0152: T01 LD16   Dest:0000 Imm:7b31
-@3623 P4.1: Seq: 0, [EX OP] | 0x0156: T01 LD16   Dest:0000 Imm:7b32
-<span class="cm"># load the two source DSDs, then one FMACS line per element</span>
-@3625 P4.1: Seq: 0, [EX OP] | 0x015a: T01 LDS0WDS Dest:08120100 Imm:0000
-@3626 P4.1: Seq: 0, [EX OP] | 0x015c: T01 LDS1WDS Dest:06100100 Imm:0002
-<span class="hl">@3630 P4.1: Seq: 0,   [EX OP] | 0x015e: T01 FMACS Dest:beb4ebd5 Src0:bf2aed8e Src1:3e00bf6c Src2:40200000</span>
-@3631 P4.1: Seq: 1,   [EX OP] | 0x015e: T01 FMACS Dest:be2b06ce Src0:3e272970 Src1:be07467f Src2:40200000
+@3608 P4.1: Seq:   0, [EX OP] | 0x0138: T01 MOVRI    Dest:0007 Imm:0007
+@3609 P4.1: Seq:   0, [EX OP] | 0x013a: T01 ST16     Dest:0007 Imm:7b34
+@3612 P4.1: Seq:   0, [EX OP] | 0x0140: T01 ST16     Dest:0000 Imm:7b30
+@3613 P4.1: Seq:   0, [EX OP] | 0x0142: T01 ST16     Dest:0000 Imm:7b31
+@3614 P4.1: Seq:   0, [EX OP] | 0x0144: T01 ST16     Dest:0000 Imm:7b32
+<span class="cm"># get_timestamp(&amp;t0): three 16-bit loads from the counter (low word = 5),</span>
+<span class="cm"># interleaved with the stores that save each word into t0</span>
+<span class="hl">@3619 P4.1: Seq:   0, [EX OP] | 0x014e: T01 LD16     Dest:0005 Imm:7b30
+</span>@3620 P4.1: Seq:   0, [EX OP] | 0x0150: T01 ST16     Dest:0005 Imm:0a18
+@3621 P4.1: Seq:   0, [EX OP] | 0x0152: T01 LD16     Dest:0000 Imm:7b31
+@3622 P4.1: Seq:   0, [EX OP] | 0x0154: T01 ST16     Dest:0000 Imm:0a1a
+@3623 P4.1: Seq:   0, [EX OP] | 0x0156: T01 LD16     Dest:0000 Imm:7b32
+@3624 P4.1: Seq:   0, [EX OP] | 0x0158: T01 ST16     Dest:0000 Imm:0a1c
+<span class="cm"># load the two source DSDs (each load prints two lines, one per descriptor word; first shown)</span>
+@3625 P4.1: Seq:   0, [EX OP] | 0x015a: T01 LDS0WDS  Dest:08120100 Imm:0000
+@3626 P4.1: Seq:   0, [EX OP] | 0x015c: T01 LDS1WDS  Dest:06100100 Imm:0002
+<span class="cm"># @3627–3629 IDLE: the FMACS issued at @3627 ([IS OP], Pipe 3) reaches execute (Pipe 6)</span>
+<span class="hl">@3630 P4.1: Seq:   0, [EX OP] | 0x015e: T01 FMACS    Dest:beb4ebd5 Src0:bf2aed8e Src1:3e00bf6c Src2:40200000
+</span>@3631 P4.1: Seq:   1, [EX OP] | 0x015e: T01 FMACS    Dest:be2b06ce Src0:3e272970 Src1:be07467f Src2:40200000
 <span class="cm">  … 253 more, one per cycle …</span>
-<span class="hl">@3885 P4.1: Seq: 255, [EX OP] | 0x015e: T01 FMACS Dest:40119613 Src0:3e1257f5 Src1:3f5a4db9 Src2:40200000</span>
+<span class="hl">@3885 P4.1: Seq: 255, [EX OP] | 0x015e: T01 FMACS    Dest:40119613 Src0:3e1257f5 Src1:3f5a4db9 Src2:40200000
+</span><span class="cm"># @3886–3889: four NOPs</span>
 <span class="cm"># get_timestamp(&amp;t1): low word = 0x0114 = 276;  276 − 5 = 271, the TSC result</span>
-<span class="hl">@3890 P4.1: Seq: 0, [EX OP] | 0x0168: T01 LD16   Dest:0114 Imm:7b30</span>
-@3891 P4.1: Seq: 0, [EX OP] | 0x016a: T01 LD16   Dest:0000 Imm:7b31
-@3892 P4.1: Seq: 0, [EX OP] | 0x016c: T01 LD16   Dest:0000 Imm:7b32
-<span class="cm"># … copy stamps into ts[], then unblock the command stream</span>
-@3902 P4.1: Seq: 0, [EX OP] | 0x0180: T01 UBLK   Src1:0001</code></pre>
-<p>On WSE-2 the same code reads the counter from config addresses 0x318–0x31a (control at 0x31e) inside task T22: the first stamp is 4, the second 0x0112 = 274, and 274 − 4 = 270, again exactly the TSC result. The trace and the TSC agree to the cycle on both chips. Grouped by <code>trace_tasks.py</code>, the WSE-3 kernel RPC is one run:</p>
+<span class="hl">@3890 P4.1: Seq:   0, [EX OP] | 0x0168: T01 LD16     Dest:0114 Imm:7b30
+</span>@3891 P4.1: Seq:   0, [EX OP] | 0x016a: T01 LD16     Dest:0000 Imm:7b31
+@3892 P4.1: Seq:   0, [EX OP] | 0x016c: T01 LD16     Dest:0000 Imm:7b32
+<span class="cm"># @3893–3901: copy the stamps into ts[], then unblock the command stream</span>
+@3902 P4.1: Seq:   0, [EX OP] | 0x0180: T01 UBLK     Src1:0001</code></pre>
+<p>On WSE-2 the same code reads the counter from config addresses 0x318–0x31a (control at 0x31e) inside task T22: the first stamp is 4, the second 0x0112 = 274, and 274 − 4 = 270, again exactly the TSC result. The trace and the TSC agree to the cycle on both chips. Absolute stamps are not quite fixed, though: in one WSE-2 rerun every line of the kernel came one cycle later (FMACS @4157 → @4412), with the same differences. Grouped by <code>trace_tasks.py</code>, the WSE-3 kernel RPC is one run:</p>
 <pre><code>T01    3353-4113   (  761 cyc,  510 instr) BLK FMACS OQFLUSH UBLK</code></pre>
-<p>That 761-cycle run is the whole RPC as memcpy's command task executes it (argument handling, your function, unblock). The 271 is the part between your two stamps. And the whole program took about 21,700 cycles.</p>
+<p>That 761-cycle run is the whole RPC as memcpy's command task executes it (argument handling, your function, unblock). The 271 is the part between your two stamps. The whole program is the outer span, and it is the one that moves: two traced WSE-3 runs executed this RPC at exactly the same cycles (3353–4113), yet ended at 21,515 and 29,368. All of the difference arose after the kernel, during the D2H copies and the waits for the host around them. Untraced runs of the same build ended between 21,631 and 24,763.</p>
 
 <h2 id="tools">Other ways to look inside</h2>
 <div class="table-wrap"><table>
@@ -215,29 +231,30 @@ python3 trace_tasks.py sim.log P4.1                    # group into runs of one 
 <tr><td>Tenstorrent (tt-metal)</td><td>Device program profiler</td><td>Profiler build (<code>build_metal.sh --enable-profiler</code>; newer trees use a build script under <code>scripts/build_scripts/</code>), set <code>TT_METAL_DEVICE_PROFILER=1</code>, wrap kernel code in <code>DeviceZoneScopedN("name")</code></td><td>Per-RISC-V-core zone start/end cycles in a CSV under <code>${TT_METAL_HOME}/generated/profiler/.logs/</code>; each zone adds some overhead</td><td>TSC stamps (named zones instead of hand-placed reads)</td></tr>
 <tr><td>Tenstorrent</td><td>Tracy</td><td>Tracy-enabled build; host C++ zones with <code>ZoneScoped</code>, Python with <code>python -m tracy script.py</code>; GUI live or a capture file</td><td>One timeline with host zones and, in profiler builds, the device zones of all active cores</td><td><code>trace_tasks.py</code> timeline plus host prints</td></tr>
 <tr><td>NVIDIA</td><td>Nsight Systems</td><td><code>nsys profile --trace=cuda,nvtx,osrt -o rep ./app</code>; mark your own phases with NVTX ranges</td><td>A system timeline: CPU threads, CUDA API calls, kernels and memcpys</td><td>Whole-run <code>cycle_count</code>, but broken down</td></tr>
-<tr><td>NVIDIA</td><td>Nsight Compute</td><td><code>ncu --set full -o rep ./app</code> (<code>--list-sets</code> shows the sets); <code>--clock-control base</code> locks clocks so runs compare</td><td>Per-kernel metrics (throughput, memory, occupancy, roofline), collected by replaying the kernel several times</td><td>TSC plus instruction trace for one kernel</td></tr>
+<tr><td>NVIDIA</td><td>Nsight Compute</td><td><code>ncu --set full -o rep ./app</code> (<code>--list-sets</code> shows the sets). By default ncu locks the GPU to its base clock (<code>--clock-control base</code>) so runs compare; <code>--clock-control none</code> profiles at the real boost clocks, so numbers differ from a default run</td><td>Per-kernel metrics (throughput, memory, occupancy, roofline), collected by replaying the kernel several times</td><td>TSC plus instruction trace for one kernel</td></tr>
 </table></div>
-<p>Sources: <a href="https://docs.tenstorrent.com/tt-metal/latest/tt-metalium/tools/device_program_profiler.html">tt-metalium Device Program Profiler</a>, <a href="https://docs.tenstorrent.com/tt-metal/latest/tt-metalium/tools/tracy_profiler.html">tt-metalium Tracy Profiler</a>, <a href="https://docs.nvidia.com/nsight-systems/UserGuide/index.html">Nsight Systems User Guide</a>, <a href="https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html">Nsight Compute Profiling Guide</a>. One difference matters most. A GPU or Tensix profiler measures real silicon with run-to-run variance from clocks, caches and scheduling, so you take medians over many runs. The Cerebras simulator is deterministic inside the kernel (the TSC never moved), but it is slow and small: the course simulated at most 16 PEs per run (Chapter 18).</p>
+<p>Sources: <a href="https://docs.tenstorrent.com/tt-metal/latest/tt-metalium/tools/device_program_profiler.html">tt-metalium Device Program Profiler</a>, <a href="https://docs.tenstorrent.com/tt-metal/latest/tt-metalium/tools/tracy_profiler.html">tt-metalium Tracy Profiler</a>, <a href="https://docs.nvidia.com/nsight-systems/UserGuide/index.html">Nsight Systems User Guide</a>, <a href="https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html">Nsight Compute Profiling Guide</a>. One difference matters most. A GPU or Tensix profiler measures real silicon with run-to-run variance from clocks, caches and scheduling, so you take medians over many runs. The Cerebras simulator is deterministic inside the kernel (the TSC never moved), but it is slow and small: the largest grid this course simulated was 16 × 16 = 256 PEs (<a href="15-lab-cg.html#scaling">Lab 5, Chapter 15</a>).</p>
 
 <h2 id="pitfalls">Common pitfalls</h2>
 <ol class="pit">
-<li><b>Reporting <code>cycle_count</code> as kernel time.</b> In the worked example the kernel was 1.2 % of it. Time the kernel with the TSC, or difference two runs.</li>
-<li><b>Comparing totals from parallel or first runs.</b> Five runs of one program gave 21,631 to 29,368 cycles <span class="tag measured">Measured</span>. Run one simulation at a time, and rerun alone before you chase a difference.</li>
+<li><b>Reporting <code>cycle_count</code> as kernel time.</b> In the worked example the kernel was 1.1–1.3 % of it. Time the kernel with the TSC; for a per-step cost, take the TSC slope between two step counts.</li>
+<li><b>Comparing or differencing totals.</b> Eight runs of one build gave 21,515 to 29,368 cycles, and two runs of an unpadded build 22,126 and 31,193 <span class="tag measured">Measured</span>. Run one simulation at a time, rerun alone before you chase a difference, and never read a kernel cost off the difference of two totals.</li>
 <li><b>Subtracting TSC values from two PEs.</b> Use a round trip on one PE, or the SDK's sync and <code>time_ref</code> method with its 1-cycle-per-hop correction (2 on WSE-3).</li>
 <li><b>Calling <code>enable_tsc()</code> between stamps.</b> It resets the counter to zero. Enable once, early.</li>
 <li><b>Decoding the stamp wrongly.</b> Three u16 words, least significant first. In 16-bit copy mode each u16 arrives in its own u32 slot, so view the buffer as u16 before joining (<code>memcpy_view</code>).</li>
-<li><b>Forgetting the overhead.</b> The 271 includes about 15 cycles that are not the 256 FMACS elements. For short regions, time an empty region and subtract it.</li>
+<li><b>Forgetting the overhead.</b> The 271 includes 15 cycles that are not the 256 FMACS elements. An empty region costs 10 of them, so subtract that for short regions; the other 5 are the op's own start-up (DSD loads, pipeline fill) and belong to the op.</li>
 <li><b>Measuring an accidental layout.</b> The same op took 527 or 271 cycles depending on one padding word. Pad and measure, and say which layout you timed.</li>
-<li><b>Tracing a big run.</b> 318,240 lines for one PE and 256 elements. Shrink the problem first. Remember that task numbers differ by chip (T01 vs T22).</li>
-<li><b>Trusting "Stopped due to idleness".</b> A deadlock ends the same way. A FATAL stop writes no <code>sim_stats.json</code>, and <code>launch()</code> returns even if the device never unblocks; the next memcpy then aborts with "could be a kernel stall" (notes 7, 21).</li>
+<li><b>Tracing a big run.</b> 230,000–345,000 lines for one PE and 256 elements, and the size grows with total simulated cycles × PEs, IDLE lines included. Shrink the problem first. Grep <code>EX OP</code> so you do not count issue lines, and remember that task numbers differ by chip (T01 vs T22).</li>
+<li><b>Trusting "Stopped due to idleness".</b> A deadlock ends the same way. A FATAL stop writes no <code>sim_stats.json</code>, and <code>launch()</code> returns even if the device never unblocks; the next memcpy then aborts with "could be a kernel stall" (<a href="10-csl-toolchain.html#sim-outputs">Chapter 10, "Simulator outputs"</a> and <a href="10-csl-toolchain.html#hangs">"When it hangs"</a>).</li>
 <li><b>Converting cycles to seconds without saying the clock.</b> 850 MHz is the SDK's assumption, 1.1 GHz is the vendor's WSE-2 figure, and there is no published WSE-3 clock.</li>
 </ol>
 
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>Your change makes <code>cycle_count</code> drop from 22,800 to 21,700. Did your kernel get faster?</summary><p>You cannot tell. Reruns of an unchanged program moved by more than that. Read the TSC around the kernel (stable to the cycle), or run both versions alone and compare differences between two problem sizes.</p></details>
+<details><summary>Your change makes <code>cycle_count</code> drop from 22,800 to 21,700. Did your kernel get faster?</summary><p>You cannot tell. Reruns of an unchanged program moved by more than that, in both directions. Read the TSC around the kernel in both versions and compare those (stable to the cycle). If you only have totals, run each version alone several times and expect the spread to swamp a 5 % change.</p></details>
 <details><summary>PE (0,0) stamps 1,200 when it sends; PE (3,0) stamps 1,180 when it receives. What was the latency?</summary><p>Unknown, and the negative value shows why: the two counters started at different times. Time a round trip on PE (0,0), or synchronise and subtract each PE's reference stamp as the SDK benchmarks do.</p></details>
 <details><summary>In the trace, consecutive FMACS <code>Seq</code> values are two cycles apart. What do you suspect, and how do you confirm it?</summary><p>An operand bank collision: the op runs at half speed. Add one padding word between the arrays and look again; in our runs the spacing became one cycle and the TSC fell from 527 to 271.</p></details>
+<details><summary>Your host prints a kernel time of 1,163,936,137,216 cycles for the SAXPY whose trace shows 256 FMACS lines one cycle apart. What went wrong?</summary><p>The number is exactly 271 × 2<sup>32</sup>: the right count, shifted 32 bits. The three words were joined most significant first (<code>w2 | w1&lt;&lt;16 | w0&lt;&lt;32</code>), so the low word, which holds the whole small count, landed at the top. Join least significant first, <code>w0 | w1&lt;&lt;16 | w2&lt;&lt;32</code>, after viewing the 16-bit copy's u32 slots as u16 with <code>memcpy_view</code> <span class="tag derived">Derived</span>.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
@@ -254,7 +271,7 @@ python3 trace_tasks.py sim.log P4.1                    # group into runs of one 
     ["Is my route, symbol or memory map right?", "Static checks", [5]],
   ];
   const M = [
-    ["cycle_count", "sim_stats.json, or a difference"],
+    ["cycle_count", "sim_stats.json, whole run only"],
     ["<time> TSC", "start and end on one PE"],
     ["Round trip / sync", "one clock, or time_ref"],
     ["Instruction trace", "SIMFABRIC_DEBUG=inst_trace"],
@@ -324,37 +341,101 @@ python3 trace_tasks.py sim.log P4.1                    # group into runs of one 
 
   /* ---------- noise chart ---------- */
   const runs = [
-    { c: 22844, t: 271, l: "run 1" }, { c: 21773, t: 271, l: "run 2" }, { c: 21755, t: 271, l: "run 3" },
-    { c: 21631, t: 271, l: "run 4" }, { c: 29368, t: 271, l: "run 5 (traced)", tr: true },
+    { c: 22844, n: 1 }, { c: 21773, n: 2 }, { c: 21755, n: 3 }, { c: 21631, n: 4 },
+    { c: 29368, n: 5, tr: true }, { c: 24763, n: 6 }, { c: 25258, n: 7, tr: true }, { c: 21515, n: 8, tr: true },
   ];
+  const fmt = v => v.toLocaleString("en-US");
   const ns = $("#noise-svg");
   function noise() {
     while (ns.firstChild) ns.removeChild(ns.firstChild);
     const use = runs.filter(r => $("#noise-tr").checked || !r.tr);
-    const base = runs[0];
-    const rel = use.map(r => ({ r, dc: (r.c / base.c - 1) * 100, dt: (r.t / base.t - 1) * 100 }));
-    const lo = Math.min(-8, ...rel.map(o => o.dc)), hi = Math.max(8, ...rel.map(o => o.dc));
-    const x0 = 150, x1 = 660, X = v => x0 + (v - lo) / (hi - lo) * (x1 - x0);
-    const rows = [["cycle_count", "dc", "var(--blue)"], ["TSC kernel", "dt", "var(--accent)"]];
-    rows.forEach((row, k) => {
-      const y = 50 + k * 70;
-      el("text", { x: 10, y: y + 4, "font-weight": 700 }, ns).textContent = row[0];
-      el("line", { x1: x0, x2: x1, y1: y, y2: y, class: "ax" }, ns);
-      rel.forEach(o => {
-        const c = el("circle", { cx: X(o[row[1]]), cy: y, r: 7, fill: row[2], opacity: .75 }, ns);
-        const tt = document.createElementNS(svgNS, "title"); tt.textContent = `${o.r.l}: ${row[1] === "dc" ? o.r.c.toLocaleString("en-US") + " cycles" : o.r.t + " cycles"}`; c.appendChild(tt);
-      });
+    const cs = use.map(r => r.c).sort((a, b) => a - b);
+    const med = cs.length % 2 ? cs[(cs.length - 1) / 2] : (cs[cs.length / 2 - 1] + cs[cs.length / 2]) / 2;
+    const pct = v => (v / med - 1) * 100;
+    const lo = pct(cs[0]), hi = pct(cs[cs.length - 1]);
+    const pad = (hi - lo) * 0.06 || 1;
+    const x0 = 150, x1 = 650, X = v => x0 + (v - (lo - pad)) / ((hi + pad) - (lo - pad)) * (x1 - x0);
+    const yC = 100, yT = 170;
+    // cycle_count row: stack dots that would overlap
+    el("text", { x: 10, y: yC + 4, "font-weight": 700 }, ns).textContent = "cycle_count";
+    el("line", { x1: x0, x2: x1, y1: yC, y2: yC, class: "ax" }, ns);
+    const placed = [];
+    use.slice().sort((a, b) => a.c - b.c).forEach(r => {
+      const x = X(pct(r.c));
+      let lvl = 0;
+      while (placed.some(p => p.lvl === lvl && Math.abs(p.x - x) < 17)) lvl++;
+      placed.push({ x, lvl });
+      const y = yC - lvl * 17;
+      const c = el("circle", { cx: x, cy: y, r: 7.5, fill: cssVar("--blue"), "fill-opacity": r.tr ? 0.25 : 0.85, stroke: cssVar("--blue"), "stroke-width": 1.5, "stroke-dasharray": r.tr ? "3 2" : "" }, ns);
+      const tt = document.createElementNS(svgNS, "title"); tt.textContent = `run ${r.n}${r.tr ? " (traced)" : ""}: ${fmt(r.c)} cycles`; c.appendChild(tt);
+      el("text", { x, y: y + 4, "text-anchor": "middle", "font-size": 10, "font-weight": 700, fill: r.tr ? cssVar("--text") : cssVar("--on-accent") }, ns).textContent = r.n;
     });
-    [lo, 0, hi].forEach(v => {
-      el("line", { x1: X(v), x2: X(v), y1: 30, y2: 140, class: "ax", "stroke-dasharray": v === 0 ? "" : "3 3" }, ns);
-      el("text", { x: X(v), y: 162, "text-anchor": "middle", class: "mut" }, ns).textContent = (v > 0 ? "+" : "") + v.toFixed(0) + " %";
+    // TSC row: all runs at 0 %
+    el("text", { x: 10, y: yT + 4, "font-weight": 700 }, ns).textContent = "TSC kernel";
+    el("line", { x1: x0, x2: x1, y1: yT, y2: yT, class: "ax" }, ns);
+    el("circle", { cx: X(0), cy: yT, r: 7.5, fill: cssVar("--accent") }, ns);
+    el("text", { x: X(0) + 14, y: yT + 4, class: "mut" }, ns).textContent = `${use.length} runs, all 271 cycles`;
+    // data-driven ticks: min, median, max
+    [[lo, cs[0]], [0, med], [hi, cs[cs.length - 1]]].forEach(([v, c], k) => {
+      el("line", { x1: X(v), x2: X(v), y1: k === 1 ? 26 : 34, y2: 186, class: "ax", "stroke-dasharray": k === 1 ? "" : "3 3" }, ns);
+      if (k === 1) { el("text", { x: X(v), y: 20, "text-anchor": "middle", class: "mut" }, ns).textContent = `median ${fmt(Math.round(c))}`; return; }
+      const anchor = k === 0 ? "start" : "end";
+      const xx = k === 0 ? X(v) - 4 : X(v) + 4;
+      el("text", { x: xx, y: 202, "text-anchor": anchor, class: "mut" }, ns).textContent = `${v > 0 ? "+" : ""}${v.toFixed(1)} %`;
+      el("text", { x: xx, y: 216, "text-anchor": anchor, class: "mut" }, ns).textContent = fmt(c);
     });
-    el("text", { x: (x0 + x1) / 2, y: 188, "text-anchor": "middle", class: "mut" }, ns).textContent = "change relative to run 1";
-    const cs = use.map(r => r.c);
-    $("#noise-out").textContent = `cycle_count: ${Math.min(...cs).toLocaleString("en-US")} to ${Math.max(...cs).toLocaleString("en-US")} (spread ${((Math.max(...cs) / Math.min(...cs) - 1) * 100).toFixed(1)} %)\nTSC kernel:  271 cycles in every run (spread 0 %)\nThe kernel is ${(271 / Math.min(...cs) * 100).toFixed(1)} % of the smallest total.`;
+    el("text", { x: (x0 + x1) / 2, y: 240, "text-anchor": "middle", class: "mut" }, ns).textContent = "change relative to the median run · solid = untraced, pale dashed = traced";
+    $("#noise-out").textContent = `cycle_count: ${fmt(cs[0])} to ${fmt(cs[cs.length - 1])} (spread ${((cs[cs.length - 1] / cs[0] - 1) * 100).toFixed(1)} %)\n` +
+      use.map(r => `  run ${r.n}${r.tr ? " (traced)" : ""}: ${fmt(r.c)}`).join("\n") +
+      `\nTSC kernel:  271 cycles in every run (spread 0 %)\nThe kernel is ${(271 / cs[cs.length - 1] * 100).toFixed(1)}–${(271 / cs[0] * 100).toFixed(1)} % of the total.`;
   }
   $("#noise-tr").addEventListener("change", noise);
   noise();
+
+  /* ---------- nested spans ---------- */
+  (function nest() {
+    const g = $("#nest-svg");
+    const L = 50, Rr = 730;
+    const T = 29368, rpc0 = 3353, rpc1 = 4113;
+    const XT = c => L + c / T * (Rr - L);
+    const XZ = c => L + (c - rpc0) / (rpc1 - rpc0) * (Rr - L);
+    const bar = (x0, x1, y, h, fill, op) => el("rect", { x: x0, y, width: Math.max(1.5, x1 - x0), height: h, rx: 3, fill: cssVar(fill), "fill-opacity": op == null ? 1 : op }, g);
+    const txt = (x, y, t, a, cls, w) => { const e = el("text", Object.assign({ x, y, "text-anchor": a || "start" }, cls ? { class: cls } : {}, w ? { "font-weight": w } : {}), g); e.textContent = t; return e; };
+    // whole run
+    txt(L, 18, "cycle_count: the whole run", "start", null, 700);
+    bar(XT(0), XT(21515), 26, 22, "--blue-soft");
+    bar(XT(21515), XT(T), 26, 22, "--blue-soft", 0.4);
+    el("line", { x1: XT(21515), x2: XT(21515), y1: 24, y2: 50, stroke: cssVar("--blue"), "stroke-width": 1.5 }, g);
+    txt(XT(21515) - 4, 42, "one traced run ended at 21,515", "end", "mut");
+    txt(XT(T) - 4, 42, "29,368", "end", "mut");
+    txt(XT(0) + 4, 42, "load, H2D", "start", "mut");
+    bar(XT(rpc0), XT(rpc1), 26, 22, "--accent");
+    txt(XT(0), 64, "0", "middle", "mut");
+    // zoom guides
+    el("path", { d: `M${XT(rpc0)} 48 L${L} 92 M${XT(rpc1)} 48 L${Rr} 92`, stroke: cssVar("--border"), fill: "none", "stroke-dasharray": "3 3" }, g);
+    // zoom tracks
+    const rows = [
+      ["trace_tasks: RPC run T01", rpc0, rpc1, "--accent-soft", "761 cycles  @3353 → @4113"],
+      ["TSC window", 3619, 3890, "--accent", "271  @3619 → @3890"],
+      ["FMACS Seq 0 → 255", 3630, 3885, "--green", "256  @3630 → @3885"],
+    ];
+    rows.forEach((r, k) => {
+      const y = 100 + k * 46;
+      txt(XZ(r[1]), y + 2, r[0], "start", null, 700);
+      bar(XZ(r[1]), XZ(r[2]), y + 8, 18, r[3]);
+      if (k === 0) txt(XZ(r[2]), y + 2, r[4], "end", "mut");
+      else txt(XZ(r[2]) + 6, y + 21, r[4], "start", "mut");
+    });
+    // stamp markers
+    [[3608, "enable_tsc"], [3619, "t0"], [3890, "t1"], [3902, "UBLK"]].forEach(([c, t], k) => {
+      el("line", { x1: XZ(c), x2: XZ(c), y1: 236, y2: 248, stroke: cssVar("--text"), "stroke-width": 1.2 }, g);
+      txt(XZ(c) + (k % 2 ? 3 : -3), 262, t, k % 2 ? "start" : "end", "mut");
+    });
+    el("line", { x1: L, x2: Rr, y1: 242, y2: 242, class: "ax" }, g);
+    txt(L, 262, "@3353", "start", "mut");
+    txt(Rr, 262, "@4113", "end", "mut");
+    txt(L, 288, "15 TSC cycles are not FMACS: 10 before Seq 0 (rest of stamp t0, 2 DSD loads, 3 fill), 5 after (4 NOPs, t1)", "start", "mut").setAttribute("font-size", 11.5);
+  })();
 
   /* ---------- trace line anatomy ---------- */
   const parts = [
