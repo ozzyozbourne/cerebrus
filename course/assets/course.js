@@ -48,7 +48,7 @@ const APPENDICES = [
   bar.className = "topbar";
   bar.innerHTML = `<div class="inner"><a class="brand" href="index.html">Wafer-Scale <span>Computing</span></a>
     <div class="crumb">${idx >= 0 ? (idx < CHAPTERS.length ? `Chapter ${idx + 1} of ${CHAPTERS.length}` : SEQ[idx].label) + ` · ${SEQ[idx].title}` : "Course home"}</div>
-    <button type="button" aria-label="Toggle dark mode">◐</button></div>`;
+    <a class="glossary-link" href="appendix-a-glossary.html" title="Glossary">Glossary</a><button type="button" aria-label="Toggle dark mode">◐</button></div>`;
   bar.querySelector("button").onclick = toggleTheme;
   document.body.prepend(bar);
 

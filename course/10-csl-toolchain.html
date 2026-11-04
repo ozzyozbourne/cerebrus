@@ -181,7 +181,7 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 <div>
 <h3 id="ordinary">Ordinary parts</h3>
 <ul>
-<li>Types: <code>bool</code>, <code>i16</code>, <code>i32</code>, <code>u16</code>, <code>u32</code>, <code>f16</code>, <code>f32</code>, arrays <code>[N]f32</code>, pointers <code>*[N]f32</code> (knows its length) and many-item <code>[*]f32</code> (does not; used for exports).</li>
+<li>Types: <code>bool</code>, <code>i8</code>/<code>u8</code>, <code>i16</code>/<code>u16</code>, <code>i32</code>/<code>u32</code>, <code>i64</code>/<code>u64</code>, <code>f16</code>, <code>f32</code> (DSD vector ops need 16- or 32-bit element types; an <code>i8</code> DSD fails with "not ABI-sized" <span class="tag measured">Measured, cslc 2.10.1</span>), arrays <code>[N]f32</code>, pointers <code>*[N]f32</code> (knows its length) and many-item <code>[*]f32</code> (does not; used for exports).</li>
 <li><code>const</code> / <code>var</code>, <code>fn</code>, <code>for (@range(i16, n)) |i|</code>, <code>while (c) : (i += 1)</code>.</li>
 <li><code>if</code> is also an expression: <code>const c = if (x % 2 == 0) c0 else c1;</code>. A statement <code>if</code> <em>with an <code>else</code></em> needs braces: <code>if (v &gt; m) { m = v; } else { … }</code>. Without braces it is a compile error <span class="tag measured">Measured</span>; a lone <code>if (v &gt; m) m = v;</code> is fine.</li>
 <li>Anonymous struct literals <code>.{ .N = N }</code> pass named fields everywhere: <code>@set_tile_code</code>, <code>@get_dsd</code>, <code>@import_module</code>.</li>

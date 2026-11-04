@@ -456,7 +456,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
       { n: "WSE-3 · SRAM", c: "acc", R: 15.6e15 / 21e15, bpw: 2, f: "FP16 15.6 PF (Analyst) ÷ 21 PB/s (Vendor)" },
       { n: "p150 · GDDR6", c: "grn", R: 664e12 / 512e9, bpw: 2, odd: 1, f: "BlockFP8 664 TF ÷ 512 GB/s (Vendor); no 16-bit peak compiled, so this ridge is not like-for-like" },
       { n: "H100 · HBM3", c: "blu", R: 989e12 / 3.35e12, bpw: 2, f: "BF16 989 TF ÷ 3.35 TB/s (Vendor)" },
-      { n: "B200 · HBM3e", c: "pur", R: 2.25e15 / 8e12, bpw: 2, f: "BF16 ~2.25 PF (Derived from 9 PF FP4) ÷ 8 TB/s" }],
+      { n: "B200 · HBM3e", c: "pur", R: 2.25e15 / 8e12, bpw: 2, f: "BF16 ~2.25 PF dense (Vendor) ÷ 8 TB/s" }],
     "low": [
       { n: "WSE-3 · SRAM", c: "acc", R: 15.6e15 / 21e15, bpw: 2, f: "FP16 only (no lower format published)" },
       { n: "p150 · GDDR6", c: "grn", R: 664e12 / 512e9, bpw: 1088 / 1024, f: "BlockFP8: 1,088 B per 1,024 values" },
@@ -524,7 +524,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
       rack: [{ v: 132e9, l: "132 GB", d: "3 × 44 GB", t: D }, { v: 6.2e9, l: "6.2 GB", d: "6.2 GB", t: V }, NA(), NA()] },
     p16: { name: "Peak dense compute at ~16 bits", u: "FLOP/s",
       why: "Like-for-like where possible. Cerebras publishes only 125 PF sparse; 15.6 PF dense is an analyst estimate. The p150 has no 16-bit figure here, so its BlockFP8 peak is hollow.",
-      dev: [{ v: 15.6e15, l: "15.6 PF FP16", d: "~15.6 PF FP16 dense", t: A }, { v: 664e12, l: "664 TF BlockFP8", d: "664 TF BlockFP8 (not 16-bit)", t: V, odd: 1 }, { v: 989e12, l: "989 TF BF16", d: "989 TF BF16 dense", t: V }, { v: 2.25e15, l: "2.25 PF BF16", d: "~2.25 PF BF16 dense, derived from 9 PF FP4 (2× per halving of bits)", t: D }],
+      dev: [{ v: 15.6e15, l: "15.6 PF FP16", d: "~15.6 PF FP16 dense", t: A }, { v: 664e12, l: "664 TF BlockFP8", d: "664 TF BlockFP8 (not 16-bit)", t: V, odd: 1 }, { v: 989e12, l: "989 TF BF16", d: "989 TF BF16 dense", t: V }, { v: 2.25e15, l: "2.25 PF BF16", d: "~2.25 PF BF16 dense (NVIDIA HGX B200 table; FP4 dense is 9 PF)", t: V }],
       rack: [{ v: 75e15, l: "~75 PF FP16", d: "3 × ~25 PF, from a disputed analyst estimate for WSE-3T", t: D }, { v: 23e15, l: "23 PF BlockFP8", d: "23 PF BlockFP8 (not 16-bit)", t: V, odd: 1 }, { v: 162e15, l: "~162 PF BF16", d: "72 × ~2.25 PF", t: D }, NA("only NVFP4 figures published")] },
     plow: { name: "Peak at each device's lowest precision (formats differ)", u: "FLOP/s",
       why: "Every dot is hollow: most of the spread is number format, not hardware. Read the label before the dot.",

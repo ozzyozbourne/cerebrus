@@ -44,7 +44,7 @@
 
 <div class="widget" id="st">
 <h4>SUMMA, one step at a time</h4>
-<p class="hint">Left: the P × P grid of PEs. At step <em>s</em>, the orange column of PEs sends its A tiles along the rows and the blue row sends its B tiles down the columns; arrows show the run-time routes (the root's router sends both ways, every other router passes the tile to its own PE and onward). Green fill is how much of each C tile is done. Right: the same step on the whole matrices. Click a PE to follow it. The cycle estimate uses the measured WSE-3 fits from this chapter (kernel 0, P = 4).</p>
+<p class="hint">Left: the P × P grid of PEs. At step <em>s</em>, the orange column of PEs sends its A tiles along the rows and the blue row sends its B tiles down the columns; arrows show the run-time routes (the root's router sends both ways, every other router passes the tile to its own PE and onward). Green fill is how much of each C tile is done. Right: the same step on the whole matrices. Click a PE to follow it. The cycle estimate uses this chapter's WSE-3 fits (kernel 0), plus the measured run when that P and T were measured.</p>
 <div class="controls">
 <label>grid P <select id="st-p"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></label>
 <label>tile T <select id="st-t"><option>4</option><option selected>8</option><option>16</option><option>32</option></select></label>
@@ -94,7 +94,7 @@ tile_config.teardown.exit(DATA_COLOR_0);  <span class="c">// leave teardown: tra
 <li><strong>Lock.</strong> Entering teardown runs the CE's teardown handler, task 29 (<a href="04-fabric.html#teardown">Chapter 4</a>, <a href="05-tasks.html#queue-flush">Chapter 5</a>), which activates the lock task. The FSM unblocks the lock when its own transfer is done. So the lock runs only when <em>both</em> have happened: the data is in my memory, and the network is torn down and ready to be rewritten. The lock task then activates the user's callback (our <code>x_done</code> or <code>y_done</code>).</li>
 </ol>
 <figure>
-<svg id="seq-svg" viewBox="0 0 760 420" width="760" role="img" aria-label="Sequence diagram of one collectives_2d broadcast on a row of three PEs"></svg>
+<svg id="seq-svg" viewBox="0 0 760 422" width="760" role="img" aria-label="Sequence diagram of one collectives_2d broadcast on a row of three PEs"></svg>
 <figcaption><b>One row broadcast, as a sequence.</b> Time runs down. Three PEs of one row: the root (here at the west end; at later steps it sits in the middle and sends both ways), a middle PE and the PE at the east end, each drawn as its CE and its router. ① every PE rewrites its own route for color 0 and leaves teardown; ② the root's microthread streams the tile out and every router copies it to its CE (RAMP) while forwarding it; ③ the root's FSM sends one TEARDOWN control wavelet behind the data, and each router re-enters teardown as it passes; ④ entering teardown runs task 29, which activates the lock; ⑤ the FSM unblocks the lock when its own move is done; ⑥ the lock runs and activates the callback. ④ and ⑤ can come in either order. Bottom: the next step's data waits behind a router that is still in teardown <span class="tag derived">Derived from the library source</span>.</figcaption>
 </figure>
 <p>The teardown is what makes the next step's rewrite safe: no PE can reconfigure color 0 while wavelets of the previous broadcast are still in its router. What happens to a root that starts step <em>s</em>+1 while a slower neighbour is still computing step <em>s</em>? Its data waits behind the neighbour's router, which is still in teardown mode, and the lossless fabric back-pressures the sender until the neighbour calls <code>broadcast</code> and leaves teardown. The library's comments describe this ordering ("if we clear TIP bit before routing is reconfigured, it stalls"; TIP is the router's teardown-in-progress flag for that color, and clearing it is what <code>teardown.exit()</code> does); we did not isolate it in a separate experiment <span class="tag derived">Derived from the library source</span>.</p>
@@ -397,7 +397,7 @@ SUCCESS!
 
 <div class="widget" id="ch">
 <h4>Cycles per step: measured against the model</h4>
-<p class="hint">Filled points are measured at P = 4; hollow orange points are kernel 0 with the bank clash fixed (exercise 4, measured at P = 2). Lines are the fitted models from the text, and the dashed line is the compute-bound ideal: one f32 multiply-add per cycle per PE, T³ cycles per step (<code>@fmacs</code> streams 1 element per cycle on both chips when its operands do not collide, <a href="06-dsds.html">Chapter 6</a>). Drag the tile size to read off the split; hover a point for its numbers.</p>
+<p class="hint">Filled circles are measured at P = 4 (colour = series); squares are the large and odd tiles measured at P = 2; hollow orange circles are kernel 0 with the bank clash fixed (exercise 4's answer, P = 2). Lines are least-squares fits to the P = 4 points: broadcast b₀ + 1·words, kernel 0 Kt·Nt·(2.32·Mt + 29.6) on WSE-3 and Kt·Nt·(2.12·Mt + 27.2) on WSE-2 (a single fit over T = 4–32, so it sits 6% above the T = 8 point, where the text's 2·Mt + 29 is closer), and kernel 1 Kt·(1.87·Mt·Nt + 77) or (2.0·Mt·Nt + 112) <span class="tag derived">Derived fit</span>. The shaded band beyond T = 32 is extrapolation, where the squares show how far off the fits can be; and the dashed line is the compute-bound ideal: one f32 multiply-add per cycle per PE, T³ cycles per step (<code>@fmacs</code> streams 1 element per cycle on both chips when its operands do not collide, <a href="06-dsds.html">Chapter 6</a>). Drag the tile size to read off the split; hover, tap or tab to a point for its numbers.</p>
 <div class="controls">
 <label>chip <select id="ch-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
 <label>y axis <select id="ch-y"><option value="step">cycles per step</option><option value="mac">cycles per multiply-add</option></select></label>
@@ -415,7 +415,13 @@ SUCCESS!
 <li><strong>Strong scaling is a different story.</strong> Fix the matrix instead: N = 256 can run as P = 8 with T = 32 or as P = 32 with T = 8. From the per-step costs in the table, P = 8 takes 8 × (2,569 + 103,724) ≈ 850,000 cycles and P = 32 takes 32 × (650 + 2,903) ≈ 114,000: 7.5× faster on 16× the PEs, about 47% parallel efficiency <span class="tag derived">Derived from the P = 4 measurements; P = 32 not run</span>. As T shrinks, the fixed costs (≈ 520 cycles per broadcast, ≈ 30 per instruction) take over. Try it in the budget calculator below.</li>
 <li><strong>But compute reaches only a fraction of the ideal.</strong> A PE can do one f32 multiply-add per cycle (<a href="06-dsds.html">Chapter 6</a>), so a step's ideal is T³ cycles. Kernel 0 needs 2,903 cycles for 512 multiply-adds at T = 8 (18% of ideal) and 103,724 for 32,768 at T = 32 (32%) on WSE-3; on WSE-2, 2,768 (18%) and 96,630 at T = 32 (34%) <span class="tag measured">Measured</span>. Two separate costs, both from Chapter 6, explain it; the next callout takes them apart.</li>
 <li><strong>Kernel 1: fewer, longer instructions.</strong> Replacing the Kt·Nt short <code>@fmacs</code> with Kt pairs of <code>@fmuls</code> + <code>@fadds</code> of length Mt·Nt (2-D DSDs with a zero stride broadcast column k of A and row k of B over the tile) cuts the step to 1,594 cycles at T = 8 and 63,890 at T = 32 on WSE-3: 51% of ideal, 1.6× faster than the SDK loop <span class="tag measured">Measured</span>. Per k it costs about 1.87 cycles per element + 77, fitted over T = 8–32 <span class="tag derived">Derived fit</span>; the callout below explains why this fit is only approximate. On WSE-2, where <code>@fadds</code> moves 1 element per cycle instead of 2, it costs 2.0 per element + 112: 1,921 cycles at T = 8 and 69,026 at T = 32 (47% of ideal) <span class="tag measured">Measured</span>. It needs one more Mt × Nt tile of memory, which lowers the largest tile that fits (below).</li>
-<li><strong>The compute fits hold only for tile heights that are multiples of 4.</strong> Every square tile in the P = 4 runs (4, 8, 16, 24, 32) is a multiple of 4, so every <code>@fmacs</code> clashed (the callout explains why). Other heights land somewhere else, and not in the same direction on both chips. At T = 45, kernel 0 takes 189,224 cycles per step on WSE-3, 30% <em>less</em> than the fit's 271,000, but 276,575 on WSE-2, 11% <em>more</em> than its fit; at T = 46 WSE-2 takes 315,978, 20% more than the fit (149 cycles per <code>@fmacs</code> of 46). Kernel 1 on WSE-2 takes 97,004 per step at T = 39, 21% under its fit, but 152,872 at T = 42, on the fit <span class="tag measured">Measured, P = 2</span>. So the lines in the chart and the calculator are trustworthy only when Mt is a multiple of 4; anywhere else, measure.</li>
+<li><strong>The compute fits are only safe where they were made: tiles that are multiples of 4, up to T = 32.</strong> Every square tile in the P = 4 runs (4, 8, 16, 24, 32) is a multiple of 4, so every <code>@fmacs</code> clashed (the callout explains why), and the fits describe that case. Other tiles land elsewhere, and not in the same direction on both chips <span class="tag measured">Measured, P = 2, rows in the table</span>:
+<ul>
+<li>Kernel 0, WSE-3: T = 44 takes 242,396 cycles per step, 5% under the fit; T = 45 takes 189,224, 30% <em>under</em> it (93 cycles per <code>@fmacs</code> of 45, ≈ 1.25·Mt + 37, like the odd-Mt sweep).</li>
+<li>Kernel 0, WSE-2: T = 40 is on the fit (+2%), but T = 44, 45 and 46 take 325,914, 276,575 and 315,978 cycles, 40%, 11% and 20% <em>over</em> it. We have not found why WSE-2 gets slower than a full clash at T = 44; it agrees with Chapter 6's note that the clash rule differs by chip.</li>
+<li>Kernel 1, WSE-2: T = 40 and 42 are on the fit, but T = 39 and 41 are 21% under it (1.63 cycles per multiply-add instead of 2.07).</li>
+</ul>
+So the lines in the chart and the calculator are a guide for Mt a multiple of 4 and T ≤ 32. Anywhere else, measure: the largest tile that links is not necessarily the fastest.</li>
 <li><strong>Host I/O is still a large share of the whole run.</strong> At the defaults the simulator counts 36,959 cycles in total, of which the kernel is 14,422 (39%); at T = 32 it is 425,382 of 635,409 (67%) <span class="tag measured">Measured</span>. As in Labs 1–3, time the kernel with the TSC.</li>
 
 </ul>
@@ -450,7 +456,7 @@ SUCCESS!
 
 <div class="widget" id="bud">
 <h4>Budget calculator</h4>
-<p class="hint">Change the grid, the tile sizes, the kernel and the chip. Memory uses the measured link limits of this program (largest square tile that linked, and smallest that failed); between them the answer is "try it". Cycles use the fits from this chapter. Wafer-scale lines are <span class="tag derived">Derived</span>: they assume the SDK-visible WSE-2 fabric (750 × 994, Chapter 13) and the clock you pick, and leave out host I/O.</p>
+<p class="hint">Change the grid, the tile sizes, the kernel and the chip. Memory compares tiles plus stamps with the measured link limits of this program (largest square tile that linked and smallest that failed, at P = 4 with 84 B of stamps); between them the answer is "try it". Choose "start and end only" to model the variant without per-step stamps that large grids need. Cycles are the measured values when that square tile was run, and the fits otherwise, with a warning outside the fits' range. Everything is <span class="tag derived">Derived</span>: the largest grid is the SDK-visible WSE-2 fabric (750 × 994 minus the frame, P ≤ 743, Chapter 13), the clock is the one you pick, and host I/O is printed separately.</p>
 <div class="controls">
 <label>P <input type="number" id="b-p" min="2" max="743" value="4" style="width:5.5em"></label>
 <label>Mt <input type="number" id="b-m" min="1" max="64" value="8" style="width:4.5em"></label>
@@ -458,6 +464,7 @@ SUCCESS!
 <label>Nt <input type="number" id="b-n" min="1" max="64" value="8" style="width:4.5em"></label>
 <label>kernel <select id="b-ker"><option value="0">0 · column @fmacs</option><option value="1">1 · outer product</option></select></label>
 <label>chip <select id="b-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
+<label>stamps <select id="b-ts"><option value="step">per step (as shipped)</option><option value="ends">start and end only</option></select></label>
 <label>clock <select id="b-clk"><option value="0.85">850 MHz (SDK assumption)</option><option value="1.1">1.1 GHz (WSE-2, HC22)</option></select></label>
 </div>
 <svg id="bud-mem" viewBox="0 0 680 92" width="680" role="img" aria-label="Memory budget bar"></svg>
@@ -465,13 +472,36 @@ SUCCESS!
 </div>
 
 <h2 id="scale">Scaling up <span class="tag derived">Derived</span></h2>
-<p>Put the fits on the largest square grid the SDK-visible WSE-2 fabric allows: 750 × 994 minus memcpy's frame gives at most 743 PEs across, so P = 743, about 552k PEs (<a href="13-lab-stencil.html">Chapter 13</a>). Take the largest tiles that linked on WSE-2 and the 1.1 GHz WSE-2 clock <span class="tag vendor">Vendor, HC22</span>:</p>
+<p>Put the program on the largest square grid the SDK-visible WSE-2 fabric allows: 750 × 994 minus memcpy's frame gives at most 743 PEs across, so P = 743, about 552k PEs (<a href="13-lab-stencil.html">Chapter 13</a>), at the 1.1 GHz WSE-2 clock <span class="tag vendor">Vendor, HC22</span>. Peak at one f32 multiply-add per cycle per PE is 1.21 PFLOP/s. Two adjustments first:</p>
 <ul>
-<li><strong>Kernel 0, T = 45.</strong> A step is ≈ 4,480 cycles of broadcast + ≈ 248,000 of compute. 743 steps take ≈ 1.9 × 10⁸ cycles ≈ 0.17 s for a 33,435² f32 GEMM (7.5 × 10¹³ flops), ≈ 0.44 PFLOP/s, 36% of the 1.2 PFLOP/s that one multiply-add per cycle per PE would give.</li>
-<li><strong>Kernel 1, T = 39.</strong> ≈ 3,470 + 123,000 cycles per step, ≈ 85 ms for 28,977², ≈ 0.57 PFLOP/s, 47% of that peak.</li>
+<li><strong>Drop the per-step stamps.</strong> The stamp array is 6·(3P + 2) bytes: 84 B at P = 4 but 13,386 B at P = 743, so the shipped program cannot link any large tile there (WSE-2 kernel 0 at T = 45 already fails at P = 200). With only the start and end stamps (12 B), WSE-2 kernel 0 at T = 46 links at P = 743 <span class="tag measured">Measured, cslc 2.10.1, link only</span>. The extrapolation below assumes that variant.</li>
+<li><strong>Use measured step costs, not the fits.</strong> The tiles that fit are not multiples of 4 and lie above T = 32, where the fits fail (findings above). The step costs are measured at P = 2 and assumed flat in P, as they were from P = 2 to 8; a 743-hop multicast adds about 750 cycles of latency per step at 1 cycle per hop on WSE-2, under 1% here.</li>
 </ul>
-<p>Use the budget calculator above to try other points. Caveats: simulator cycles and models fitted at P ≤ 8, extrapolated to P = 743 on the strength of the flat per-step cost (a 743-hop multicast adds ≈ 750–1,500 cycles of latency per step at 1–2 cycles per hop, under 1% here); f32 only, while the wafer's headline numbers are 16-bit (Chapter 6 measured f16 <code>@fmach</code> at 2–4 elements per cycle, so a tuned f16 kernel could be several times faster, unmeasured here); and loading the three matrices from the host (≈ 13 GB at T = 45) is left out. The real lesson is the ratio: at this scale the fabric costs about 2% of each step, and the per-PE instruction stream is the whole game. It is the same lesson as <a href="17-gpu.html#tiling">a GPU's tiled matmul</a> and <a href="16-tenstorrent.html#matmul">Tenstorrent's</a>: once the tiles are in place, the inner loop decides how close you get to peak.</p>
+<div class="table-wrap"><table>
+<tr><th>WSE-2, P = 743</th><th>T</th><th>Step (broadcast + compute)</th><th>Matrix side</th><th>Kernel time</th><th>f32 rate</th><th>% of peak</th></tr>
+<tr><td>Kernel 0, largest tile that links</td><td>46</td><td>4,666 + 315,978</td><td>34,178</td><td>0.22 s</td><td>0.37 PFLOP/s</td><td>30%</td></tr>
+<tr><td>Kernel 0, fastest measured</td><td>40</td><td>3,633 + 182,854</td><td>29,720</td><td>0.13 s</td><td>0.42 PFLOP/s</td><td>34%</td></tr>
+<tr><td>Kernel 1, largest tile that links</td><td>42</td><td>3,962 + 152,872</td><td>31,206</td><td>0.11 s</td><td>0.57 PFLOP/s</td><td>47%</td></tr>
+<tr><td>Kernel 1, fastest measured</td><td>41</td><td>3,796 + 112,028</td><td>30,463</td><td>78 ms</td><td>0.72 PFLOP/s</td><td>60%</td></tr>
+</table></div>
+<p class="legend">Step costs <span class="tag measured">Measured, P = 2, SDK 2.10.1 simulator</span>; everything else <span class="tag derived">Derived</span> (kernel = 743 steps; flops = 2·N³; 1.1 GHz).</p>
+<p><strong>Host I/O is the same order as the kernel.</strong> The program loads A and B and reads C back: 11–14 GB at these sizes. Through the system's 1.2 Tb/s I/O (150 GB/s, <a href="08-systems.html">Chapter 8</a>) that is at least 74–93 ms, as long as the kernel itself; through the SDK host path of <a href="07-host-io.html">Chapter 7</a> (at most about 14 GB/s) it is 0.8–1.0 s, ten times the kernel <span class="tag derived">Derived</span>. So end to end, a single resident GEMM of this size runs at half the rate above at best. The budget calculator prints both times.</p>
+<p><strong>This is not how Cerebras runs big matmuls.</strong> A ~30k² f32 GEMM is about the largest that fits <em>resident</em> in SRAM, with all three matrices on the wafer. Production training streams the weights instead: they live in MemoryX and arrive one layer at a time while the activations stay on the wafer (<a href="08-systems.html#weight-streaming">Chapter 8</a>, <a href="09-model-to-tokens.html">Chapter 9</a>). Resident SUMMA is a teaching kernel for the 2-D mechanics.</p>
+<p>Caveats: simulator cycles; f32 only, while the wafer's headline numbers are 16-bit (Chapter 6 measured f16 <code>@fmach</code> at 2–4 elements per cycle, so a tuned 16-bit kernel could be several times faster, unmeasured here). The lesson is the ratio: at this scale the fabric costs about 1.5–3% of each step, and the per-PE instruction stream (and where the linker put the arrays) is the whole game. It is the same lesson as <a href="17-gpu.html#tiling">a GPU's tiled matmul</a> and <a href="16-tenstorrent.html#matmul">Tenstorrent's</a>: once the tiles are in place, the inner loop decides how close you get to peak.</p>
 
+<h2 id="next">What this program leaves on the table</h2>
+<p>The program runs broadcast and compute strictly one after the other: <code>start_step()</code> is called only after <code>compute</code> finishes. Three designs an expert would try next:</p>
+<ul>
+<li><strong>Double-buffered SUMMA</strong> (overlap communication with compute). Receive the tiles of step <em>s</em>+1 into a second pair of buffers while step <em>s</em> computes. Ideally the kernel becomes about P · max(broadcast, compute) + one broadcast: at the default T = 8 on WSE-3, 4 × 2,903 + 650 + 209 ≈ 12,500 cycles instead of 14,422 (−14%); at T = 32 only −2%, and on the wafer under −3%, because there compute is already 97–99% of the step <span class="tag derived">Derived, unmeasured</span>. The costs: two more tiles (7 · 4T² bytes for kernel 0, so the largest tile drops from 45–46 to about 38; kernel 1 from 41–42 to 35–36), and a third join condition, because a buffer may only be overwritten once the compute that reads it is done. And a catch specific to this library: tasks do not preempt each other (<a href="05-tasks.html">Chapter 5</a>), and <code>broadcast()</code> only <em>activates</em> the library's FSM task, which starts the move and later sends the teardown. While a long <code>compute</code> task runs, the FSM cannot run, so issuing the next broadcast at the top of <code>compute</code> starts nothing until it returns. Real overlap needs <code>compute</code> split into several shorter tasks, or moves you start yourself with <code>.async = true</code> (<a href="06-dsds.html#async">Chapter 6</a>). Even then, the receive moves and the <code>@fmacs</code> compete for the same memory <span class="tag unv">Unverified</span>. Exercise 7 builds it.</li>
+<li><strong>Cannon's algorithm.</strong> It skews A and B once, then every step shifts each A tile one PE west and each B tile one PE north. That is nearest-neighbour traffic on static routes, with no route rewrite and no teardown, which suits a mesh with cheap hops. The catch is the wrap-around: the shift is cyclic, and the wafer is a mesh, not a torus, so the tile leaving column 0 must travel P − 1 hops back east (or the grid must be folded into a ring), plus the initial skew. SUMMA needs neither, and also works on non-square grids. That is the usual reason to choose it on a mesh <span class="tag derived">Derived</span>.</li>
+<li><strong>Computing straight from the fabric.</strong> The Cerebras idiom is a fabric input DSD as an operand (<code>fabin_dsd</code>, <a href="06-dsds.html">Chapter 6</a>, <a href="12-lab-neighbours.html">Chapter 12</a>): operate on wavelets as they arrive, without landing them first. Kernel 0 reuses each A column Nt times, so it would still need one column of buffer (Mt words) instead of a whole A tile, saving most of a tile of memory. <code>&lt;collectives_2d&gt;</code> always lands data in memory, so this needs your own routes and moves.</li>
+<li><strong>Kernel 0's fixed cost.</strong> About 30 cycles per instruction is two-thirds of the time at T = 8. Levers, all unmeasured here: hoist the index arithmetic <code>j * Kt + k</code> out of the loop (or swap the loops so the B scalars are read in order through a pointer increment); unroll the j loop at compile time; and issue the <code>@fmacs</code> with <code>.async = true</code> on alternating microthreads so one instruction's start-up overlaps another's execution (<a href="06-dsds.html#async">Chapter 6</a>). Exercise 8 tries one.</li>
+</ul>
+
+<div class="callout">
+<strong>Aside: chain or tree?</strong>
+<p>Both the library's broadcast and Chapter 12's program 05 are <em>chains</em>. A chain broadcast costs about (hops × hop cost) + words, and the hop cost is tiny (2.0 cycles on WSE-3, 1.0 on WSE-2 <span class="tag measured">Measured, Ch. 4</span>), so for a row of a few hundred PEs the word count dominates. Reductions are different, because each PE must add before forwarding. A chain reduce still streams (≈ 9.2 cycles per hop through a PE's compute on WSE-3, 6.0 on WSE-2, plus the words <span class="tag measured">Measured, Ch. 12</span>). A binary tree needs only log₂P levels, but each level is a separate message, and Chapter 12 measured store-and-forward at more than 3× the streaming chain (348 vs 101 cycles at P = 8, M = 32) <span class="tag measured">Measured, Ch. 12</span>. With c ≈ 9 per hop and ≈ 15 cycles per store-and-forward message (Lab 3 measured ≈ 14.6 per transfer with its completion task, <a href="13-lab-stencil.html">Chapter 13</a>), one dimension costs about 9·P + M as a chain and log₂P · (15 + M) + 2·(P − 1) as a tree (the last term is the tree's wire: the levels' hop distances add up to about P − 1 hops at 2 cycles each). The tree wins once the chain is longer: from about P ≈ 5–6 for a single word (the exact crossover moves with how the constants are rounded), and from P ≈ 27 for M = 32 <span class="tag derived">Derived</span>. So a whole-wafer scalar allreduce wants a tree, and a short row of long vectors wants a chain. SUMMA needs no reduction; <a href="15-lab-cg.html">Chapter 15</a>'s solver does, and exercise 6 works the numbers.</p>
+</div>
 
 <h2 id="ex">Exercises</h2>
 <ol>
@@ -500,6 +530,11 @@ SUCCESS!
 <details><summary>Expected result</summary><p>Compute per step 3,192, 3,896 and 3,352 cycles on WSE-3 <span class="tag measured">Measured</span>. Per multiply-add that is 3.33 (Mt = 15), 3.80 (Mt = 16) and 3.08 (Mt = 17) cycles, so <b>Mt = 17 is fastest</b>, then 15, then 16 <span class="tag derived">Derived</span>. With Mt a multiple of 4 every <code>@fmacs</code> clashes; with odd Mt the alignment cycles through the four residues and only about a quarter clash, and Mt = 17 spreads the fixed cost over more elements than Mt = 15. Per instruction, a sweep gives 49.9, 52.4 and 72.4 cycles for Mt = 15, 17, 33 (≈ 1.25·Mt + 31), against 45.4, 60.9 and 92.4 for Mt = 8, 16, 32 (2·Mt + 29) <span class="tag measured">Measured, P = 2, Kt = Nt = 8</span>. Other heights (Mt ≡ 2 mod 4, or another chip) behave differently again: see the T = 45 and 46 points in the findings.</p></details></li>
 <li><p><strong>Chain or tree (design only).</strong> Chapter 15's solver needs a global sum over a P × P grid every iteration. Using c ≈ 9 cycles per hop through a PE (WSE-3) and ≈ 15 cycles of fixed cost per store-and-forward message plus 1 per word, compare a row chain followed by a column chain with a binary tree in each dimension, for P = 8 and P = 512 with M = 1 and M = 32 words.</p>
 <details><summary>Expected result</summary><p><span class="tag derived">Derived</span> Chain: ≈ 2 × (9·P + M). Tree: ≈ 2 × (log₂P × (15 + M) + 2·(P − 1)), the last term being the wire: the levels' hop distances add up to about P − 1 hops at 2 cycles each. P = 8, M = 32: chain ≈ 210, tree ≈ 310. P = 512, M = 1: chain ≈ 9,200, tree ≈ 2,300. Small grids or long vectors favour the streaming chain; a whole-wafer scalar reduction favours a tree. Measure your guess in Chapter 15.</p></details></li>
+<li><p><strong>Double-buffered SUMMA (design, then build).</strong> Using "What this program leaves on the table", write down (a) the memory line for kernel 0 with a second A and B buffer and the largest square tile on WSE-3, (b) the join condition <code>compute</code> needs now, and (c) a predicted kernel time at P = 4, T = 8. Then build it: issue step s + 1's broadcasts before step s's multiply-adds, and split <code>compute</code> into a few tasks (for example one per block of k) so the library's FSM task can run between them.</p>
+<details><summary>Hints</summary><p>Alternate the receive buffers with <code>step % 2</code>. The root still sends from its home tile. A buffer is free when the compute that read it has finished, so the broadcast into it must wait for that as well as for the previous broadcast's callback: one more bit, or a small counter.</p></details>
+<details><summary>Expected result</summary><p><span class="tag derived">Derived, not measured in this course</span> (a) 4 × (3·Mt·Kt + 3·Kt·Nt + Mt·Nt) bytes: 28·T² for square tiles, so T ≈ 38 on WSE-3 (40,432 B). (b) compute(s) runs when both tiles of step s have arrived; broadcast(s + 1) may start when both broadcasts of step s have finished and compute(s − 1), the last reader of that buffer, is done. (c) Ideally 4 × 2,903 + 650 + 209 ≈ 12,500 cycles, against 14,422. Expect less: the receive moves and the <code>@fmacs</code> share the PE's memory, and the FSM only runs between your compute tasks. Measure, and compare with the ideal.</p></details></li>
+<li><p><strong>Cut kernel 0's fixed cost (open).</strong> Pick one lever from the list in "What this program leaves on the table" (hoisting the index arithmetic, unrolling the j loop, or alternating <code>.async</code> microthreads) and measure the compute per step at <code>P=2 T=8</code> before and after. At T = 8 the fixed part is about 29 of the 45 cycles per instruction, so this is where the gain is.</p>
+<details><summary>Expected result</summary><p>Not measured in this course. Report your number as cycles per <code>@fmacs</code>: anything well below 45 at T = 8 (with the clash still there) is a real gain; 2·8 = 16 cycles is the floor with the clash, and 8 without it. Check C against numpy after every change.</p></details></li>
 
 </ol>
 
@@ -525,6 +560,8 @@ SUCCESS!
   // ---------- measured data (TSC, far-corner PE; SDK 2.10.1 simulator) ----------
   // key: chip|kernel|P|T  ->  [kernel total, broadcast sum, compute sum]
   const RUNS = {"wse3|0|2|8": [7188, 1253, 5806], "wse3|0|4|4": [5011, 2310, 2492], "wse3|0|4|8": [14422, 2601, 11612], "wse3|0|4|16": [75682, 4133, 71340], "wse3|0|4|24": [208294, 6693, 201392], "wse3|0|4|32": [425382, 10277, 414896], "wse3|0|6|8": [21624, 3917, 17418], "wse3|0|8|8": [28828, 5235, 23224], "wse3|1|4|4": [4374, 2313, 1852], "wse3|1|4|8": [9186, 2601, 6376], "wse3|1|4|16": [39998, 4133, 35656], "wse3|1|4|24": [117982, 6693, 111080], "wse3|1|4|32": [266046, 10277, 255560], "wse2|0|2|8": [6791, 1126, 5536], "wse2|0|4|4": [4341, 1840, 2272], "wse2|0|4|8": [13514, 2233, 11072], "wse2|0|4|16": [68318, 3765, 64344], "wse2|0|4|32": [396634, 9905, 386520], "wse2|0|8|8": [26967, 4454, 22144], "wse2|1|4|8": [10126, 2233, 7684], "wse2|1|4|32": [286222, 9909, 276104]};
+  // P = 2 runs at large and odd tiles (2 steps; null = total not recorded). wse2|0|2|45 and wse2|1|2|39 are from the round-2 depth review.
+  const RUNS2 = {"wse3|0|2|44": [493655, 8734, 484792], "wse3|0|2|45": [387667, 9090, 378448], "wse3|1|2|41": [264719, 7714, 256876], "wse2|0|2|40": [373103, 7266, 365708], "wse2|0|2|44": [660569, 8612, 651828], "wse2|0|2|45": [null, 8970, 553150], "wse2|0|2|46": [641417, 9332, 631956], "wse2|1|2|39": [null, 6952, 194008], "wse2|1|2|40": [272233, 7268, 264836], "wse2|1|2|41": [231777, 7592, 224056], "wse2|1|2|42": [313798, 7925, 305744]};
   // per-step fits (see text): broadcast = b0 + b1 * words, k0 = Kt*Nt*(a*Mt + c), k1 = Kt*(a*Mt*Nt + c)
   const FIT = {"wse3": {"b": [520, 1.0], "k0": [2.32, 29.6], "k1": [1.874, 77], "cross": "9"}, "wse2": {"b": [429, 1.0], "k0": [2.12, 27.2], "k1": [2.0, 112], "cross": "9"}};
   // kernel 0 with the bank-clash fix (exercise 4), P = 2, compute cycles per step
@@ -534,10 +571,10 @@ SUCCESS!
 
   // ---------- measurement table ----------
   const tb = $("#mtab-body");
-  Object.keys(RUNS).forEach(key => {
-    const [chip, ker, P, t] = key.split("|"), [tot, b, c] = RUNS[key], Tn = +t;
+  Object.entries(Object.assign({}, RUNS, RUNS2)).forEach(([key, [tot, b, c]]) => {
+    const [chip, ker, P, t] = key.split("|"), Tn = +t;
     const tr = document.createElement("tr"); tr.dataset.k = key; tb.appendChild(tr);
-    tr.innerHTML = `<td>${chip === "wse3" ? "WSE-3" : "WSE-2"}, kernel ${ker}</td><td>${P}</td><td>${t}</td><td>${fmt(tot)}</td><td>${fmt(b)}</td><td>${fmt(c)}</td><td><strong>${fmt(c / P)}</strong></td><td>${fmt(Tn ** 3)}</td>`;
+    tr.innerHTML = `<td>${chip === "wse3" ? "WSE-3" : "WSE-2"}, kernel ${ker}</td><td>${P}</td><td>${t}</td><td>${tot ? fmt(tot) : "—"}</td><td>${fmt(b)}</td><td>${fmt(c)}</td><td><strong>${fmt(c / P)}</strong></td><td>${fmt(Tn ** 3)}</td>`;
   });
 
   // ---------- host layout figure ----------
@@ -578,7 +615,7 @@ SUCCESS!
       const m = el("marker", { id: "sq-" + k, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" }, defs);
       el("path", { d: "M0,0 L10,5 L0,10 z", class: c, fill: k === "mut" ? cssVar("--muted") : undefined }, m);
     });
-    const PEs = [{ nm: "root PE (sends)", ce: 60, r: 175 }, { nm: "middle PE", r: 345, ce: 450 }, { nm: "end PE", r: 585, ce: 690 }];
+    const PEs = [{ nm: "root PE (sends)", ce: 100, r: 210 }, { nm: "middle PE", r: 360, ce: 462 }, { nm: "end PE", r: 592, ce: 694 }];
     const Y0 = 58, Y1 = 345;
     PEs.forEach(p => {
       const xl = Math.min(p.ce, p.r) - 52, xr = Math.max(p.ce, p.r) + 52;
@@ -595,39 +632,40 @@ SUCCESS!
     let y = 72;
     num(14, y, "1");
     PEs.forEach(p => arrow(p.ce, y, p.r + (p.r > p.ce ? -4 : 4), y, "s-muted", "mut", 1.6));
-    lab(118, y - 6, "broadcast(): reset_routes", "middle"); lab(398, y - 6, "same, own route", "middle"); lab(638, y - 6, "same", "middle");
+    lab(155, y - 6, "broadcast(): reset_routes", "middle"); lab(411, y - 6, "same, own route", "middle"); lab(643, y - 6, "same", "middle");
     // 2: data stream
     y = 102; num(14, y + 14, "2");
     el("polygon", { points: `${PEs[0].r},${y} ${PEs[2].r},${y + 22} ${PEs[2].r},${y + 62} ${PEs[0].r},${y + 40}`, fill: cssVar("--accent-soft"), stroke: cssVar("--accent"), "stroke-width": 1, opacity: .9 }, s);
     arrow(PEs[0].ce, y + 6, PEs[0].r - 4, y + 6, "s-acc", "acc", 2.2);
     lab(PEs[0].ce - 40, y - 2, "microthread 2: memory → fabric", "start");
-    lab(260, y + 30, "data: count words, hop by hop", "middle");
-    [1, 2].forEach(i => { const p = PEs[i], yy = y + 12 + 11 * i; arrow(p.r, yy, p.ce - 4, yy + 4, "s-acc", "acc", 2.2); lab(p.ce + 6, yy + 18, "RAMP → memory", i === 2 ? "end" : "start"); });
+    lab(222, y + 34, "data: count words, hop by hop", "start");
+    [1, 2].forEach(i => { const p = PEs[i], yy = y + 12 + 11 * i; arrow(p.r, yy, p.ce - 4, yy + 4, "s-acc", "acc", 2.2); lab(p.ce + (i === 2 ? 50 : 4), yy + 20, "RAMP → memory", i === 2 ? "end" : "start"); });
     // 3: teardown wavelet
     y = 186; num(14, y, "3");
     arrow(PEs[0].ce, y, PEs[0].r - 4, y, "s-red", "red", 2);
     lab(PEs[0].ce - 40, y - 8, "FSM: my move done → initiate_teardowns()", "start");
     arrow(PEs[0].r, y + 4, PEs[2].r - 4, y + 22, "s-red", "red", 2.2, "6 3");
-    lab(390, y + 6, "TEARDOWN control wavelet (CE-ignore)", "middle", "");
+    lab(420, y - 4, "TEARDOWN control wavelet (CE-ignore)", "middle", "");
     PEs.forEach((p, i) => { const yy = y + 4 + 9 * i; el("rect", { x: p.r - 9, y: yy - 2, width: 18, height: 10, rx: 2, class: "f-red", opacity: .85 }, s); });
     lab(PEs[2].r + 12, y + 30, "router back in teardown", "start");
     // 4: task 29 activates lock
     y = 240; num(14, y, "4");
     PEs.forEach((p, i) => { arrow(p.r, y + 2 * i, p.ce + (p.ce > p.r ? -4 : 4), y + 2 * i, "s-pur", "pur", 1.8); });
-    lab(PEs[0].ce + 6, y - 7, "task 29 → activate(lock)", "start"); lab(398, y - 7, "task 29 → activate(lock)", "middle"); lab(638, y - 7, "task 29 → lock", "middle");
+    lab(155, y - 7, "task 29 → activate(lock)", "middle"); lab(411, y - 7, "task 29 → activate(lock)", "middle"); lab(643, y - 7, "task 29 → lock", "middle");
     // 5: FSM unblocks lock
     y = 274; num(14, y, "5");
     PEs.forEach(p => { el("rect", { x: p.ce - 46, y: y - 9, width: 92, height: 16, rx: 4, class: "box" }, s); T("text", { x: p.ce, y: y + 3, "text-anchor": "middle", "font-size": 10.5 }, s, "FSM → unblock(lock)"); });
     // 6: lock runs, callback
     y = 306; num(14, y, "6");
     PEs.forEach(p => { el("rect", { x: p.ce - 46, y: y - 9, width: 92, height: 16, rx: 4, class: "grn" }, s); T("text", { x: p.ce, y: y + 3, "text-anchor": "middle", "font-size": 10.5 }, s, "lock → x_done"); });
-    lab(PEs[1].r - 70, y + 3, "4 and 5 in either order", "middle", "muted");
+    lab(285, y + 3, "4 and 5 in either order", "middle", "muted");
     T("text", { x: 4, y: Y1 - 2, "font-size": 11, class: "muted" }, s, "time ↓");
     // back-pressure panel
     const by = 360;
-    el("rect", { x: 30, y: by, width: 700, height: 52, rx: 6, class: "box" }, s);
+    el("rect", { x: 30, y: by, width: 720, height: 56, rx: 6, class: "box" }, s);
     T("text", { x: 44, y: by + 18, "font-size": 12, "font-weight": 700 }, s, "Next step, slow neighbour:");
-    T("text", { x: 44, y: by + 38, "font-size": 11.5 }, s, "the new root's data reaches a router still in teardown (that PE is still computing) and waits; back-pressure holds the sender until that PE calls broadcast().");
+    T("text", { x: 44, y: by + 34, "font-size": 11.5 }, s, "the new root's data reaches a router that is still in teardown (that PE is still computing step s) and waits there;");
+    T("text", { x: 44, y: by + 49, "font-size": 11.5 }, s, "the lossless fabric back-pressures the sender until that PE calls broadcast() and leaves teardown.");
     el("rect", { x: 640, y: by + 8, width: 18, height: 10, rx: 2, class: "f-red", opacity: .85 }, s);
     T("text", { x: 662, y: by + 17, "font-size": 11, class: "muted" }, s, "= teardown");
   })();
@@ -637,7 +675,7 @@ SUCCESS!
   function stDraw() {
     const svg = $("#st-svg"); svg.innerHTML = "";
     const narrow = window.matchMedia("(max-width: 680px)").matches;
-    const VW = narrow ? 360 : 720, VH = narrow ? 660 : 362;
+    const VW = narrow ? 360 : 720, VH = narrow ? 680 : 362;
     svg.setAttribute("viewBox", `0 0 ${VW} ${VH}`); svg.setAttribute("width", VW);
     svg.style.minWidth = narrow ? "0" : "";
     const P = +$("#st-p").value, t = +$("#st-t").value;
@@ -674,7 +712,7 @@ SUCCESS!
     }
     // matrices
     const MS = 120, b = MS / P;
-    const MA = narrow ? [20, 360] : [360, 50], MB = narrow ? [200, 360] : [520, 50], MC = narrow ? [100, 520] : [420, 200];
+    const MA = narrow ? [20, 350] : [360, 50], MB = narrow ? [200, 350] : [520, 50], MC = narrow ? [100, 505] : [420, 200];
     const mat = (x0, y0, name, hi) => {
       T("text", { x: x0, y: y0 - 8, "font-size": 13, "font-weight": 700 }, svg, name);
       for (let r = 0; r < P; r++) for (let c = 0; c < P; c++) el("rect", { x: x0 + c * b, y: y0 + r * b, width: b - 1.5, height: b - 1.5, rx: 2, class: hi(r, c) }, svg);
@@ -690,7 +728,7 @@ SUCCESS!
     el("rect", { x: MA[0] + s * b - 1, y: MA[1] + sy * b - 1, width: b + 0.5, height: b + 0.5, fill: "none", class: "s-pur", "stroke-width": 3 }, svg);
     el("rect", { x: MB[0] + sx * b - 1, y: MB[1] + s * b - 1, width: b + 0.5, height: b + 0.5, fill: "none", class: "s-pur", "stroke-width": 3 }, svg);
     // legend
-    const LG = narrow ? [[20, 600], [190, 600], [20, 622], [190, 622]] : [[20, 342], [190, 342], [370, 342], [500, 342]];
+    const LG = narrow ? [[20, 640], [190, 640], [20, 662], [190, 662]] : [[20, 342], [190, 342], [370, 342], [500, 342]];
     const leg = [["acc", "A tile sent along the row"], ["blu", "B tile sent down the column"], ["grn", "C done (fraction)"], ["pur", "selected PE's blocks"]];
     leg.forEach(([c, nm], i) => {
       const [lx0, ly0] = LG[i];
@@ -742,7 +780,7 @@ SUCCESS!
     const norm = (v, t) => perMac ? v / t ** 3 : v;
     // axes
     el("rect", { x: lx(32), y: Y1, width: X1 - lx(32), height: Y0 - Y1, fill: cssVar("--surface-2"), opacity: .7 }, svg);
-    T("text", { x: (lx(32) + X1) / 2, y: Y1 + 12, "text-anchor": "middle", "font-size": 10, class: "muted" }, svg, "fits extrapolated");
+    T("text", { x: (lx(32) + X1) / 2, y: Y0 - 6, "text-anchor": "middle", "font-size": 10, class: "muted" }, svg, "extrapolated");
     [4, 8, 16, 32, 45].forEach(t => { el("line", { x1: lx(t), x2: lx(t), y1: Y1, y2: Y0, class: "line" }, svg); T("text", { x: lx(t), y: Y0 + 16, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg, t); });
     (perMac ? [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20] : [100, 1e3, 1e4, 1e5]).forEach(v => { el("line", { x1: X0, x2: X1, y1: ly(v), y2: ly(v), class: "line" }, svg); T("text", { x: X0 - 6, y: ly(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg, v >= 1000 ? (v / 1000) + "k" : v); });
     T("text", { x: (X0 + X1) / 2, y: Y0 + 34, "text-anchor": "middle", "font-size": 12, class: "muted" }, svg, "tile size T (Mt = Kt = Nt), log scale");
@@ -810,6 +848,7 @@ SUCCESS!
   // measured link limits at P = 4 (84 B of stamps), bytes of the 5 (or 6) tile arrays: [largest ok, smallest failing]
   const LIM = {"wse3": {"0": [40500, 42320], "1": [40344, 42336]}, "wse2": {"0": [42320, 44180], "1": [42336, 44376]}};
   const STAMP4 = 6 * (3 * 4 + 2);
+  const tfmt = s => s >= 1 ? s.toFixed(2) + " s" : s >= 1e-3 ? (s * 1e3).toFixed(s >= 0.1 ? 0 : 1) + " ms" : (s * 1e6).toFixed(1) + " µs";
   function budDraw(commit) {
     const notes = [];
     const clampI = (id, lo, hi, nm) => {
@@ -853,7 +892,7 @@ SUCCESS!
     const stepC = b + c, tot = P * stepC;
     const flops = 2 * (m * P) * (k * P) * (n * P), sec = tot / (clk * 1e9);
     const warn = [];
-    if (src === "fit" && (m % 4 !== 0 || Math.max(m, k, n) > 32)) warn.push(`⚠ cycles come from fits made at Mt = multiples of 4, T ≤ 32; for Mt = ${m}${Math.max(m, k, n) > 32 ? " and tiles above 32" : ""} the real cost depends on alignment and chip (measured at T = 45: WSE-3 189k, WSE-2 277k per step, fit 271k / 248k). Measure it.`);
+    if (src === "fit" && (m % 4 !== 0 || Math.max(m, k, n) > 32)) warn.push(`⚠ cycles come from fits made at Mt = multiples of 4, T ≤ 32; for this tile (${m} × ${k} × ${n}) the real cost depends on alignment and chip (measured at T = 45: WSE-3 189k, WSE-2 277k per step, fit 271k / 248k). Measure it.`);
     if (perStep && P > 4) warn.push(`⚠ the per-step stamps grow as 6·(3P + 2) B: ${fmt(ts)} B at P = ${P} (84 B where the limits were measured). For big grids keep only the start and end stamps.`);
     const ioB = 4 * ((m * P) * (k * P) + (k * P) * (n * P) + (m * P) * (n * P));
     $("#b-out").textContent =
@@ -863,7 +902,7 @@ SUCCESS!
       `per step (${src}): broadcast ≈ ${fmt(b)} + compute ≈ ${fmt(c)} = ${fmt(stepC)} cycles; ideal compute ${fmt(m * k * n)} (${(100 * m * k * n / c).toFixed(0)}% reached)\n` +
       `kernel ≈ ${fmt(tot)} cycles = ${sec >= 0.01 ? (sec * 1e3).toFixed(1) + " ms" : (sec * 1e6).toFixed(1) + " µs"} at ${clk} GHz for C ${fmt(m * P)} × ${fmt(n * P)} (K = ${fmt(k * P)})\n` +
       `→ ${(flops / sec / 1e12).toFixed(2)} TFLOP/s f32 on ${fmt(P * P)} PEs; peak at 1 MAC/cycle would be ${(2 * P * P * clk / 1e3).toFixed(2)} TFLOP/s  [Derived]\n` +
-      `host I/O: A and B in, C out = ${ioB >= 1e9 ? (ioB / 1e9).toFixed(1) + " GB" : fmt(ioB / 1e3) + " kB"}; ≥ ${(ioB / 150e9 * 1e3).toFixed(ioB > 1.5e9 ? 0 : 3)} ms at 150 GB/s (system I/O, Ch. 8), ≥ ${(ioB / 14e9 * 1e3).toFixed(ioB > 1.4e8 ? 0 : 2)} ms at the SDK host path's ≤ 14 GB/s (Ch. 7)  [Derived]` +
+      `host I/O: A and B in, C out = ${ioB >= 1e9 ? (ioB / 1e9).toFixed(1) + " GB" : fmt(ioB / 1e3) + " kB"}; ≥ ${tfmt(ioB / 150e9)} at 150 GB/s (system I/O, Ch. 8), ≥ ${tfmt(ioB / 14e9)} at the SDK host path's ≤ 14 GB/s (Ch. 7)  [Derived]` +
       (warn.length ? "\n" + warn.join("\n") : "");
   }
   ["#b-p", "#b-m", "#b-k", "#b-n"].forEach(s => { $(s).oninput = () => budDraw(false); $(s).onchange = () => budDraw(true); });

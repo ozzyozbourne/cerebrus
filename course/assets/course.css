@@ -192,3 +192,6 @@ pre, code, .code-tour, .readout { font-variant-ligatures: none; font-feature-set
   figure > figcaption { position: sticky; left: 0; max-width: calc(100vw - 64px); }
 }
 .tag.unv { background: var(--red-soft); color: var(--red); }
+
+.topbar .glossary-link { font: 600 13px var(--sans); color: var(--muted); text-decoration: none; margin-left: auto; margin-right: 10px; white-space: nowrap; }
+.topbar .glossary-link:hover { color: var(--accent); }

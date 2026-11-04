@@ -43,7 +43,7 @@ dl.gloss dd { margin: 0; }
 <tr><td>Dies</td><td>1 reticle-size die, 132 SMs</td><td>2 reticle-size dies joined by a 10 TB/s link</td><td>2 reticle-size compute dies + I/O dies (so "NVL144" counting dies = NVL72 counting packages)</td></tr>
 <tr><td>Memory</td><td>80 GB HBM3, 3.35 TB/s</td><td>192 GB HBM3e (~180 usable <span class="tag analyst">Analyst</span>), ~8 TB/s</td><td>288 GB HBM4, 19.2 TB/s (announced 22)</td></tr>
 <tr><td>Headline low-precision peak</td><td><b>BF16 dense</b> ~989 TF</td><td><b>FP4 dense</b> ~9 PF (18 sparse)</td><td><b>NVFP4</b> 50 PF inference / 35 PF training (inference figure relies on Transformer Engine compression)</td></tr>
-<tr><td>Same precision: BF16 dense</td><td>~989 TF</td><td>~2.25 PF <span class="tag derived">Derived</span> from 9 PF FP4, assuming 2× per halving of bits; not checked against a datasheet</td><td>not published in our sources</td></tr>
+<tr><td>Same precision: BF16 dense</td><td>~989 TF</td><td>~2.25 PF dense <span class="tag vendor">Vendor</span> (NVIDIA HGX B200 table; consistent with 9 PF FP4 at 2× per halving of bits)</td><td>not published in our sources</td></tr>
 <tr><td>NVLink per GPU</td><td>900 GB/s (NVLink 4)</td><td>1.8 TB/s (NVLink 5)</td><td>3 TB/s (NVLink 6; announced 3.6)</td></tr>
 <tr><td>Scale-up domain</td><td>8-GPU HGX board</td><td>NVL72 rack, ~130 TB/s</td><td>NVL72 rack, ~216 TB/s (announced 260)</td></tr>
 </table></div>
