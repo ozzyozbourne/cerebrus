@@ -570,59 +570,142 @@ SUCCESS!
     order.forEach(o => o.vals.forEach(v => { el("rect", { x: 20 + i * 42, y: 206, width: 40, height: 20, rx: 3, class: col(o.py, o.px) }, s); T("text", { x: 40 + i * 42, y: 220, "text-anchor": "middle", "font-size": 12, class: "mono" }, s, String(v)); i++; }));
   })();
 
+  // ---------- broadcast sequence diagram ----------
+  (function () {
+    const s = $("#seq-svg");
+    const defs = el("defs", {}, s);
+    [["acc", "f-acc"], ["red", "f-red"], ["mut", "f-muted"], ["grn", "f-grn"], ["pur", "f-pur"]].forEach(([k, c]) => {
+      const m = el("marker", { id: "sq-" + k, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" }, defs);
+      el("path", { d: "M0,0 L10,5 L0,10 z", class: c, fill: k === "mut" ? cssVar("--muted") : undefined }, m);
+    });
+    const PEs = [{ nm: "root PE (sends)", ce: 60, r: 175 }, { nm: "middle PE", r: 345, ce: 450 }, { nm: "end PE", r: 585, ce: 690 }];
+    const Y0 = 58, Y1 = 345;
+    PEs.forEach(p => {
+      const xl = Math.min(p.ce, p.r) - 52, xr = Math.max(p.ce, p.r) + 52;
+      el("rect", { x: xl, y: 8, width: xr - xl, height: 34, rx: 6, class: "box" }, s);
+      T("text", { x: (xl + xr) / 2, y: 22, "text-anchor": "middle", "font-size": 12, "font-weight": 700 }, s, p.nm);
+      T("text", { x: p.ce, y: 37, "text-anchor": "middle", "font-size": 11, class: "muted" }, s, "CE");
+      T("text", { x: p.r, y: 37, "text-anchor": "middle", "font-size": 11, class: "muted" }, s, "router");
+      [p.ce, p.r].forEach(x => el("line", { x1: x, x2: x, y1: 44, y2: Y1, class: "line", "stroke-width": 1.5, "stroke-dasharray": "3 3" }, s));
+    });
+    const num = (x, y, n) => { el("circle", { cx: x, cy: y, r: 8, class: "f-acc" }, s); T("text", { x, y: y + 4, "text-anchor": "middle", "font-size": 10, "font-weight": 700, fill: cssVar("--on-accent") }, s, n); };
+    const arrow = (x1, y1, x2, y2, cls, mk, w, dash) => el("line", { x1, y1, x2, y2, class: cls, "stroke-width": w || 2, "stroke-dasharray": dash || "", "marker-end": `url(#sq-${mk})` }, s);
+    const lab = (x, y, t, anchor, cls) => T("text", { x, y, "text-anchor": anchor || "start", "font-size": 11, class: "halo-txt " + (cls || "") }, s, t);
+    // 1: every PE rewrites its route and leaves teardown
+    let y = 72;
+    num(14, y, "1");
+    PEs.forEach(p => arrow(p.ce, y, p.r + (p.r > p.ce ? -4 : 4), y, "s-muted", "mut", 1.6));
+    lab(118, y - 6, "broadcast(): reset_routes", "middle"); lab(398, y - 6, "same, own route", "middle"); lab(638, y - 6, "same", "middle");
+    // 2: data stream
+    y = 102; num(14, y + 14, "2");
+    el("polygon", { points: `${PEs[0].r},${y} ${PEs[2].r},${y + 22} ${PEs[2].r},${y + 62} ${PEs[0].r},${y + 40}`, fill: cssVar("--accent-soft"), stroke: cssVar("--accent"), "stroke-width": 1, opacity: .9 }, s);
+    arrow(PEs[0].ce, y + 6, PEs[0].r - 4, y + 6, "s-acc", "acc", 2.2);
+    lab(PEs[0].ce - 40, y - 2, "microthread 2: memory → fabric", "start");
+    lab(260, y + 30, "data: count words, hop by hop", "middle");
+    [1, 2].forEach(i => { const p = PEs[i], yy = y + 12 + 11 * i; arrow(p.r, yy, p.ce - 4, yy + 4, "s-acc", "acc", 2.2); lab(p.ce + 6, yy + 18, "RAMP → memory", i === 2 ? "end" : "start"); });
+    // 3: teardown wavelet
+    y = 186; num(14, y, "3");
+    arrow(PEs[0].ce, y, PEs[0].r - 4, y, "s-red", "red", 2);
+    lab(PEs[0].ce - 40, y - 8, "FSM: my move done → initiate_teardowns()", "start");
+    arrow(PEs[0].r, y + 4, PEs[2].r - 4, y + 22, "s-red", "red", 2.2, "6 3");
+    lab(390, y + 6, "TEARDOWN control wavelet (CE-ignore)", "middle", "");
+    PEs.forEach((p, i) => { const yy = y + 4 + 9 * i; el("rect", { x: p.r - 9, y: yy - 2, width: 18, height: 10, rx: 2, class: "f-red", opacity: .85 }, s); });
+    lab(PEs[2].r + 12, y + 30, "router back in teardown", "start");
+    // 4: task 29 activates lock
+    y = 240; num(14, y, "4");
+    PEs.forEach((p, i) => { arrow(p.r, y + 2 * i, p.ce + (p.ce > p.r ? -4 : 4), y + 2 * i, "s-pur", "pur", 1.8); });
+    lab(PEs[0].ce + 6, y - 7, "task 29 → activate(lock)", "start"); lab(398, y - 7, "task 29 → activate(lock)", "middle"); lab(638, y - 7, "task 29 → lock", "middle");
+    // 5: FSM unblocks lock
+    y = 274; num(14, y, "5");
+    PEs.forEach(p => { el("rect", { x: p.ce - 46, y: y - 9, width: 92, height: 16, rx: 4, class: "box" }, s); T("text", { x: p.ce, y: y + 3, "text-anchor": "middle", "font-size": 10.5 }, s, "FSM → unblock(lock)"); });
+    // 6: lock runs, callback
+    y = 306; num(14, y, "6");
+    PEs.forEach(p => { el("rect", { x: p.ce - 46, y: y - 9, width: 92, height: 16, rx: 4, class: "grn" }, s); T("text", { x: p.ce, y: y + 3, "text-anchor": "middle", "font-size": 10.5 }, s, "lock → x_done"); });
+    lab(PEs[1].r - 70, y + 3, "4 and 5 in either order", "middle", "muted");
+    T("text", { x: 4, y: Y1 - 2, "font-size": 11, class: "muted" }, s, "time ↓");
+    // back-pressure panel
+    const by = 360;
+    el("rect", { x: 30, y: by, width: 700, height: 52, rx: 6, class: "box" }, s);
+    T("text", { x: 44, y: by + 18, "font-size": 12, "font-weight": 700 }, s, "Next step, slow neighbour:");
+    T("text", { x: 44, y: by + 38, "font-size": 11.5 }, s, "the new root's data reaches a router still in teardown (that PE is still computing) and waits; back-pressure holds the sender until that PE calls broadcast().");
+    el("rect", { x: 640, y: by + 8, width: 18, height: 10, rx: 2, class: "f-red", opacity: .85 }, s);
+    T("text", { x: 662, y: by + 17, "font-size": 11, class: "muted" }, s, "= teardown");
+  })();
+
   // ---------- SUMMA stepper ----------
   const st = { s: 0, phase: 0, sel: [1, 2], timer: null };
   function stDraw() {
     const svg = $("#st-svg"); svg.innerHTML = "";
+    const narrow = window.matchMedia("(max-width: 680px)").matches;
+    const VW = narrow ? 360 : 720, VH = narrow ? 660 : 362;
+    svg.setAttribute("viewBox", `0 0 ${VW} ${VH}`); svg.setAttribute("width", VW);
+    svg.style.minWidth = narrow ? "0" : "";
     const P = +$("#st-p").value, t = +$("#st-t").value;
     if (st.sel[0] >= P || st.sel[1] >= P) st.sel = [P - 1, P - 1];
     const G = 280 / P, X0 = 20, Y0 = 34, s = st.s, ph = st.phase; // phase 0 = broadcast, 1 = compute
+    const defs = el("defs", {}, svg);
+    [["a", "f-acc"], ["b", "f-blu"]].forEach(([k, c]) => { const m = el("marker", { id: "st-ah-" + k, viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 5, markerHeight: 5, orient: "auto" }, defs); el("path", { d: "M0,0 L10,5 L0,10 z", class: c }, m); });
     T("text", { x: X0, y: 20, "font-size": 13, "font-weight": 700 }, svg, `PE grid · step ${s} of ${P - 1} · ${ph ? "compute" : "broadcast"}`);
-    const done = (px, py) => Math.min(1, (s + ph) / P);
+    const frac = Math.min(1, (s + ph) / P);
     for (let py = 0; py < P; py++) for (let px = 0; px < P; px++) {
       const x = X0 + px * G, y = Y0 + py * G, isA = px === s, isB = py === s, sel = st.sel[0] === px && st.sel[1] === py;
-      const g = el("g", { style: "cursor:pointer" }, svg);
+      const g = el("g", { style: "cursor:pointer", tabindex: 0, role: "button", "aria-label": `PE ${px},${py}` }, svg);
       el("rect", { x: x + 3, y: y + 3, width: G - 6, height: G - 6, rx: 5, class: "box", "stroke-width": sel ? 3 : 1, stroke: sel ? cssVar("--text") : undefined }, g);
-      const f = done(px, py);
-      el("rect", { x: x + 3, y: y + 3 + (G - 6) * (1 - f), width: G - 6, height: (G - 6) * f, rx: 5, class: "grn", opacity: .55 }, g);
+      if (frac > 0) el("rect", { x: x + 3, y: y + 3 + (G - 6) * (1 - frac), width: G - 6, height: (G - 6) * frac, rx: 5, fill: cssVar("--green"), opacity: .35 }, g);
       if (isA) el("rect", { x: x + 6, y: y + 6, width: (G - 12) / 2 - 2, height: G * .3, rx: 3, class: "acc" }, g);
       if (isB) el("rect", { x: x + G / 2 + 1, y: y + 6, width: (G - 12) / 2 - 2, height: G * .3, rx: 3, class: "blu" }, g);
-      if (G > 50) T("text", { x: x + G / 2, y: y + G - 10, "text-anchor": "middle", "font-size": 11, class: "mono halo-txt" }, g, `${px},${py}`);
-      g.addEventListener("click", () => { st.sel = [px, py]; stDraw(); });
+      if (G > 40) T("text", { x: x + G / 2, y: y + G - (G < 50 ? 7 : 10), "text-anchor": "middle", "font-size": G < 50 ? 10 : 11, class: "mono halo-txt" }, g, `${px},${py}`);
+      const pick = () => { st.sel = [px, py]; stDraw(); const f = document.querySelector(`#st-svg g[aria-label="PE ${px},${py}"]`); if (f) f.focus(); };
+      g.addEventListener("click", pick);
+      g.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
     }
-    if (!ph) { // routes
-      for (let py = 0; py < P; py++) for (let px = 0; px < P; px++) {
-        const cx = X0 + px * G + G / 2, cy = Y0 + py * G + G / 2;
-        if (px !== s) { const dir = px > s ? 1 : -1; el("line", { x1: cx - dir * G * .5, y1: cy - 6, x2: cx - dir * G * .12, y2: cy - 6, class: "s-acc", "stroke-width": 2.5 }, svg); }
-        if (py !== s) { const dir = py > s ? 1 : -1; el("line", { x1: cx + 6, y1: cy - dir * G * .5, x2: cx + 6, y2: cy - dir * G * .12, class: "s-blu", "stroke-width": 2.5 }, svg); }
+    if (!ph) { // routes: from the root outward, one arrow per hop
+      const cxy = (px, py) => [X0 + px * G + G / 2, Y0 + py * G + G / 2];
+      const hop = (x1, y1, x2, y2, k) => el("line", { x1, y1, x2, y2, class: k === "a" ? "s-acc" : "s-blu", "stroke-width": 2.5, "marker-end": `url(#st-ah-${k})` }, svg);
+      const d = G * .2;
+      for (let py = 0; py < P; py++) for (let px = 0; px < P - 1; px++) {
+        const [xa, ya] = cxy(px, py), [xb] = cxy(px + 1, py), yy = ya + G * .12;
+        if (px >= s) hop(xa + d, yy, xb - d, yy, "a"); else hop(xb - d, yy, xa + d, yy, "a");
+      }
+      for (let px = 0; px < P; px++) for (let py = 0; py < P - 1; py++) {
+        const [xa, ya] = cxy(px, py), [, yb] = cxy(px, py + 1), xx = xa + G * .3;
+        if (py >= s) hop(xx, ya + d, xx, yb - d, "b"); else hop(xx, yb - d, xx, ya + d, "b");
       }
     }
     // matrices
-    const M0 = 360, MS = 120, b = MS / P;
+    const MS = 120, b = MS / P;
+    const MA = narrow ? [20, 360] : [360, 50], MB = narrow ? [200, 360] : [520, 50], MC = narrow ? [100, 520] : [420, 200];
     const mat = (x0, y0, name, hi) => {
       T("text", { x: x0, y: y0 - 8, "font-size": 13, "font-weight": 700 }, svg, name);
       for (let r = 0; r < P; r++) for (let c = 0; c < P; c++) el("rect", { x: x0 + c * b, y: y0 + r * b, width: b - 1.5, height: b - 1.5, rx: 2, class: hi(r, c) }, svg);
     };
     const [sx, sy] = st.sel;
-    mat(M0, 50, "A", (r, c) => c === s ? (r === sy ? "acc" : "acc") : "box");
-    T("text", { x: M0 + MS + 16, y: 50 + MS / 2 + 6, "font-size": 20 }, svg, "·");
-    mat(M0 + MS + 40, 50, "B", (r, c) => r === s ? "blu" : "box");
-    mat(M0 + 60, 200, "C += A(:, s) · B(s, :)", (r, c) => (r === sy && c === sx) ? "pur" : "grn");
-    // highlight selected block terms
-    el("rect", { x: M0 + s * b - 1, y: 50 + sy * b - 1, width: b + 1, height: b + 1, fill: "none", class: "stroke", "stroke-width": 2.5 }, svg);
-    el("rect", { x: M0 + MS + 40 + sx * b - 1, y: 50 + s * b - 1, width: b + 1, height: b + 1, fill: "none", class: "stroke", "stroke-width": 2.5 }, svg);
+    mat(MA[0], MA[1], "A", (r, c) => c === s ? "acc" : "box");
+    T("text", { x: MA[0] + MS + 12, y: MA[1] + MS / 2 + 6, "font-size": 20 }, svg, "·");
+    mat(MB[0], MB[1], "B", (r, c) => r === s ? "blu" : "box");
+    mat(MC[0], MC[1], "C += A(:, s) · B(s, :)", () => "box");
+    if (frac > 0) for (let r = 0; r < P; r++) for (let c = 0; c < P; c++) el("rect", { x: MC[0] + c * b, y: MC[1] + r * b + (b - 1.5) * (1 - frac), width: b - 1.5, height: (b - 1.5) * frac, rx: 2, fill: cssVar("--green"), opacity: .35 }, svg);
+    el("rect", { x: MC[0] + sx * b - 1, y: MC[1] + sy * b - 1, width: b + 0.5, height: b + 0.5, fill: "none", class: "s-pur", "stroke-width": 3 }, svg);
+    // highlight the two blocks the selected PE uses at this step
+    el("rect", { x: MA[0] + s * b - 1, y: MA[1] + sy * b - 1, width: b + 0.5, height: b + 0.5, fill: "none", class: "s-pur", "stroke-width": 3 }, svg);
+    el("rect", { x: MB[0] + sx * b - 1, y: MB[1] + s * b - 1, width: b + 0.5, height: b + 0.5, fill: "none", class: "s-pur", "stroke-width": 3 }, svg);
     // legend
-    const L = 20 + 300 + 4;
-    el("rect", { x: 20, y: 318, width: 10, height: 10, class: "acc" }, svg); T("text", { x: 34, y: 327, "font-size": 11 }, svg, "A tile sent along the row");
-    el("rect", { x: 190, y: 318, width: 10, height: 10, class: "blu" }, svg); T("text", { x: 204, y: 327, "font-size": 11 }, svg, "B tile sent down the column");
-    el("rect", { x: 370, y: 318, width: 10, height: 10, class: "grn" }, svg); T("text", { x: 384, y: 327, "font-size": 11 }, svg, "C done (fraction)");
-    el("rect", { x: 500, y: 318, width: 10, height: 10, class: "pur" }, svg); T("text", { x: 514, y: 327, "font-size": 11 }, svg, "selected PE's C block");
-    const bw = bc("wse3", 2 * t * t), cw = comp("wse3", 0, t, t, t);
+    const LG = narrow ? [[20, 600], [190, 600], [20, 622], [190, 622]] : [[20, 342], [190, 342], [370, 342], [500, 342]];
+    const leg = [["acc", "A tile sent along the row"], ["blu", "B tile sent down the column"], ["grn", "C done (fraction)"], ["pur", "selected PE's blocks"]];
+    leg.forEach(([c, nm], i) => {
+      const [lx0, ly0] = LG[i];
+      if (c === "grn") el("rect", { x: lx0, y: ly0, width: 10, height: 10, fill: cssVar("--green"), opacity: .5 }, svg);
+      else if (c === "pur") el("rect", { x: lx0, y: ly0, width: 10, height: 10, fill: "none", class: "s-pur", "stroke-width": 2.5 }, svg);
+      else el("rect", { x: lx0, y: ly0, width: 10, height: 10, class: c }, svg);
+      T("text", { x: lx0 + 14, y: ly0 + 9, "font-size": 11 }, svg, nm);
+    });
+    const bw = bc("wse3", 2 * t * t), cw = comp("wse3", 0, t, t, t), meas = RUNS[`wse3|0|${P}|${t}`];
+    let cyc = `per step, T = ${t}: ${2 * t * t} words in, broadcast ≈ ${fmt(bw)} + compute ≈ ${fmt(cw)} cycles (kernel 0, WSE-3 fit); whole kernel ≈ ${fmt(P * (bw + cw))}`;
+    if (meas) cyc += `\nmeasured at P = ${P}, T = ${t}: broadcast ${fmt(meas[1] / P)} + compute ${fmt(meas[2] / P)} per step; kernel ${fmt(meas[0])} cycles (TSC)`;
     $("#st-out").textContent =
       `PE (${sx},${sy}) at step ${s}: ` + (sx === s ? "sends its own A tile along row " + sy : `receives A(${sy},${s}) from PE (${s},${sy})`) + "; " +
       (sy === s ? "sends its own B tile down column " + sx : `receives B(${s},${sx}) from PE (${sx},${s})`) +
-      `\n${ph ? "computing" : "then computes"} C(${sy},${sx}) += A(${sy},${s}) · B(${s},${sx}): ${fmt(t ** 3)} multiply-adds\n` +
-      `per step, T = ${t}: ${2 * t * t} words in, broadcast ≈ ${fmt(bw)} + compute ≈ ${fmt(cw)} cycles (kernel 0, WSE-3 fit); whole kernel ≈ ${fmt(P * (bw + cw))}`;
+      `\n${ph ? "computing" : "then computes"} C(${sy},${sx}) += A(${sy},${s}) · B(${s},${sx}): ${fmt(t ** 3)} multiply-adds\n` + cyc;
   }
   function stAdvance() { const P = +$("#st-p").value; if (st.phase === 0) st.phase = 1; else { st.phase = 0; st.s = (st.s + 1) % P; } stDraw(); }
   function stStop() { if (st.timer) clearInterval(st.timer); st.timer = null; $("#st-play").textContent = "Play"; }
@@ -631,26 +714,37 @@ SUCCESS!
   $("#st-reset").onclick = () => { stStop(); st.s = 0; st.phase = 0; stDraw(); };
   $("#st-p").onchange = () => { stStop(); st.s = 0; st.phase = 0; stDraw(); };
   $("#st-t").onchange = stDraw;
+  window.matchMedia("(max-width: 680px)").addEventListener("change", stDraw);
   stDraw();
 
   // ---------- chart: measured vs model ----------
   let chBase = "";
+  const chipName = c => c === "wse3" ? "WSE-3" : "WSE-2";
   function chHover(h) {
-    $("#ch-out").textContent = chBase + `\nmeasured point: ${h.nm}, T = ${h.Tn}: ${fmt(h.v)} cycles per step`;
-    document.querySelectorAll("#mtab tr").forEach(r => r.style.background = r.dataset.k === h.key ? cssVar("--accent-soft") : "");
+    $("#ch-out").textContent = chBase + `\nmeasured point: ${h.nm}, T = ${h.Tn}: ${fmt(h.v)} cycles per step` + (h.fit ? ` (fit says ${fmt(h.fit)}, ${h.v > h.fit ? "+" : "−"}${Math.abs(100 * (h.v / h.fit - 1)).toFixed(0)}%)` : "");
+    document.querySelectorAll("#mtab tr").forEach(r => r.style.background = h.key && r.dataset.k === h.key ? cssVar("--accent-soft") : "");
+  }
+  function chLeave() { $("#ch-out").textContent = chBase; document.querySelectorAll("#mtab tr").forEach(r => r.style.background = ""); }
+  function chPoint(ci, h) {
+    ci.setAttribute("tabindex", 0);
+    ci.addEventListener("mouseenter", () => chHover(h)); ci.addEventListener("focus", () => chHover(h));
+    ci.addEventListener("click", () => chHover(h));
+    ci.addEventListener("mouseleave", chLeave); ci.addEventListener("blur", chLeave);
   }
   function chDraw() {
     const svg = $("#ch-svg"); svg.innerHTML = "";
     const chip = $("#ch-chip").value, perMac = $("#ch-y").value === "mac", tSel = +$("#ch-t").value;
     $("#ch-tv").textContent = tSel;
-    const X0 = 70, X1 = 520, Y0 = 290, Y1 = 20, tmin = 4, tmax = 45;
+    const X0 = 70, X1 = 480, Y0 = 290, Y1 = 20, tmin = 4, tmax = 46;
     const lx = t => X0 + (Math.log(t) - Math.log(tmin)) / (Math.log(tmax) - Math.log(tmin)) * (X1 - X0);
-    const ylo = perMac ? 0.5 : 50, yhi = perMac ? 100 : 3e5;
+    const ylo = perMac ? 0.03 : 50, yhi = perMac ? 30 : 4e5;
     const ly = v => Y0 - (Math.log(Math.max(ylo, Math.min(yhi, v))) - Math.log(ylo)) / (Math.log(yhi) - Math.log(ylo)) * (Y0 - Y1);
     const norm = (v, t) => perMac ? v / t ** 3 : v;
     // axes
+    el("rect", { x: lx(32), y: Y1, width: X1 - lx(32), height: Y0 - Y1, fill: cssVar("--surface-2"), opacity: .7 }, svg);
+    T("text", { x: (lx(32) + X1) / 2, y: Y1 + 12, "text-anchor": "middle", "font-size": 10, class: "muted" }, svg, "fits extrapolated");
     [4, 8, 16, 32, 45].forEach(t => { el("line", { x1: lx(t), x2: lx(t), y1: Y1, y2: Y0, class: "line" }, svg); T("text", { x: lx(t), y: Y0 + 16, "text-anchor": "middle", "font-size": 11, class: "muted" }, svg, t); });
-    (perMac ? [1, 2, 5, 10, 20, 50, 100] : [100, 1e3, 1e4, 1e5]).forEach(v => { el("line", { x1: X0, x2: X1, y1: ly(v), y2: ly(v), class: "line" }, svg); T("text", { x: X0 - 6, y: ly(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg, v >= 1000 ? (v / 1000) + "k" : v); });
+    (perMac ? [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20] : [100, 1e3, 1e4, 1e5]).forEach(v => { el("line", { x1: X0, x2: X1, y1: ly(v), y2: ly(v), class: "line" }, svg); T("text", { x: X0 - 6, y: ly(v) + 4, "text-anchor": "end", "font-size": 11, class: "muted" }, svg, v >= 1000 ? (v / 1000) + "k" : v); });
     T("text", { x: (X0 + X1) / 2, y: Y0 + 34, "text-anchor": "middle", "font-size": 12, class: "muted" }, svg, "tile size T (Mt = Kt = Nt), log scale");
     T("text", { x: 16, y: (Y0 + Y1) / 2, "text-anchor": "middle", "font-size": 12, class: "muted", transform: `rotate(-90 16 ${(Y0 + Y1) / 2})` }, svg, perMac ? "cycles per multiply-add (log)" : "cycles per step (log)");
     const series = [
@@ -659,33 +753,52 @@ SUCCESS!
       { k: "1", name: "compute, kernel 1 (fit)", cls: "s-blu", f: t => comp(chip, 1, t, t, t) },
       { k: "i", name: "ideal: T³ (1 MAC/cycle)", cls: "s-grn", f: t => t ** 3, dash: "6 4" },
     ];
+    const LX = X1 + 16;
     series.forEach((sr, i) => {
       const pts = []; for (let t = tmin; t <= tmax; t += 0.5) pts.push(`${lx(t)},${ly(norm(sr.f(t), t))}`);
       el("polyline", { points: pts.join(" "), fill: "none", class: sr.cls, "stroke-width": 2, "stroke-dasharray": sr.dash || "" }, svg);
-      el("line", { x1: X1 + 20, x2: X1 + 44, y1: 40 + i * 22, y2: 40 + i * 22, class: sr.cls, "stroke-width": 2.5, "stroke-dasharray": sr.dash || "" }, svg);
-      T("text", { x: X1 + 50, y: 44 + i * 22, "font-size": 11 }, svg, sr.name);
+      el("line", { x1: LX, x2: LX + 24, y1: 30 + i * 20, y2: 30 + i * 20, class: sr.cls, "stroke-width": 2.5, "stroke-dasharray": sr.dash || "" }, svg);
+      T("text", { x: LX + 30, y: 34 + i * 20, "font-size": 11 }, svg, sr.name);
     });
-    el("circle", { cx: X1 + 32, cy: 40 + 4 * 22, r: 4, class: "f-acc" }, svg); T("text", { x: X1 + 50, y: 44 + 4 * 22, "font-size": 11 }, svg, "measured (P = 4)");
+    // legend for the points
+    let ly0 = 30 + 4 * 20 + 6;
+    ["f-pur", "f-acc", "f-blu"].forEach((c, i) => el("circle", { cx: LX + 4 + i * 9, cy: ly0, r: 4, class: c }, svg));
+    T("text", { x: LX + 30, y: ly0 + 4, "font-size": 11 }, svg, "measured, P = 4 (colour = series)");
+    ly0 += 20;
+    el("circle", { cx: LX + 12, cy: ly0, r: 4, fill: "none", class: "s-acc", "stroke-width": 2 }, svg); T("text", { x: LX + 30, y: ly0 + 4, "font-size": 11 }, svg, "kernel 0, clash fixed (ex. 4, P = 2)");
+    ly0 += 20;
+    el("rect", { x: LX + 4, y: ly0 - 4, width: 8, height: 8, class: "f-acc" }, svg); el("rect", { x: LX + 14, y: ly0 - 4, width: 8, height: 8, class: "f-blu" }, svg);
+    T("text", { x: LX + 30, y: ly0 + 4, "font-size": 11 }, svg, "measured, P = 2 (T ≥ 39)");
+    ly0 += 26;
+    T("text", { x: LX, y: ly0, "font-size": 10.5, class: "muted" }, svg, "Fits use T = 4–32, all multiples");
+    T("text", { x: LX, y: ly0 + 14, "font-size": 10.5, class: "muted" }, svg, "of 4. Elsewhere, trust the points.");
     // measured points
     Object.keys(RUNS).forEach(key => {
       const [c, ker, P, t] = key.split("|"); if (c !== chip || +P !== 4) return;
       const [tot, b, cc] = RUNS[key], Tn = +t;
-      const pts = [[b / P, "f-pur", "broadcast (P = 4)"], [cc / P, ker === "0" ? "f-acc" : "f-blu", `compute, kernel ${ker} (P = 4)`]];
+      const pts = [[b / P, "f-pur", "broadcast (P = 4)", bc(chip, 2 * Tn * Tn)], [cc / P, ker === "0" ? "f-acc" : "f-blu", `compute, kernel ${ker} (P = 4)`, comp(chip, +ker, Tn, Tn, Tn)]];
       if (ker === "1" && RUNS[`${c}|0|4|${t}`]) pts.shift(); // broadcast drawn once
-      pts.forEach(([v, cls, nm]) => {
+      pts.forEach(([v, cls, nm, fit]) => {
         const ci = el("circle", { cx: lx(Tn), cy: ly(norm(v, Tn)), r: 5, class: cls, stroke: cssVar("--surface"), "stroke-width": 1.5, style: "cursor:pointer" }, svg);
-        ci.addEventListener("mouseenter", () => chHover({ key, nm, v, Tn }));
+        chPoint(ci, { key, nm, v, Tn, fit });
       });
+    });
+    Object.entries(RUNS2).forEach(([key, [tot, b, cc]]) => {
+      const [c, ker, P, t] = key.split("|"); if (c !== chip) return;
+      const Tn = +t, v = cc / +P, sq = el("rect", { x: lx(Tn) - 4.5, y: ly(norm(v, Tn)) - 4.5, width: 9, height: 9, class: ker === "0" ? "f-acc" : "f-blu", stroke: cssVar("--surface"), "stroke-width": 1.5, style: "cursor:pointer" }, svg);
+      chPoint(sq, { key, nm: `compute, kernel ${ker} (P = 2)`, v, Tn, fit: comp(chip, +ker, Tn, Tn, Tn) });
     });
     Object.entries(FIXPTS[chip]).forEach(([t, v]) => {
       const ci = el("circle", { cx: lx(+t), cy: ly(norm(v, +t)), r: 5, fill: "none", class: "s-acc", "stroke-width": 2, style: "cursor:pointer" }, svg);
-      ci.addEventListener("mouseenter", () => chHover({ key: "", nm: "compute, kernel 0 with the clash fixed (P = 2)", v, Tn: +t }));
+      chPoint(ci, { key: "", nm: "compute, kernel 0 with the clash fixed (P = 2)", v, Tn: +t });
     });
-    el("circle", { cx: X1 + 32, cy: 40 + 5 * 22, r: 4, fill: "none", class: "s-acc", "stroke-width": 2 }, svg); T("text", { x: X1 + 50, y: 44 + 5 * 22, "font-size": 11 }, svg, "kernel 0, clash fixed");
     el("line", { x1: lx(tSel), x2: lx(tSel), y1: Y1, y2: Y0, class: "s-red", "stroke-width": 1.2, "stroke-dasharray": "3 3" }, svg);
     const b = bc(chip, 2 * tSel * tSel), c0 = comp(chip, 0, tSel, tSel, tSel), c1 = comp(chip, 1, tSel, tSel, tSel), id = tSel ** 3;
-    let txt = `${chip.toUpperCase()}, T = ${tSel}, per step (fits): broadcast ${fmt(b)} · compute kernel 0 ${fmt(c0)} (${(100 * id / c0).toFixed(0)}% of ideal) · kernel 1 ${fmt(c1)} (${(100 * id / c1).toFixed(0)}%) · ideal ${fmt(id)}` +
-      `\ncompute share of a step: kernel 0 ${(100 * c0 / (b + c0)).toFixed(0)}%, kernel 1 ${(100 * c1 / (b + c1)).toFixed(0)}%; ideal compute passes broadcast at T ≈ ${chip === "wse3" ? FIT.wse3.cross : FIT.wse2.cross}`;
+    let txt = `${chipName(chip)}, T = ${tSel}, per step (fits): broadcast ${fmt(b)} · compute kernel 0 ${fmt(c0)} (${(100 * id / c0).toFixed(0)}% of ideal) · kernel 1 ${fmt(c1)} (${(100 * id / c1).toFixed(0)}%) · ideal ${fmt(id)}` +
+      `\ncompute share of a step: kernel 0 ${(100 * c0 / (b + c0)).toFixed(0)}%, kernel 1 ${(100 * c1 / (b + c1)).toFixed(0)}%; ideal compute passes broadcast at T ≈ ${FIT[chip].cross}`;
+    const ms = ["0", "1"].map(k => RUNS2[`${chip}|${k}|2|${tSel}`] || RUNS[`${chip}|${k}|4|${tSel}`]).map((r, k) => r ? `kernel ${k} ${fmt(r[2] / (RUNS2[`${chip}|${k}|2|${tSel}`] ? 2 : 4))}` : "").filter(Boolean);
+    if (ms.length) txt += `\nmeasured compute per step at T = ${tSel}: ${ms.join(" · ")}`;
+    if (tSel % 4 !== 0 || tSel > 32) txt += `\n⚠ T = ${tSel} is outside the fits' range (multiples of 4 up to 32). Measured compute at large T differs from the fit by −30% to +40% depending on chip and T.`;
     chBase = txt;
     $("#ch-out").textContent = txt;
   }
@@ -694,40 +807,68 @@ SUCCESS!
   chDraw();
 
   // ---------- budget calculator ----------
-  // measured link limits for square tiles, bytes of the 5 (or 6) tile arrays: [largest ok, smallest failing]
-  const LIM = {"wse3": {"0": [40500, 42320], "1": [40344, 42336]}, "wse2": {"0": [42320, 44180], "1": [36504, 38400]}};
-  function budDraw() {
-    const clampI = (id, lo, hi) => { let v = Math.round(+$(id).value); if (!isFinite(v)) v = lo; v = Math.max(lo, Math.min(hi, v)); return v; };
-    const P = clampI("#b-p", 2, 743), m = clampI("#b-m", 1, 64), k = clampI("#b-k", 1, 64), n = clampI("#b-n", 1, 64);
-    const ker = +$("#b-ker").value, chip = $("#b-chip").value, clk = +$("#b-clk").value;
+  // measured link limits at P = 4 (84 B of stamps), bytes of the 5 (or 6) tile arrays: [largest ok, smallest failing]
+  const LIM = {"wse3": {"0": [40500, 42320], "1": [40344, 42336]}, "wse2": {"0": [42320, 44180], "1": [42336, 44376]}};
+  const STAMP4 = 6 * (3 * 4 + 2);
+  function budDraw(commit) {
+    const notes = [];
+    const clampI = (id, lo, hi, nm) => {
+      const raw = Math.round(+$(id).value); let v = isFinite(raw) ? raw : lo; v = Math.max(lo, Math.min(hi, v));
+      if (v !== raw) { notes.push(`${nm} = ${$(id).value} is outside ${lo}–${hi}; using ${v}`); if (commit) $(id).value = v; }
+      return v;
+    };
+    const P = clampI("#b-p", 2, 743, "P"), m = clampI("#b-m", 1, 64, "Mt"), k = clampI("#b-k", 1, 64, "Kt"), n = clampI("#b-n", 1, 64, "Nt");
+    const ker = +$("#b-ker").value, chip = $("#b-chip").value, clk = +$("#b-clk").value, perStep = $("#b-ts").value === "step";
     const parts = [["A tile", 4 * m * k, "acc"], ["A buffer", 4 * m * k, "acc"], ["B tile", 4 * k * n, "blu"], ["B buffer", 4 * k * n, "blu"], ["C tile", 4 * m * n, "grn"]];
     if (ker === 1) parts.push(["product tile", 4 * m * n, "pur"]);
-    const ts = 6 * (3 * P + 2); parts.push(["timestamps", ts, "amb"]);
+    const ts = perStep ? 6 * (3 * P + 2) : 12; parts.push(["stamps", ts, "amb"]);
     const arr = parts.reduce((a, p) => a + p[1], 0), tiles = arr - ts;
-    const [okB, failB] = LIM[chip][ker];
+    const [okB, failB] = LIM[chip][ker].map(v => v + STAMP4);   // limits for tiles + stamps
     const svg = $("#bud-mem"); svg.innerHTML = "";
-    const X0 = 10, W = 660, scale = W / 49152;
-    el("rect", { x: X0, y: 20, width: W, height: 30, rx: 4, class: "box" }, svg);
-    let x = X0;
-    parts.forEach(p => { const w = p[1] * scale; el("rect", { x, y: 20, width: Math.max(0.5, w), height: 30, class: p[2] + " seg" }, svg); if (w > 46) T("text", { x: x + w / 2, y: 40, "text-anchor": "middle", "font-size": 10 }, svg, p[0]); x += w; });
+    const X0 = 10, W = 660, KB48 = 49152, full = Math.max(KB48, arr) * 1.04, scale = W / full;
+    const defs = el("defs", {}, svg), pat = el("pattern", { id: "bud-hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+    el("line", { x1: 0, y1: 0, x2: 0, y2: 6, class: "s-red", "stroke-width": 2 }, pat);
+    el("rect", { x: X0, y: 20, width: KB48 * scale, height: 30, rx: 4, class: "box" }, svg);
+    if (arr > KB48) el("rect", { x: X0 + KB48 * scale, y: 20, width: (full - KB48) * scale, height: 30, fill: "url(#bud-hatch)", opacity: .5 }, svg);
+    let x = X0; const labs = [];
+    parts.forEach(p => { const w = p[1] * scale; el("rect", { x, y: 20, width: Math.max(0.5, w), height: 30, class: p[2] + " seg" }, svg); if (w > 46) labs.push([x + w / 2, p[0]]); x += w; });
+    const free = KB48 - arr;
     [[okB, "s-grn", "largest that linked"], [failB, "s-red", "smallest that failed"]].forEach(([v, cls, nm], i) => {
-      el("line", { x1: X0 + v * scale, x2: X0 + v * scale, y1: 14, y2: 56, class: cls, "stroke-width": 2 }, svg);
-      T("text", { x: X0 + v * scale + (i ? 4 : -4), y: 70 + i * 14, "text-anchor": i ? "start" : "end", "font-size": 10, class: "muted" }, svg, `${nm} ${(v / 1024).toFixed(1)} KB`);
+      const xv = X0 + v * scale;
+      el("line", { x1: xv, x2: xv, y1: 14, y2: 56, class: cls, "stroke-width": 2 }, svg);
+      const anchor = i === 0 ? (xv < 220 ? "start" : "end") : (xv > 470 ? "end" : "start");
+      T("text", { x: xv + (anchor === "end" ? -4 : 4), y: 70 + i * 14, "text-anchor": anchor, "font-size": 10, class: "muted" }, svg, `${nm} ${(v / 1024).toFixed(1)} KB`);
     });
+    el("line", { x1: X0 + KB48 * scale, x2: X0 + KB48 * scale, y1: 16, y2: 54, class: "s-muted", "stroke-width": 1.5, "stroke-dasharray": "2 2" }, svg);
+    labs.forEach(([lx0, t]) => T("text", { x: lx0, y: 39, "text-anchor": "middle", "font-size": 10, class: "halo-txt" }, svg, t));
+    if (free > 0 && free * scale > 120) T("text", { x: X0 + arr * scale + (free * scale) / 2, y: 39, "text-anchor": "middle", "font-size": 10.5, class: "muted" }, svg, `${(free / 1024).toFixed(1)} KB not used by tiles or stamps`);
+    if (arr > KB48) T("text", { x: X0 + W - 4, y: 12, "text-anchor": "end", "font-size": 11, class: "f-red", "font-weight": 700 }, svg, `${((arr - KB48) / 1024).toFixed(1)} KB over 48 KB`);
     T("text", { x: X0, y: 12, "font-size": 11, class: "muted" }, svg, "48 KB of PE memory (code, task table, library and memcpy buffers not drawn)");
-    const fit = tiles <= okB ? "fits (at or below a size that linked)" : tiles >= failB ? "does NOT fit (at or above a size that failed)" : "between measured limits: try it";
-    const b = bc(chip, m * k + k * n), c = comp(chip, ker, m, k, n), stepC = b + c, tot = P * stepC;
+    const fit = arr <= okB ? "fits (at or below a size that linked)" : arr >= failB ? "does NOT fit (at or above a size that failed)" : "between measured limits: try it";
+    // cycles: measured value when this square tile was run, else the fit (with a warning outside its range)
+    const sqT = m === k && k === n ? m : 0;
+    const mkey = sqT && ([`${chip}|${ker}|4|${sqT}`, `${chip}|${ker}|2|${sqT}`].find(kk => RUNS[kk] || RUNS2[kk]));
+    let b = bc(chip, m * k + k * n), c = comp(chip, ker, m, k, n), src = "fit";
+    if (mkey) { const r = RUNS[mkey] || RUNS2[mkey], Pm = +mkey.split("|")[2]; b = r[1] / Pm; c = r[2] / Pm; src = `measured at P = ${Pm}, T = ${sqT}`; }
+    const stepC = b + c, tot = P * stepC;
     const flops = 2 * (m * P) * (k * P) * (n * P), sec = tot / (clk * 1e9);
+    const warn = [];
+    if (src === "fit" && (m % 4 !== 0 || Math.max(m, k, n) > 32)) warn.push(`⚠ cycles come from fits made at Mt = multiples of 4, T ≤ 32; for Mt = ${m}${Math.max(m, k, n) > 32 ? " and tiles above 32" : ""} the real cost depends on alignment and chip (measured at T = 45: WSE-3 189k, WSE-2 277k per step, fit 271k / 248k). Measure it.`);
+    if (perStep && P > 4) warn.push(`⚠ the per-step stamps grow as 6·(3P + 2) B: ${fmt(ts)} B at P = ${P} (84 B where the limits were measured). For big grids keep only the start and end stamps.`);
+    const ioB = 4 * ((m * P) * (k * P) + (k * P) * (n * P) + (m * P) * (n * P));
     $("#b-out").textContent =
-      `memory: ${fmt(tiles)} B of tiles + ${ts} B timestamps → ${fit}\n` +
-      `colors 4 (0–3) · local task IDs 8–15 · queues 2–5 · microthreads 2, 3 · fabric ${P + 7} × ${P + 2}${P > 743 ? " (too big)" : ""}\n` +
-      `per step: broadcast ≈ ${fmt(b)} + compute ≈ ${fmt(c)} = ${fmt(stepC)} cycles; ideal compute ${fmt(m * k * n)} (${(100 * m * k * n / c).toFixed(0)}% reached)\n` +
-      `kernel ≈ ${fmt(tot)} cycles = ${(sec * 1e6).toFixed(1)} µs at ${clk} GHz for C ${m * P} × ${n * P} (K = ${k * P})\n` +
-      `→ ${(flops / sec / 1e12).toFixed(2)} TFLOP/s f32 on ${fmt(P * P)} PEs; peak at 1 MAC/cycle would be ${(2 * P * P * clk / 1e3).toFixed(2)} TFLOP/s  [Derived]`;
+      (notes.length ? "input: " + notes.join("; ") + "\n" : "") +
+      `memory: ${fmt(tiles)} B of tiles + ${fmt(ts)} B stamps = ${fmt(arr)} B → ${fit}\n` +
+      `colors 4 (0–3) · local task IDs 8–15 · queues 2–5 · microthreads 2, 3 · fabric ${P + 7} × ${P + 2}\n` +
+      `per step (${src}): broadcast ≈ ${fmt(b)} + compute ≈ ${fmt(c)} = ${fmt(stepC)} cycles; ideal compute ${fmt(m * k * n)} (${(100 * m * k * n / c).toFixed(0)}% reached)\n` +
+      `kernel ≈ ${fmt(tot)} cycles = ${sec >= 0.01 ? (sec * 1e3).toFixed(1) + " ms" : (sec * 1e6).toFixed(1) + " µs"} at ${clk} GHz for C ${fmt(m * P)} × ${fmt(n * P)} (K = ${fmt(k * P)})\n` +
+      `→ ${(flops / sec / 1e12).toFixed(2)} TFLOP/s f32 on ${fmt(P * P)} PEs; peak at 1 MAC/cycle would be ${(2 * P * P * clk / 1e3).toFixed(2)} TFLOP/s  [Derived]\n` +
+      `host I/O: A and B in, C out = ${ioB >= 1e9 ? (ioB / 1e9).toFixed(1) + " GB" : fmt(ioB / 1e3) + " kB"}; ≥ ${(ioB / 150e9 * 1e3).toFixed(ioB > 1.5e9 ? 0 : 3)} ms at 150 GB/s (system I/O, Ch. 8), ≥ ${(ioB / 14e9 * 1e3).toFixed(ioB > 1.4e8 ? 0 : 2)} ms at the SDK host path's ≤ 14 GB/s (Ch. 7)  [Derived]` +
+      (warn.length ? "\n" + warn.join("\n") : "");
   }
-  ["#b-p", "#b-m", "#b-k", "#b-n"].forEach(s => $(s).oninput = budDraw);
-  ["#b-ker", "#b-chip", "#b-clk"].forEach(s => $(s).onchange = budDraw);
-  budDraw();
+  ["#b-p", "#b-m", "#b-k", "#b-n"].forEach(s => { $(s).oninput = () => budDraw(false); $(s).onchange = () => budDraw(true); });
+  ["#b-ker", "#b-chip", "#b-clk", "#b-ts"].forEach(s => $(s).onchange = () => budDraw(true));
+  budDraw(true);
 })();
 
 </script>

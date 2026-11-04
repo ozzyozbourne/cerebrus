@@ -260,7 +260,7 @@ def claim_of(rec, recs):
         tail = raw[p + len(mk):]
         e = re.search(r"[.!?](\s|$)", tail)
         tail = tail[: e.start()] if e and e.start() < 80 else ""
-        claim = claim + " [" + rec["label"] + "]" + tidy(" " + show_marks(tail, recs))
+        claim = tidy(claim + " [" + rec["label"] + "] " + show_marks(tail, recs))
     if "row" in blk:                                     # table cell: add the row and column names
         row, col = blk["row"], blk["col"]
         hdr = row["header"]
@@ -619,9 +619,9 @@ def page_link(f):
     if f.get("anchor"):
         href += "#" + f["anchor"]
         if f.get("frag"):
-            href += ":~:text=" + urllib.parse.quote(f["frag"], safe="")
+            href += ":~:text=" + urllib.parse.quote(f["frag"], safe="").replace("-", "%2D")
     elif f.get("frag"):
-        href += "#:~:text=" + urllib.parse.quote(f["frag"], safe="")
+        href += "#:~:text=" + urllib.parse.quote(f["frag"], safe="").replace("-", "%2D")
     return href
 
 def src_order(s):
