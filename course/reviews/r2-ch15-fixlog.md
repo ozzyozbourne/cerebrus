@@ -10,7 +10,9 @@ New measurements (SDK 2.10.1 simulator, traces off, scratch copies, TSC on the c
 - Z=100 BLOCK=100: allreduce over all PEs 1,951-2,438 (centre 2,292); Z=100 BLOCK=2: 1,898-2,236.
 - Max column (compile only, 5x5, MAX_ITE 30): WSE-3 BLOCK=2 Z ~1,835-1,842 links, BLOCK=100 ~1,757-1,764, WSE-2 BLOCK=2 ~1,978-1,983;
   above that `ld.lld: error: ran out of PE memory for data (section .bss)`.
-- Exercise 4's move (allreduce color 9, tasks 8-11, state task 13): compiles on WSE-3 and WSE-2 (and see open issues on the run).
+- Exercise 4's move (allreduce color 9, tasks 8-11, state task 13): compiles on both chips; WSE-3 runs identically (15 it., 4,574);
+  WSE-2 hangs (simulator still spinning after ~18 CPU-minutes, ~4M cycles; killed). Control: color 9 + tasks 17-20 + state 13 on
+  WSE-2 passes (4,186). So tasks 8-11 are the problem on WSE-2 (task 9 = data-task ID of color 9, Ch7's WSE-2 rule).
 - numpy f32 copy of run.py's recurrence: Z=5 iterations 15/24/30/35/39/39 for 5,10,16,32,64,128 PEs a side (kappa 13.9 ... 43.6,
   cap 43.8); cubes 5^3...48^3: 15/24/34/45/65/83/123 iterations, true residual 5.7e-6 ... 2.0e-5 (24^3), 8.9e-5 (48^3).
   Note: the accuracy review's "kappa 19.3 for 10x10x5" is wrong; it is 26.9.
@@ -32,7 +34,7 @@ New measurements (SDK 2.10.1 simulator, traces off, scratch copies, TSC on the c
 | A-tags | fixed | Derived tag on the per-call per-PE coefficients; "Chapter 12 measured" with link to #collectives instead of "Chapter 12's review". |
 | P2 | fixed | Exercise 1 uses 10x6 and 6x14 (not in the fit) plus a WSE-2 10x6 prediction; measured answers given (above). |
 | P4 | fixed | Exercise 3 defines Chronopoulos-Gear's w = A r, reduces the experiment to a two-line change (2-element eta), gives the measured answer (1,900 vs 1,898: priced per call, not per value) and the saving; mentions pipelined CG. |
-| P5 | fixed | Exercise 4 hint covers 21-24 (21 D2H task, 21-23 topic-09 reserved, 24 SYS_EN_MAIN, Ch5 link) and why colour 9 is safe (memcpy 20-23, Ch7 table link). Verified the move compiles on both chips. |
+| P5 | fixed | Exercise 4 hint covers 21-24 (21 D2H task, 21-23 topic-09 reserved, 24 SYS_EN_MAIN, Ch5 link) and why colour 9 is safe (memcpy 20-23, Ch7 table link). Ran the move: passes on WSE-3, hangs on WSE-2 (task 9 vs colour 9); the hint now says so and why. |
 | P6a | fixed | TSC cross-PE pointer now links Chapter 13 (Lab 3). |
 | P6c | fixed | see A-tags. |
 | P7a | fixed | "The four phases of an iteration ... plus three set-up phases". The program's header comment ("five phases", listing four plus the check) left unchanged to avoid touching the program. |
