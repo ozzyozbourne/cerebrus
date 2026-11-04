@@ -15,7 +15,7 @@ Files edited: `course/src/14-lab-gemm.html` (then `python3 course/tools/build.py
 | WSE-2 | 1 | 41 | 3,796 | 112,028 | −21% |
 | WSE-2 | 1 | 42 | 3,962 | 152,872 | on fit |
 Also used from the depth review: WSE-2 k0 T=45 276,575; WSE-2 k1 T=39 97,004.
-Link tests (no-per-step-stamps variant, 12 B of stamps): WSE-2 kernel 0 T = 46 links at **P = 743**; at P = 4 kernel 0 T = 47 also links without the stamps; kernel 1 T = 43 still fails. `cs_readelf --syms` on the T = 16 build: A_tile 0x1708, B_tile 0x1b08, C_tile 0x1f08, A_buf 0x2308, B_buf 0x2708 (declaration order, all ≡ 8 mod 16 B), which explains the exercise-4 half-fix (A_buf is declared after C and moves with it).
+Link tests (no-per-step-stamps variant, 12 B of stamps): WSE-2 kernel 0 T = 46 and kernel 1 T = 41 link at **P = 743**; at P = 4 kernel 0 T = 47 also links without the stamps; kernel 1 T = 43 still fails. `cs_readelf --syms` on the T = 16 build: A_tile 0x1708, B_tile 0x1b08, C_tile 0x1f08, A_buf 0x2308, B_buf 0x2708 (declaration order, all ≡ 8 mod 16 B), which explains the exercise-4 half-fix (A_buf is declared after C and moves with it).
 
 ## Findings
 Accuracy
@@ -62,4 +62,4 @@ Validation: Playwright 1100/390, light/dark, ◐ toggle, every control (stepper 
 ## Open issues
 - Why WSE-2 kernel 0 at T = 44 runs at ~3 cycles per element (worse than a full clash) is unexplained.
 - Double buffering and the kernel-0 overhead levers are derived/unmeasured (exercises 7 and 8 have no measured answers).
-- The extrapolation assumes per-step cost is flat to P = 743 (measured P ≤ 8) and code size independent of P; only the kernel-0 T = 46 link at P = 743 was verified.
+- The extrapolation assumes per-step cost is flat to P = 743 (measured P ≤ 8) and code size independent of P; only the k0 T = 46 and k1 T = 41 links at P = 743 were verified (k1 T = 42 at P = 743 not linked).
