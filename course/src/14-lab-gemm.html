@@ -603,9 +603,9 @@ So the lines in the chart and the calculator are a guide for Mt a multiple of 4 
     const defs = el("defs", {}, svg), pat = el("pattern", { id: "bud-hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
     el("line", { x1: 0, y1: 0, x2: 0, y2: 6, class: "s-red", "stroke-width": 2 }, pat);
     el("rect", { x: X0, y: 20, width: KB48 * scale, height: 30, rx: 4, class: "box" }, svg);
-    if (arr > KB48) el("rect", { x: X0 + KB48 * scale, y: 20, width: (full - KB48) * scale, height: 30, fill: "url(#bud-hatch)", opacity: .5 }, svg);
     let x = X0; const labs = [];
     parts.forEach(p => { const w = p[1] * scale; el("rect", { x, y: 20, width: Math.max(0.5, w), height: 30, class: p[2] + " seg" }, svg); if (w > 46) labs.push([x + w / 2, p[0]]); x += w; });
+    if (arr > KB48) el("rect", { x: X0 + KB48 * scale, y: 20, width: (full - KB48) * scale, height: 30, fill: "url(#bud-hatch)", opacity: .45 }, svg);
     const free = KB48 - arr;
     [[okB, "s-grn", "largest that linked"], [failB, "s-red", "smallest that failed"]].forEach(([v, cls, nm], i) => {
       const xv = X0 + v * scale;
@@ -635,7 +635,7 @@ So the lines in the chart and the calculator are a guide for Mt a multiple of 4 
       `memory: ${fmt(tiles)} B of tiles + ${fmt(ts)} B stamps = ${fmt(arr)} B → ${fit}\n` +
       `colors 4 (0–3) · local task IDs 8–15 · queues 2–5 · microthreads 2, 3 · fabric ${P + 7} × ${P + 2}\n` +
       `per step (${src}): broadcast ≈ ${fmt(b)} + compute ≈ ${fmt(c)} = ${fmt(stepC)} cycles; ideal compute ${fmt(m * k * n)} (${(100 * m * k * n / c).toFixed(0)}% reached)\n` +
-      `kernel ≈ ${fmt(tot)} cycles = ${sec >= 0.01 ? (sec * 1e3).toFixed(1) + " ms" : (sec * 1e6).toFixed(1) + " µs"} at ${clk} GHz for C ${fmt(m * P)} × ${fmt(n * P)} (K = ${fmt(k * P)})\n` +
+      `kernel ≈ ${fmt(tot)} cycles = ${tfmt(sec)} at ${clk} GHz for C ${fmt(m * P)} × ${fmt(n * P)} (K = ${fmt(k * P)})\n` +
       `→ ${(flops / sec / 1e12).toFixed(2)} TFLOP/s f32 on ${fmt(P * P)} PEs; peak at 1 MAC/cycle would be ${(2 * P * P * clk / 1e3).toFixed(2)} TFLOP/s  [Derived]\n` +
       `host I/O: A and B in, C out = ${ioB >= 1e9 ? (ioB / 1e9).toFixed(1) + " GB" : fmt(ioB / 1e3) + " kB"}; ≥ ${tfmt(ioB / 150e9)} at 150 GB/s (system I/O, Ch. 8), ≥ ${tfmt(ioB / 14e9)} at the SDK host path's ≤ 14 GB/s (Ch. 7)  [Derived]` +
       (warn.length ? "\n" + warn.join("\n") : "");

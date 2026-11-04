@@ -93,8 +93,8 @@
 </ul>
 <pre><code>cp -r …/benchmarks/conjugate-gradient …/benchmarks/benchmark-libs ~/sdk/
 cd ~/sdk/conjugate-gradient
-export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)   # wrapper bind-mounts this path
-bash commands_wse3.sh                                   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
+export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)  # wrapper bind-mounts it
+bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
 <p><code>CSL_IMPORT_PATH</code> takes colon-separated <code>realpath</code>s and is read by the host wrapper. The compiler flag <code>cslc --import-path DIR</code> adds a search directory for <code>&lt;…&gt;</code> imports, which is what the library's own comment asks for, but on its own it did not fix this failure in our tests: the relative path still has to be visible inside the container <span class="tag measured">Measured, WSE-3, 5 × 5 PEs, 2 iterations</span>.</p></div>
 
 <h2 id="ladder">A ladder: what to run after each chapter</h2>

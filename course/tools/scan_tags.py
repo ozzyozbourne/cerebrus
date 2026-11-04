@@ -413,6 +413,10 @@ EXTRA = [  # sources verified (via web search) for the 2026 NVIDIA/Groq update i
 # URL substring -> readable title, for links whose anchor text identifies nothing out of context
 # (titles are built from the page's URL slug and the sentence that cites it; dates only where the URL has one).
 TITLE_OVERRIDES = {
+    "tenstorrent.com/newsroom/tenstorrent-announces-availability-of-tt-ascalon": "Tenstorrent newsroom: Tenstorrent announces availability of TT-Ascalon",
+    "semiwiki.com/forum/threads/the-new-cerebras-cs-3": "SemiWiki forum thread: The new Cerebras CS-3",
+    "cerebras.ai/blog/ultrafast-frontier-inference-cerebras-deep-dive-at-hot-chips": "Cerebras blog: Ultrafast frontier inference, Cerebras deep dive at Hot Chips 2026",
+    "x.com/cerebrassystems/status/1767977185535734057": "Cerebras on X: Condor Galaxy 3 announcement post",
     "hc34.hotchips.org": "Sean Lie (Cerebras), Hot Chips 34 (2022) slides: Cerebras architecture deep dive (WSE-2)",
     "aminer.org/pub/62d16af05aee126c0fd027f0": "CU-Poker: placing DNNs on WSE with optimal kernel sizing and efficient protocol optimization (paper abstract, AMiner)",
     "cerebras.ai/blog/mistral-le-chat": "Cerebras blog: Cerebras powers Mistral Le Chat (Feb 2025)",
