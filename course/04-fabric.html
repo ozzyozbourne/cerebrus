@@ -238,7 +238,8 @@ cs_python run.py --name out</code></pre>
 <span class="b">@initialize_queue</span>(oq, .{ .color = send_c });
 <span class="b">@initialize_queue</span>(iq, .{ .color = recv_c });
 <span class="c">// middle PE: receive + own v, send</span>
-<span class="b">@fadds</span>(out_dsd, in_dsd, v_dsd, .{ .async = <span class="k">true</span>, … });</code></pre>
+<span class="b">@fadds</span>(out_dsd, in_dsd, v_dsd,
+       .{ .async = <span class="k">true</span>, … });</code></pre>
 </div>
 </div>
 <p class="small" style="font-size:14px;color:var(--muted)">Condensed from <code>programs/03-row-reduce/pe_program.csl</code> <span class="tag sdk">course program</span>. The router half decides where a color goes; the CE half binds a queue to that color (<a href="appendix-a-glossary.html#g-initialize-queue"><code>@initialize_queue</code></a>; on WSE-2 the output DSD names the color itself) and moves the data. Neither half works alone. <a href="06-dsds.html#fabric-dsds">Chapter 6</a> explains the right-hand side, and <a href="05-tasks.html#path">Chapter 5</a> what runs when a wavelet arrives.</p>

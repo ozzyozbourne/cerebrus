@@ -183,15 +183,31 @@ So the lines in the chart and the calculator are a guide for Mt a multiple of 4 
 </div>
 
 
+<h3 id="k1-walk">How kernel 1's 2-D DSDs walk the tile</h3>
+<p>Kernel 1 builds an <a href="appendix-a-glossary.html#g-outer-product">outer product</a> from two 2-D DSDs that each leave one induction variable out of their index: <code>A2 = |j, i|{Nt, Mt} -&gt; A_tile[i]</code> has no <code>j</code>, and <code>B2 = |j, i|{Nt, Mt} -&gt; B_tile[j * Kt]</code> has no <code>i</code>. A variable missing from the index expression gives that dimension stride 0, the 2-D version of <a href="06-dsds.html#dsd">Chapter 6</a>'s "stride 0 repeats one value". So as the op runs through (j, i), j outer and i inner, A2 repeats the same column of A for every j and B2 repeats the same element of B for every i. Here is the walk for Mt = Nt = Kt = 2, all tiles column-major (word w of a tile is element (w mod rows, w div rows)):</p>
+<div class="table-wrap"><table class="small">
+<tr><th>k</th><th>(j, i)</th><th>A2 reads word → element</th><th>B2 reads word → element</th><th>T2 / C2 word → element</th></tr>
+<tr><td rowspan="4">0</td><td>(0, 0)</td><td>0 → A(0, 0)</td><td>0 → B(0, 0)</td><td>0 → (0, 0)</td></tr>
+<tr><td>(0, 1)</td><td>1 → A(1, 0)</td><td>0 → B(0, 0)</td><td>1 → (1, 0)</td></tr>
+<tr><td>(1, 0)</td><td>0 → A(0, 0)</td><td>2 → B(0, 1)</td><td>2 → (0, 1)</td></tr>
+<tr><td>(1, 1)</td><td>1 → A(1, 0)</td><td>2 → B(0, 1)</td><td>3 → (1, 1)</td></tr>
+<tr><td rowspan="4">1</td><td>(0, 0)</td><td>2 → A(0, 1)</td><td>1 → B(1, 0)</td><td>0 → (0, 0)</td></tr>
+<tr><td>(0, 1)</td><td>3 → A(1, 1)</td><td>1 → B(1, 0)</td><td>1 → (1, 0)</td></tr>
+<tr><td>(1, 0)</td><td>2 → A(0, 1)</td><td>3 → B(1, 1)</td><td>2 → (0, 1)</td></tr>
+<tr><td>(1, 1)</td><td>3 → A(1, 1)</td><td>3 → B(1, 1)</td><td>3 → (1, 1)</td></tr>
+</table></div>
+<p class="legend">Derived from the DSD expressions in <code>pe_program.csl</code> <span class="tag derived">Derived</span>. Each row of the k = 0 block computes T(i, j) = A(i, 0) · B(0, j): the outer product of column 0 of A and row 0 of B.</p>
+<p>The increments follow from the layout. Column k + 1 of a column-major A tile starts Mt words later, so A2 moves by Mt per k. Element B(k, j) sits at word j·Kt + k, so the next row of B is one word on, and B2 moves by 1. The product needs two instructions and a scratch tile because <code>@fmacs</code> multiplies a vector by a <em>scalar</em> (<a href="06-dsds.html#builtins">Chapter 6's builtins table</a>): it cannot take two vector multiplicands and an accumulator at once. So <code>@fmuls(T2, A2, B2)</code> writes the outer product into <code>T_tile</code> and <code>@fadds(C2, C2, T2)</code> adds it into C. The table also shows something about the slow <code>@fmuls</code>: one of its operands rereads the same word, B2 for Mt elements in a row and A2's column every Nt; whether that is why it runs below 1 element per cycle, we have not isolated.</p>
+
 <h2 id="design">A design method, applied to this kernel</h2>
-<p>Each lab so far handed you a finished program. Here is the procedure behind one, using the budgets from Chapters 3, 4, 5, 7 and 10 in order (memory from <a href="03-processing-element.html">Chapter 3</a> and <a href="11-lab-first-programs.html">Chapter 11</a>, colors and routes from <a href="04-fabric.html#color-budget">Chapter 4</a>, task IDs and queues from <a href="05-tasks.html#budget">Chapter 5</a>, the memcpy frame from <a href="07-host-io.html">Chapter 7</a>, and the reserved resources from <a href="10-csl-toolchain.html">Chapter 10</a>). Do it on paper before writing CSL, then check each line against the compiler and the simulator.</p>
+<p>Each lab so far handed you a finished program. Here is the procedure behind one, using the budgets from Chapters 3, 4, 5, 7 and 10 in order (memory from <a href="03-processing-element.html#memory-map">Chapter 3</a> and <a href="11-lab-first-programs.html">Chapter 11</a>, colors and routes from <a href="04-fabric.html#color-budget">Chapter 4</a>, task IDs and queues from <a href="05-tasks.html#budget">Chapter 5</a>, the memcpy frame from <a href="07-host-io.html">Chapter 7</a>, and the reserved resources from <a href="10-csl-toolchain.html">Chapter 10</a>). Do it on paper before writing CSL, then check each line against the compiler and the simulator. <a href="appendix-b-cuda-to-csl.html#checker">Appendix B's budget checker</a> does the single-PE part of this sheet interactively; it does not know about library-owned resources, so add the rows for <code>&lt;collectives_2d&gt;</code> (step 3–5 below) yourself.</p>
 <div class="table-wrap"><table class="budget">
 <tr><th>Step</th><th>Question</th><th>For 06-summa</th></tr>
 <tr><td>1. Placement</td><td>Which PE owns which data, and what must move?</td><td>PE (px, py) owns block (py, px) of A, B, C. C never moves; per step, A tiles move along rows and B tiles down columns. No reduction.</td></tr>
 <tr><td>2. Memory</td><td>Bytes per PE, against what the linker gives you</td><td>4 bytes × (2·Mt·Kt + 2·Kt·Nt + Mt·Nt), +Mt·Nt for kernel 1, + 6·(3P + 2) bytes of timestamps. Library and memcpy code come first: see the measured limits in the calculator and exercise 3. Watch anything that grows with P: the stamps are 84 B at P = 4 but 13,386 B at P = 743.</td></tr>
 <tr><td>3. Colors</td><td>One per distinct route pattern through a PE; 20–23 are taken</td><td>4: two per axis for the library (colors 0–3). Routes change at run time, so the count does not grow with P.</td></tr>
 <tr><td>4. Task IDs</td><td>Local tasks in 8–20; never 29</td><td>8: library FSM + lock per axis (8–11), exit, compute, x_done, y_done (12–15). Task 29 is the library's teardown handler.</td></tr>
-<tr><td>5. Queues and microthreads</td><td>0/1 are memcpy's; one microthread per concurrent fabric op</td><td>Queues 2, 4 (row) and 3, 5 (column). Two moves run at once, on microthreads 2 and 3. Same IDs on both chips.</td></tr>
+<tr><td>5. Queues and microthreads</td><td>0 (and 1 on WSE-3) are memcpy's; one <a href="appendix-a-glossary.html#g-microthread">microthread</a> per concurrent fabric op</td><td>Queues 2, 4 (row) and 3, 5 (column). Two moves run at once, on microthreads 2 and 3. The program's IDs are the same on both chips.</td></tr>
 <tr><td>6. Fabric</td><td>Rectangle + memcpy frame</td><td>(P + 7) × (P + 2), offsets 4, 1.</td></tr>
 <tr><td>7. Cycle model</td><td>Predict before you measure</td><td>Per step ≈ broadcast + compute, with the fits above; kernel ≈ P × step. Write the prediction down.</td></tr>
 <tr><td>8. Code and validate</td><td>Smallest size first, check against numpy</td><td>P = 2, T = 4 runs in seconds; a layout bug shows up as a wrong C, not a crash.</td></tr>
@@ -200,7 +216,7 @@ So the lines in the chart and the calculator are a guide for Mt a multiple of 4 
 
 <div class="widget" id="bud">
 <h4>Budget calculator</h4>
-<p class="hint">Change the grid, the tile sizes, the kernel and the chip. Memory compares tiles plus stamps with the measured link limits of this program (largest square tile that linked and smallest that failed, at P = 4 with 84 B of stamps); between them the answer is "try it". Choose "start and end only" to model the variant without per-step stamps that large grids need. Cycles are the measured values when that square tile was run, and the fits otherwise, with a warning outside the fits' range. Everything is <span class="tag derived">Derived</span>: the largest grid is the SDK-visible WSE-2 fabric (750 × 994 minus the frame, P ≤ 743, Chapter 13), the clock is the one you pick, and host I/O is printed separately.</p>
+<p class="hint">Change the grid, the tile sizes, the kernel and the chip. Memory compares tiles plus stamps with the measured link limits of this program (largest square tile that linked and smallest that failed, at P = 4 with 84 B of stamps); between them the answer is "try it". Choose "start and end only" to model the variant without per-step stamps that large grids need. Cycles are the measured values when that square tile was run, and the fits otherwise, with a warning outside the fits' range. Everything is <span class="tag derived">Derived</span>. No WSE-3 clock is published: 850 MHz is what the SDK benchmarks assume <span class="tag sdk">SDK</span>, 1.1 GHz is the WSE-2 clock <span class="tag vendor">Vendor, HC22</span>, and 1.4 GHz is a press estimate for WSE-3 (The Next Platform, 2026-08-19) <span class="tag unv">Analyst, unverified</span>. The largest grid is the SDK-visible WSE-2 fabric (750 × 994 minus the frame, P ≤ 743, <a href="13-lab-stencil.html">Chapter 13</a>), the clock is the one you pick, and host I/O is printed separately.</p>
 <div class="controls">
 <label>P <input type="number" id="b-p" min="2" max="743" value="4" style="width:5.5em"></label>
 <label>Mt <input type="number" id="b-m" min="1" max="64" value="8" style="width:4.5em"></label>
@@ -209,7 +225,7 @@ So the lines in the chart and the calculator are a guide for Mt a multiple of 4 
 <label>kernel <select id="b-ker"><option value="0">0 · column @fmacs</option><option value="1">1 · outer product</option></select></label>
 <label>chip <select id="b-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
 <label>stamps <select id="b-ts"><option value="step">per step (as shipped)</option><option value="ends">start and end only</option></select></label>
-<label>clock <select id="b-clk"><option value="0.85">850 MHz (SDK assumption)</option><option value="1.1">1.1 GHz (WSE-2, HC22)</option></select></label>
+<label>clock <select id="b-clk"><option value="0.85">850 MHz (SDK assumption)</option><option value="1.1">1.1 GHz (WSE-2, HC22)</option><option value="1.4">1.4 GHz (WSE-3 press estimate, unverified)</option></select></label>
 </div>
 <svg id="bud-mem" viewBox="0 0 680 92" width="680" role="img" aria-label="Memory budget bar"></svg>
 <div class="readout" id="b-out"></div>
