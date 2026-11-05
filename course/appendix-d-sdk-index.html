@@ -445,8 +445,7 @@ bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
   function fromHash() {
     const k = LAD.findIndex(l => "#" + l[3] === location.hash);
     if (k < 0) return false;
-    lad(k);
-    $("#lad").scrollIntoView({ block: "start" });
+    lad(k);   // the browser scrolls to the static <span id="after-chNN"> itself
     return true;
   }
   if (!fromHash()) lad(0);
