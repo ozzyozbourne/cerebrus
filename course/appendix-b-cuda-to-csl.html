@@ -177,7 +177,8 @@ layout {
   sys_mod.unblock_cmd_stream(); <span class="c">// host may go on</span>
 }
 <span class="k">comptime</span> {                       <span class="c">// bind the names</span>
-  @export_symbol(x_ptr, <span class="s">"x"</span>); @export_symbol(y_ptr, <span class="s">"y"</span>);
+  @export_symbol(x_ptr, <span class="s">"x"</span>);
+  @export_symbol(y_ptr, <span class="s">"y"</span>);
   @export_symbol(saxpy);
 }</code></pre>
 <div class="filename">run.py</div>
@@ -207,6 +208,8 @@ rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 <h4>CSL: the layout places, the host deals</h4>
 <div class="filename">layout.csl</div>
 <pre><code><span class="k">param</span> N_PE: i16;          <span class="c">// elements per PE</span>
+<span class="k">const</span> memcpy = @import_module(<span class="s">"&lt;memcpy/get_params&gt;"</span>,
+    .{ .width = 4, .height = 1 }); <span class="c">// was 1 x 1</span>
 layout {
   @set_rectangle(4, 1);
   <span class="k">for</span> (@range(i16, 4)) |x| { <span class="c">// "blockIdx"</span>

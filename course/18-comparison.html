@@ -838,7 +838,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
       if (r.ceil2) { el("line", { x1: X(r.ceil2), x2: X(r.ceil2), y1: cy - 8, y2: cy + 8, class: "s-" + r.c, "stroke-width": 2 }, svg); }
       dot(svg, xc, cy, r.c, true, 6);
       const lc = r.ceil >= 1000 ? Math.round(r.ceil / 1000) + "k" : Math.round(r.ceil);
-      T(svg, xc + (xc > x1 - 60 ? -10 : 10), cy - 8, "≤ " + lc, { "text-anchor": xc > x1 - 60 ? "end" : "start", "font-size": 10.5, class: "muted" });
+      T(svg, xc + (xc > x1 - 60 ? -10 : 10), cy - 8, (r.band ? "all users ≤ " : "≤ ") + lc, { "text-anchor": xc > x1 - 60 ? "end" : "start", "font-size": 10.5, class: "muted" });
       if (r.m) { dot(svg, X(r.m), cy, r.c, false, 6); T(svg, X(r.m) - 9, cy + 4, String(r.m.toLocaleString("en-US")), { "text-anchor": "end", "font-size": 11, "font-weight": 600 }); }
     });
     T(svg, (x0 + x1) / 2, yBot + 30, "tokens per second per user (log)", { "text-anchor": "middle", "font-size": 11, class: "muted" });
@@ -873,7 +873,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     let s = `Capex $${capH.toFixed(capH < 10 ? 2 : 0)}/h + power $${powH.toFixed(2)}/h = $${(capH + powH).toFixed(2)}/h. Aggregate ${Math.round(agg).toLocaleString("en-US")} tok/s = ${mtokH.toFixed(2)} M tokens/h.\n`;
     s += `→ $${isFinite(per) ? (per < 1 ? per.toFixed(3) : per.toFixed(2)) : "∞"} per M tokens; ${isFinite(jpt) ? (jpt < 10 ? jpt.toFixed(2) : jpt.toFixed(1)) : "∞"} J per token. `;
     if ($("#k-p").value === "cb" && isFinite(per)) {
-      const n = Math.max(1, g("n")), need = Math.ceil(per * n / 0.60), ctx = Math.max(128, g("ctx")), KVT = 327680;
+      const n = Math.max(1, g("n")), need = Math.ceil(per * n / 0.60), ctx = Math.max(128, parseFloat($("#k-ctx").value) || 8192), KVT = 327680;
       const maxAll = Math.floor(36e9 / (KVT * ctx)), maxCode = Math.floor(21e9 / (KVT * ctx));
       const perAt = m => m >= 1 ? per * n / m : Infinity, fm = v => isFinite(v) ? "$" + v.toFixed(2) : "∞";
       s += `To reach the $0.60/M list price (2024) at these inputs takes ≈ ${need} concurrent streams.<br>`;

@@ -97,7 +97,7 @@
 </div>
 </div>
 <div class="gl-head" id="gl-head">
-<div class="gl-tools"><input type="search" id="gl-q" placeholder="Search: wavelet, SUMMA, bf16, CB…" aria-label="Search the glossary" autocomplete="off"></div>
+<div class="gl-tools"><input type="search" id="gl-search" placeholder="Search: wavelet, SUMMA, bf16, CB…" aria-label="Search the glossary" autocomplete="off"></div>
 <nav class="letters" id="gl-letters" aria-label="Jump to letter"><a href="#gl-a">A</a> <a href="#gl-b">B</a> <a href="#gl-c">C</a> <a href="#gl-d">D</a> <a href="#gl-e">E</a> <a href="#gl-f">F</a> <a href="#gl-g">G</a> <a href="#gl-h">H</a> <a href="#gl-i">I</a> <a href="#gl-j">J</a> <a href="#gl-k">K</a> <a href="#gl-l">L</a> <a href="#gl-m">M</a> <a href="#gl-n">N</a> <a href="#gl-o">O</a> <a href="#gl-p">P</a> <a href="#gl-q">Q</a> <a href="#gl-r">R</a> <a href="#gl-s">S</a> <a href="#gl-t">T</a> <a href="#gl-u">U</a> <a href="#gl-v">V</a> <a href="#gl-w">W</a> <span class="off">X</span> <a href="#gl-y">Y</a> <span class="off">Z</span></nav>
 </div>
 <div class="readout" id="gl-count" aria-live="polite"></div>
@@ -446,7 +446,7 @@
 <script>
 /* ---------- glossary search ---------- */
 (function () {
-  const q = $("#gl-q"), list = $("#gl-list"), count = $("#gl-count"), none = $("#gl-none"), box = $("#gl-scroll"), head = $("#gl-head");
+  const q = $("#gl-search"), list = $("#gl-list"), count = $("#gl-count"), none = $("#gl-none"), box = $("#gl-scroll"), head = $("#gl-head");
   const entries = [...list.querySelectorAll(".gl-entry")];
   const letters = [...list.querySelectorAll(".gl-letter")];
   const chips = [...document.querySelectorAll("#gl .chips button")];
