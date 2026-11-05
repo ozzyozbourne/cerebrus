@@ -289,12 +289,12 @@ The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE
 <tr><th>1,024 elements, cycles (elements / cycle)</th><th>0 B: same bank</th><th>4 B: 2 banks apart</th><th>8 B: 4 banks apart ("opposite halves")</th><th>12 B: 6 banks apart</th></tr>
 <tr><td>f32 <code>@fmacs</code>, WSE-3</td><td><mark>2,063 (0.5)</mark></td><td>1,039 (1)</td><td>1,039 (1)</td><td>1,040 (1)</td></tr>
 <tr><td>f32 <code>@fmacs</code>, WSE-2</td><td><mark>2,062 (0.5)</mark></td><td>1,038 (1)</td><td>1,038 (1)</td><td>1,038 (1)</td></tr>
-<tr><td>f32 <code>@fadds</code>, WSE-3</td><td>527 (2)</td><td>528 (2)*</td><td>527 (2)</td><td>not measured</td></tr>
-<tr><td>f32 <code>@fadds</code>, WSE-2</td><td><mark>1,038 (1)</mark></td><td><mark>1,038 (1)</mark></td><td>526 (2)</td><td>not measured</td></tr>
-<tr><td>f16 <code>@fmach</code>, WSE-3</td><td>272 (≈4)</td><td>272 (≈4)</td><td>272 (≈4)</td><td>not measured</td></tr>
-<tr><td>f16 <code>@fmach</code>, WSE-2</td><td><mark>526 (2)</mark></td><td><mark>526 (2)</mark></td><td>270 (≈4)</td><td>not measured</td></tr>
+<tr><td>f32 <code>@fadds</code>, WSE-3</td><td>527 (2)</td><td>528 (2)*</td><td>527 (2)</td><td>527 (2)</td></tr>
+<tr><td>f32 <code>@fadds</code>, WSE-2</td><td><mark>1,038 (1)</mark></td><td><mark>1,038 (1)</mark></td><td>526 (2)</td><td><mark>1,038 (1)</mark></td></tr>
+<tr><td>f16 <code>@fmach</code>, WSE-3</td><td>272 (≈4)</td><td>272 (≈4)</td><td>272 (≈4)</td><td>272 (≈4)</td></tr>
+<tr><td>f16 <code>@fmach</code>, WSE-2</td><td><mark>526 (2)</mark></td><td><mark>526 (2)</mark></td><td>270 (≈4)</td><td><mark>526 (2)</mark></td></tr>
 </table></div>
-<p class="note">Sources: this chapter's single-op runs (offsets 0–7 words for <code>@fmacs</code>), the Program 01 padding sweep in <a href="11-lab-first-programs.html#kernel-time">Chapter 11</a> and <a href="appendix-e-sources.html#iss-clash">Appendix E</a> (placement checked with <code>cs_readelf --sym</code>), all <span class="tag measured">Measured</span>. * With a separate destination array (the <a href="#op-speed">rate table</a>'s layout). Highlighted cells are the slow ones.</p>
+<p class="note">Sources: this chapter's single-op runs (offsets 0–7 words for <code>@fmacs</code>), the Program 01 padding sweep in <a href="11-lab-first-programs.html#kernel-time">Chapter 11</a> and <a href="appendix-e-sources.html#iss-clash">Appendix E</a> (placement checked with <code>cs_readelf --sym</code>; the 12 B cells for <code>@fadds</code>/<code>@fmach</code> from the round-4 Appendix E rerun), all <span class="tag measured">Measured</span>. * With a separate destination array (the <a href="#op-speed">rate table</a>'s layout). Highlighted cells are the slow ones.</p>
 <div class="callout key">
 <strong>One rule for placement</strong>
 Rates are layout-dependent. Peak needs the two source streams in opposite halves of the 16-byte bank cycle, that is, starting 8 bytes (2 f32 words, 4 f16 elements) apart mod 16; the same bank halves the rate <span class="tag measured">Measured</span>. The rule differs by chip: on WSE-3 only f32 FMAC is sensitive (to the same bank), while on WSE-2 adds and f16 also need the 8-byte placement. That explains Lab 3's fast add on both chips (<code>u[i]</code> and <code>u[i+2]</code> are 8 bytes apart, <a href="13-lab-stencil.html#numbers-say">Chapter 13</a>) and Lab 1's slow FMAC (x and y in the same bank). To place arrays, put a 2-word pad between them and check the start banks with <code>cs_readelf --sym</code> (<a href="10-csl-toolchain.html#memory">Chapter 10</a>). Short vectors can still surprise you (at N = 64 program 01's unpadded case clashes on WSE-3 but not WSE-2, <a href="11-lab-first-programs.html#kernel-time">Chapter 11</a>), so pad and measure.
@@ -736,8 +736,8 @@ function player(btn, stepFn, isDone, ms) {
   // size in bytes, WSE-2 elements/cycle at peak, measured cycles {byte offset: [WSE-2, WSE-3]} (see the placement table)
   const OPS = {
     fmacs: { sz: 4, r2: 1, name: "@fmacs(y, y, x, a), f32", m: { 0: [2062, 2063], 4: [1038, 1039], 8: [1038, 1039], 12: [1038, 1040] } },
-    fadds: { sz: 4, r2: 2, name: "@fadds(y, y, x), f32", m: { 0: [1038, 527], 4: [1038, 528], 8: [526, 527] } },
-    fmach: { sz: 2, r2: 4, name: "@fmach(y, y, x, a), f16", m: { 0: [526, 272], 4: [526, 272], 8: [270, 272] } }
+    fadds: { sz: 4, r2: 2, name: "@fadds(y, y, x), f32", m: { 0: [1038, 527], 4: [1038, 528], 8: [526, 527], 12: [1038, 527] } },
+    fmach: { sz: 2, r2: 4, name: "@fmach(y, y, x, a), f16", m: { 0: [526, 272], 4: [526, 272], 8: [270, 272], 12: [526, 272] } }
   };
   const CYC = ["blu", "grn", "pur", "amb"];
   function fillOffsets() {

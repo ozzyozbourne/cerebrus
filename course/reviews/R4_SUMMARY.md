@@ -38,3 +38,16 @@
 4. **Links.** Almost no chapter links to other chapters or to the glossary (Ch 3, 4, 5, 8, 12, 13, 16 worst; none link `#g-` entries).
 5. **Concepts used before taught.** wavelet (Ch 2), queues/DSRs/microthreads (Ch 3), route PE-side code (Ch 4), CSL constructs (Ch 4–7 before Ch 10), task syntax (Ch 10 → Lab 1).
 6. **Stale cross-refs.** ~7 vs 9.2 cycles/hop relay, "~88" vs ~90 fixed cycles, Ch 9's pointers into Ch 8, "capstone", r3 items never applied (Ch 1, 3, 9, 16, 18).
+
+## Fix pass (round 4)
+
+- Coordinator decisions recorded as CROSS_CHAPTER_NOTES items 30–38 (bank placement rule, launch(), per-user tok/s, clock,
+  hop costs, queue depths, 7.5 PF tag, Lab 3 fixed cost, linking). Fix brief: R4_FIX_BRIEF.md.
+- 23 fixers (one per page; Ch 18 also did index.html), fix logs r4-<page>-fixlog.md. Nearly every E/X/G item fixed;
+  the few partly done or skipped are listed in each log (mostly: need hardware, an unavailable source, or a new program).
+- Two cross-page sweeps applied the fix logs' "For other pages" requests (R4_OTHER_PAGES.md, results r4-sweep-A/B.md).
+- New measurements during fixes: WSE-2 f16 4/cycle with PAD 4 (Ch 11); multicast stalls on slowest branch (Ch 4);
+  @map rewrite of SUMMA kernel 0, fixed cost 29–37 → 2–6 cycles, 94–96% of ideal (Ch 14, exercise only);
+  store-and-forward variant 348 cycles (Ch 12); 12 B placement cells (App E → Ch 6 #banks).
+- Final checks: all 7 programs PASS on WSE-3 and WSE-2; build.py and scan_tags.py rerun; Playwright on all 24 pages at
+  1100 and 390 px: 0 console errors, 0 overflow, 0 broken links/anchors.
