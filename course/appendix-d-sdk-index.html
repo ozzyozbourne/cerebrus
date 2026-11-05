@@ -398,44 +398,59 @@ bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
   }
 
   // ladder
+  // [chip label, title, chapter number for the link (or null), anchor id, [[name, why, mode]]]; mode "read" | "run"
+  //   Before Ch 10 the default is "read" (README + PE code); run after gemv-01. single-tile-matvec is run in Ch 3 itself.
   const LAD = [
-    ["Ch 3", "After Chapter 3 (the PE)", [["single-tile-matvec", "read the README's bandwidth numbers, then run it"], ["topic-04-sparse-tensors", "the index-plus-value trick"]]],
-    ["Ch 4", "After Chapter 4 (the fabric)", [["topic-06-switches", ""], ["topic-07-switches-entrypt", ""], ["topic-08-filters", ""], ["topic-14-color-swap", "only if you target WSE-2"]]],
-    ["Ch 5", "After Chapter 5 (tasks)", [["topic-05-sentinels", ""], ["topic-16-queue-flush", ""], ["topic-15-wse3-microthreads", "WSE-3 only"]]],
-    ["Ch 6", "After Chapter 6 (DSDs)", [["gemv-02-memory-dsds", ""], ["topic-10-map-builtin", ""], ["pipeline-01-basic", "raise size until it stalls"], ["pipeline-02-fifo", ""], ["topic-09-fifos", ""]]],
-    ["Ch 7", "After Chapter 7 (host I/O)", [["gemv-03-memcpy", ""], ["gemv-09-streaming", ""], ["row-col-broadcast", ""], ["bandwidth-test", "TSC-timed transfers"]]],
-    ["Ch 10", "After Chapter 10 (CSL and the toolchain)", [["gemv-00-basic-syntax", "read only"], ["gemv-01-complete-program", ""], ["gemv-04-params", ""], ["topic-01-arrays-and-pointers", ""], ["topic-02-libraries", ""], ["topic-13-simprint", ""], ["topic-12-debug-library", ""], ["sdklayout-01-introduction", "then sdklayout-02"]]],
-    ["Ch 11", "After Chapter 11 (Lab 1)", [["topic-03-streaming-wavelet-data", "the SDK's version of program 02"], ["gemv-05-multiple-pes", ""], ["pipeline-03-multiple", ""], ["sdklayout-03-ports-and-connections", "then sdklayout-04"]]],
-    ["Ch 12", "After Chapter 12 (Lab 2)", [["gemv-06-routes-1", ""], ["gemv-07-routes-2", ""], ["gemv-08-routes-3", ""], ["residual", "row then column reduction"], ["topic-11-collectives", ""], ["gemv-collectives_2d", ""], ["gemv-checkerboard-pattern", ""], ["mandelbrot", "load imbalance along a pipeline"]]],
-    ["Ch 13", "After Chapter 13 (Lab 3)", [["game-of-life", "a 2-D stencil"], ["7pt-stencil-spmv", "3-D, TSC-timed; needs the import fix: copy benchmark-libs next to it"], ["25-pt-stencil", "WSE-2 only"]]],
-    ["Ch 14", "After Chapter 14 (Lab 4, SUMMA)", [["gemm-collectives_2d", "the original of the lab"], ["sdklayout-05-gemv", "a GEMV, the other layout style"], ["cholesky", "a factorisation instead of a product"]]],
-    ["Ch 15", "After Chapter 15 (Lab 5, CG)", [["conjugate-gradient", "copy benchmark-libs next to it (import fix); then device_run.py"], ["preconditioned-conjugate-gradient", "same import fix"], ["bicgstab", "same import fix"], ["power-method", "same import fix"]]],
-    ["Beyond", "Beyond the course", [["fft-1d-2d", ""], ["fft-3d", "WSE-3 only; all-to-all transposes"], ["wide-multiplication", "carry chains"], ["histogram-torus", "WSE-2 only"], ["spmv-hypersparse", "WSE-2 only"]]],
+    ["Ch 3", "After Chapter 3 (the PE)", 3, "after-ch03", [["single-tile-matvec", "read the README's bandwidth numbers, then run it", "run"]]],
+    ["Ch 4", "After Chapter 4 (the fabric)", 4, "after-ch04", [["topic-06-switches", ""], ["topic-08-filters", ""], ["topic-14-color-swap", "only if you target WSE-2"]]],
+    ["Ch 5", "After Chapter 5 (tasks)", 5, "after-ch05", [["topic-05-sentinels", ""], ["topic-07-switches-entrypt", "a Ch 4 switch whose control wavelet also activates a control task"], ["topic-16-queue-flush", ""], ["topic-15-wse3-microthreads", "WSE-3 only"]]],
+    ["Ch 6", "After Chapter 6 (DSDs)", 6, "after-ch06", [["gemv-02-memory-dsds", "a diff against gemv-01; run it after gemv-01 (Ch 10 rung)"], ["topic-10-map-builtin", ""], ["topic-04-sparse-tensors", "index plus value; its data task takes two arguments (Ch 5)"], ["pipeline-01-basic", "raise size until it stalls"], ["pipeline-02-fifo", ""], ["topic-09-fifos", ""]]],
+    ["Ch 7", "After Chapter 7 (host I/O)", 7, "after-ch07", [["gemv-03-memcpy", "a diff against gemv-02; run after gemv-01"], ["row-col-broadcast", "prints measurements, not SUCCESS!"], ["bandwidth-test", "TSC-timed transfers; prints measurements"], ["gemv-09-streaming", "a streaming rewrite of gemv-08 (Ch 12 rung); run it after that one"]]],
+    ["Ch 10", "After Chapter 10 (CSL and the toolchain)", 10, "after-ch10", [["gemv-00-basic-syntax", "read only", "read"], ["gemv-01-complete-program", "run this first; then go back and run the Ch 3–7 rungs"], ["gemv-04-params", ""], ["topic-01-arrays-and-pointers", ""], ["topic-02-libraries", ""], ["topic-12-debug-library", ""], ["topic-13-simprint", "a variant of topic-12"], ["sdklayout-01-introduction", "then sdklayout-02"]]],
+    ["Ch 11", "After Chapter 11 (Lab 1)", 11, "after-ch11", [["topic-03-streaming-wavelet-data", "the SDK's version of program 02"], ["gemv-05-multiple-pes", ""], ["pipeline-03-multiple", ""], ["sdklayout-03-ports-and-connections", "then sdklayout-04"]]],
+    ["Ch 12", "After Chapter 12 (Lab 2)", 12, "after-ch12", [["gemv-06-routes-1", ""], ["gemv-07-routes-2", ""], ["gemv-08-routes-3", "then gemv-09 (Ch 7 rung), its streaming rewrite"], ["residual", "row then column reduction"], ["topic-11-collectives", ""], ["gemv-collectives_2d", ""], ["gemv-checkerboard-pattern", ""], ["mandelbrot", "load imbalance along a pipeline"]]],
+    ["Ch 13", "After Chapter 13 (Lab 3)", 13, "after-ch13", [["game-of-life", "a 2-D stencil"], ["7pt-stencil-spmv", "3-D, TSC-timed; needs the import fix: copy benchmark-libs next to it"], ["25-pt-stencil", "WSE-2 only"]]],
+    ["Ch 14", "After Chapter 14 (Lab 4, SUMMA)", 14, "after-ch14", [["gemm-collectives_2d", "the original of the lab"], ["sdklayout-05-gemv", "a GEMV, the other layout style"], ["cholesky", "a factorisation instead of a product"]]],
+    ["Ch 15", "After Chapter 15 (Lab 5, CG)", 15, "after-ch15", [["conjugate-gradient", "copy benchmark-libs next to it (import fix); then device_run.py"], ["preconditioned-conjugate-gradient", "same import fix"], ["bicgstab", "same import fix"], ["power-method", "same import fix"]]],
+    ["Beyond", "Beyond the course", null, "after-beyond", [["fft-1d-2d", ""], ["fft-3d", "WSE-3 only; all-to-all transposes"], ["wide-multiplication", "carry chains"], ["histogram-torus", "WSE-2 only"], ["spmv-hypersparse", "WSE-2 only; prints measurements"]]],
   ];
+  const RUNG_FROM = 5;   // index of the Ch 10 rung: rungs before it default to "read"
   const byName = Object.fromEntries(D.map(d => [d[0], d]));
   let cur = 0;
   const lc = $("#lad-chips");
   const lb = LAD.map((l, i) => {
     const b = document.createElement("button"); b.type = "button"; b.textContent = l[0];
-    b.setAttribute("aria-pressed", "false"); b.onclick = () => lad(i); lc.appendChild(b); return b;
+    b.setAttribute("aria-pressed", "false"); b.onclick = () => { lad(i); setHash(l[3]); }; lc.appendChild(b); return b;
   });
+  // each rung is linkable as #after-chNN; the chip buttons keep the address bar in step
+  function setHash(id) { try { history.replaceState(null, "", "#" + id); } catch (e) { /* file:// or sandbox */ } }
   function lad(i) {
     cur = i;
     lb.forEach((b, k) => b.setAttribute("aria-pressed", k === i ? "true" : "false"));
     const l = LAD[i];
-    $("#lad-out").innerHTML = `<p style="margin:4px 0"><b>${esc(l[1])}</b></p><ol class="ladder">` + l[2].map(([n, why]) => {
+    const title = l[2] ? `<a href="${FILES[l[2]]}">${esc(l[1])}</a>` : esc(l[1]);
+    $("#lad-out").innerHTML = `<p style="margin:4px 0"><b>${title}</b> <a href="#${l[3]}" style="font-size:13px;color:var(--muted)">#${l[3]}</a></p><ol class="ladder">` + l[4].map(([n, why, mode]) => {
       const d = byName[n], a = ARCH[d[4]];
-      return `<li><a class="ex" href="#${rowId(n)}" data-n="${esc(n)}">${brk(n)}</a> <span class="arch ${a[0]}">${a[1]}</span> ${esc(d[3])}${why ? ` <span style="color:var(--muted)">(${esc(why)})</span>` : ""}</li>`;
+      const m = mode || (i < RUNG_FROM ? "read" : "run");
+      return `<li><span class="mode ${m}">${m}</span><a class="ex" href="#${rowId(n)}" data-n="${esc(n)}">${brk(n)}</a> <span class="arch ${a[0]}">${a[1]}</span> ${esc(d[3])}${why ? ` <span style="color:var(--muted)">(${esc(why)})</span>` : ""}</li>`;
     }).join("") + `</ol>`;
     $("#lad-out").querySelectorAll("a.ex").forEach(x => x.onclick = e => { e.preventDefault(); showRow(x.dataset.n); });
   }
   $("#lad-show").onclick = () => {
     clearFilters();
-    only = { label: LAD[cur][0] === "Beyond" ? "beyond the course" : "after " + LAD[cur][0], set: new Set(LAD[cur][2].map(x => x[0])) };
+    only = { label: LAD[cur][0] === "Beyond" ? "beyond the course" : "after " + LAD[cur][0], set: new Set(LAD[cur][4].map(x => x[0])) };
     render();
     $("#ix").scrollIntoView({ behavior: "smooth", block: "start" });
   };
-  lad(0);
+  function fromHash() {
+    const k = LAD.findIndex(l => "#" + l[3] === location.hash);
+    if (k < 0) return false;
+    lad(k);
+    $("#lad").scrollIntoView({ block: "start" });
+    return true;
+  }
+  if (!fromHash()) lad(0);
+  window.addEventListener("hashchange", fromHash);
 
   // heat map: topics down, chapters across
   const hmCh = chs.filter(c => D.some(d => d[5].includes(c)));
