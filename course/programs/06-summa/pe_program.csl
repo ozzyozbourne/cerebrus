@@ -120,7 +120,8 @@ task compute() void {
 
 task exit() void {
   stamp_now(3 * P + 1);
-  sys_mod.unblock_cmd_stream();        // only now does the host's launch() return
+  sys_mod.unblock_cmd_stream();        // the host's next command (memcpy_d2h of C) can now run;
+                                       // launch() itself returned at once
 }
 
 comptime {
