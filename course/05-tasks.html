@@ -224,9 +224,9 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
 <h2 id="picker">The picker in action: why Lab 3 uses four completion tasks</h2>
 <div class="callout">
 <strong>The running example: Lab 3 in one box.</strong> <a href="13-lab-stencil.html#problem">Lab 3 (Chapter 13)</a> solves the 1-D heat equation on a rod split across a row of P PEs. Each PE holds n cells <code>u[1..n]</code> plus two <em>ghost</em> cells, <code>u[0]</code> and <code>u[n+1]</code>, that hold copies of its neighbours' edge cells. Each timestep it sends its first cell west and its last cell east, receives the neighbours' edge cells into its ghosts, and then applies <code>u[i] += α·(u[i−1] + u[i+1] − 2·u[i])</code> in <code>update()</code>. That is why there are four transfers per step: two sends and two receives.
-<svg viewBox="0 0 680 92" width="680" role="img" aria-label="Two PEs, each with n cells and two ghost cells; edge cells are copied into the neighbour's ghost cell">
+<svg viewBox="0 0 680 104" width="680" style="display:block;margin:8px 0" role="img" aria-label="Two PEs, each with n cells and two ghost cells; edge cells are copied into the neighbour's ghost cell">
   <g font-size="11">
-  <text x="170" y="14" text-anchor="middle" font-weight="600">PE k</text><text x="510" y="14" text-anchor="middle" font-weight="600">PE k+1</text>
+  <text x="40" y="66" font-weight="600">PE k</text><text x="614" y="66" text-anchor="end" font-weight="600">PE k+1</text>
   <rect x="40" y="24" width="34" height="26" rx="3" class="box dash" stroke-width="1.2"/><text x="57" y="41" text-anchor="middle" class="mono">u0</text>
   <rect x="78" y="24" width="34" height="26" rx="3" class="amb" stroke-width="1.2"/><text x="95" y="41" text-anchor="middle" class="mono">u1</text>
   <rect x="116" y="24" width="34" height="26" rx="3" class="grn" stroke-width="1.2"/><text x="133" y="41" text-anchor="middle" class="mono">…</text>
@@ -239,11 +239,11 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
   <rect x="494" y="24" width="34" height="26" rx="3" class="grn" stroke-width="1.2"/><text x="511" y="41" text-anchor="middle" class="mono">…</text>
   <rect x="532" y="24" width="34" height="26" rx="3" class="amb" stroke-width="1.2"/><text x="549" y="41" text-anchor="middle" class="mono">un</text>
   <rect x="570" y="24" width="44" height="26" rx="3" class="box dash" stroke-width="1.2"/><text x="592" y="41" text-anchor="middle" class="mono">un+1</text>
-  <path d="M209 52 C260 78, 350 78, 395 54" fill="none" class="s-acc" stroke-width="1.6" marker-end="url(#a6)"/><text x="300" y="86" text-anchor="middle">send east → ghost u0 of k+1</text>
-  <path d="M435 22 C400 2, 290 2, 254 22" fill="none" class="s-blu" stroke-width="1.6" marker-end="url(#a5)"/><text x="345" y="12" text-anchor="middle">send west → ghost un+1 of k</text>
+  <path d="M209 52 C260 82, 350 82, 395 54" fill="none" class="s-acc" stroke-width="1.6" marker-end="url(#a6)"/><text x="300" y="98" text-anchor="middle">send east → ghost u0 of k+1</text>
+  <path d="M435 22 C400 13, 290 13, 254 22" fill="none" class="s-blu" stroke-width="1.6" marker-end="url(#a5)"/><text x="345" y="9" text-anchor="middle">send west → ghost un+1 of k</text>
   </g>
 </svg>
-<span style="font-size:14px;color:var(--muted)">Dashed = ghost cells, amber = edge cells that are sent. Source: <code>programs/04-heat-stencil/pe_program.csl</code>.</span>
+<div style="font-size:14px;color:var(--muted)">Dashed = ghost cells, amber = edge cells that are sent. Source: <code>programs/04-heat-stencil/pe_program.csl</code>.</div>
 </div>
 <p>So one timestep of the Lab 3 heat stencil launches four async transfers (send east, send west, receive from west, receive from east). Each completion must decrement <code>pending</code>; when it hits 0 the PE updates its cells. Give all four ops one shared completion task and two completions that land before it runs merge into one, so <code>pending</code> never reaches 0. Whether that happens depends on timing, which is why the SDK's comment says that activating a task several times "does not guarantee" several runs.</p>
 <div class="widget" id="tsk">
@@ -289,7 +289,7 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
   <rect x="190" y="152" width="362" height="16" rx="3" class="blu" stroke-width="1"/>
   <path d="M362 74 V50" class="s-acc" stroke-width="1.2" marker-end="url(#a6)"/><path d="M412 100 V50" class="s-acc" stroke-width="1.2" marker-end="url(#a6)"/>
   <path d="M482 126 V50" class="s-acc" stroke-width="1.2" marker-end="url(#a6)"/><path d="M552 152 V50" class="s-acc" stroke-width="1.2" marker-end="url(#a6)"/>
-  <text x="380" y="192" text-anchor="middle" font-size="11" class="muted">Schematic, not to scale: the CE issues the four ops one after another, each microthread streams its transfer, and each completion (arrow) activates one task.</text>
+  <text x="380" y="190" text-anchor="middle" font-size="11" class="muted">Schematic, not to scale. The CE issues the four ops one after another; each microthread streams its transfer;</text><text x="380" y="205" text-anchor="middle" font-size="11" class="muted">each completion (arrow) activates one task, which runs when the CE is free.</text>
   </g>
 </svg>
 <figcaption><b>Two kinds of lane, one PE.</b> Tasks run one at a time on the CE; meanwhile the microthreads progress async ops. They share the PE's one datapath, memory ports and fabric ports (<a href="03-processing-element.html#microthreads">Chapter 3</a>), which is why "how the main thread ranks against microthreads" (<a href="#priority">priority</a>, below) is a real setting. Chapter 13 measures what this costs: ≈14.6 cycles per transfer, including its completion task, out of ≈90 fixed cycles per step <span class="tag measured">Measured, Ch 13</span> (<a href="13-lab-stencil.html#fixed-cost">where the 90 cycles go</a>). The bar lengths here are <span class="tag derived">schematic</span>.</figcaption>

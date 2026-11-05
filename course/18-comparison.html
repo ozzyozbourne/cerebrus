@@ -258,7 +258,7 @@ ol.decoder li { margin: 4px 0; }
 <div class="widget" id="cost">
 <h4>A transparent cost and energy model</h4>
 <p class="hint">$ per M tokens = (capex ÷ amortisation hours + kW × $/kWh) ÷ (aggregate tok/s × 3,600 ÷ 10⁶). Joules per token = W ÷ aggregate tok/s. Try raising the Cerebras stream count until the price reaches the $0.60 list price, then read the KV line: each stream's KV cache must fit in the SRAM the weights leave free (<a href="09-model-to-tokens.html#pipeline">Ch. 9</a>), so the context length caps the stream count.</p>
-<div class="controls"><label>Preset <select id="k-p"><option value="cb">4 × CS-3, Llama 3.3-70B</option><option value="tt">Wormhole Galaxy, Llama 3.3-70B, batch 32</option></select></label></div>
+<div class="controls"><label>Preset <select id="k-p"><option value="cb">4 × CS-3, Llama 3.3-70B (measured speed; price target from 2024)</option><option value="tt">Wormhole Galaxy, Llama 3.3-70B, batch 32</option></select></label></div>
 <div class="calc">
 <label>Capex ($) <input type="number" id="k-capex" min="0" step="1000"><span class="small" id="k-capex-t"></span></label>
 <label>Amortisation (years) <input type="number" id="k-yr" min="0.5" step="0.5"><span class="small"><span class="tag derived">Assumption</span></span></label>
@@ -270,7 +270,7 @@ ol.decoder li { margin: 4px 0; }
 </div>
 <div class="rd" id="k-out" aria-live="polite"></div>
 </div>
-<p>With one stream, a 4 × CS-3 instance at the unverified $10M estimate costs about $35 per million tokens, so the published $0.60/M implies roughly 60 concurrent streams per instance, or far lower capex <span class="tag derived">Derived</span>. That is an inference about concurrency that the sources do not report. For H100 there is no capex in the sources; the analyst figure of ~$0.10–0.25/M at large batch <span class="tag analyst">Analyst, Spheron</span> is the only GPU data point.</p>
+<p>With one stream, a 4 × CS-3 instance at the unverified $10M estimate costs about $35 per <a href="appendix-a-glossary.html#g-cost-per-million-tokens">million tokens</a>, so the $0.60/M list price implies roughly 60 concurrent streams per instance <span class="tag derived">Derived</span>. <a href="09-model-to-tokens.html#pipeline">Chapter 9</a>'s KV arithmetic says that many do not fit. The ~36 GB the weights leave free holds about 110,000 tokens of context in total: at most ~13 streams at 8K context, ~7 once code is counted. At 13 streams the model gives ≈ $2.7/M, and at 7 about $5/M <span class="tag derived">Derived</span>. So the $0.60 price needs one of: capex near $2M, contexts under ~2K tokens (~50–60 streams fit), KV held off the wafer, or a price below cost. Capex estimates vary: analysts put a system at $2–3M, while Condor Galaxy-1's reported $100M for 32 nodes is ~$3.1M per CS-3 including MemoryX and SwarmX <span class="tag analyst">Analyst</span>. The price is also dated. $0.60 was the 2024 list price for Llama 3.1-70B, and 2026 aggregators list Llama 3.3-70B on Cerebras at $0.85 in / $1.20 out per M, some as dedicated-endpoint only <span class="tag unv">Unverified</span>; at $1.20 per M output tokens the model needs ~30 streams, still more than fit at 8K. For H100 there is no capex in the sources; the analyst figure of ~$0.10–0.25/M at large batch <span class="tag analyst">Analyst, Spheron</span> is the only GPU data point.</p>
 
 <div class="table-wrap"><table class="mini">
 <tr><th>Peak dense compute per watt <span class="tag derived">Derived</span></th><th>Format</th><th>Power counted</th><th>TFLOP/s per W</th></tr>
@@ -288,17 +288,18 @@ ol.decoder li { margin: 4px 0; }
 <tr><td>Llama 3.3-70B at 2,314 tok/s, 170 ms time to first token (TTFT)</td><td>tok/s per user, TTFT</td><td><span class="tag indep">Indep</span> AA, via interview</td></tr>
 <tr><td>gpt-oss-120B: ~3,000 tok/s claimed vs ~1,700 measured</td><td>tok/s</td><td><span class="tag vendor">Vendor</span> vs <span class="tag indep">Indep</span></td></tr>
 <tr><td>GPT-5.6 Sol "Ultrafast" up to 750 tok/s (~14× Standard), limited preview</td><td>tok/s</td><td><span class="tag vendor">Vendor citing AA</span></td></tr>
-<tr><td>CS-4: "4,400 tok/s, up to 30× vs GPUs"</td><td>tok/s</td><td><span class="tag vendor">Vendor</span> <span class="tag unv">Unverified</span></td></tr>
-<tr><td>Llama 3.1-70B: Cerebras list price $0.60 per M tokens vs batched H100 ~$0.10–0.25 per M output tokens</td><td>$ per M tokens</td><td><span class="tag vendor">Vendor</span> price vs <span class="tag analyst">Analyst</span> (Spheron, a GPU-cloud company)</td></tr>
-<tr><td>WSE-2 molecular dynamics (tantalum, ~800k atoms): ~270,000 timesteps/s, 179× LAMMPS on Frontier and 55× Quartz (the paper's headline figures)</td><td>timesteps/s</td><td><span class="tag measured">Measured</span> peer-reviewed, Sandia/LLNL/LANL with Cerebras co-authors; Gordon Bell 2024 finalist, not winner</td></tr>
+<tr><td>CS-4: "&gt;4,400 tok/s per user on gpt-oss-120B, up to 30× vs GPUs" (press release, 18 Aug 2026); not independently measured, and AA lists the hosted service at ~1,869 tok/s</td><td>tok/s per user</td><td><span class="tag vendor">Vendor</span> <span class="tag unv">Unverified</span></td></tr>
+<tr><td>Llama 3.1-70B: Cerebras list price $0.60 per M tokens (2024; 2026 aggregators list Llama 3.3-70B at $0.85 in / $1.20 out <span class="tag unv">Unverified</span>) vs batched H100 ~$0.10–0.25 per M output tokens</td><td>$ per M tokens</td><td><span class="tag vendor">Vendor</span> price vs <span class="tag analyst">Analyst</span> (Spheron, a GPU-cloud company)</td></tr>
+<tr><td>WSE-2 molecular dynamics (tantalum, ~800k atoms): ~270,000 timesteps/s, 179× LAMMPS on Frontier and 55× Quartz (the paper's headline figures)</td><td>timesteps/s</td><td><span class="tag indep">Peer-reviewed</span> Sandia/LLNL/LANL with Cerebras co-authors; Gordon Bell 2024 finalist, not winner</td></tr>
 <tr><td>Later MD claim: &gt;1.1M steps/s, 748× Frontier (457× in other coverage), different configurations</td><td>timesteps/s</td><td><span class="tag vendor">Vendor</span></td></tr>
-<tr><td>CS-1 BiCGStab ≈ 0.86 PFLOP/s, about 1/3 of peak: the only utilisation data point</td><td>FLOP/s</td><td><span class="tag measured">Measured</span> Cerebras/NETL authors, SC20</td></tr>
+<tr><td>CS-1 BiCGStab ≈ 0.86 PFLOP/s, about 1/3 of peak, on a 600 × 595 × 1,536 mesh; scalar AllReduce reported under 1.5 µs on ~380k PEs</td><td>FLOP/s, latency</td><td><span class="tag indep">Peer-reviewed</span> Cerebras/NETL authors, SC20 (allreduce figure via search extract <span class="tag unv">Unverified</span>)</td></tr>
+<tr><td>This course's own utilisation: f32 GEMM 18–32% of the per-PE ideal (51% after a rewrite); CG 1.3% at 5 cells per PE, ~17% at 100</td><td>% of f32 peak</td><td><span class="tag measured">Measured</span> simulator, <a href="14-lab-gemm.html#measure">Ch. 14</a>, <a href="15-lab-cg.html#profile">Ch. 15</a></td></tr>
 <tr><td>8 × H100 (DGX) on Llama-70B: 86 tok/s at "&lt;30% memory bandwidth utilization"</td><td>tok/s per user</td><td><span class="tag vendor">Vendor, HC2024 citing AA</span></td></tr>
 <tr><td>Wormhole Galaxy: 72.5 tok/s/user on Llama 3.3-70B at batch 32 (~2,269 total), tt-metal v0.65 release candidate</td><td>tok/s per user and aggregate</td><td><span class="tag vendor">Vendor repo table</span></td></tr>
 <tr><td>Galaxy Blackhole: ~350 tok/s/user claimed (~308 reported at launch) on DeepSeek-R1 671B</td><td>tok/s per user</td><td><span class="tag vendor">Vendor</span></td></tr>
 <tr><td>H100 L2: more than 5.5 TB/s on a PCIe card, the one independent microbenchmark used in Ch. 17</td><td>bandwidth</td><td><span class="tag indep">Indep</span></td></tr>
 <tr><td>Excluded: a blog's "4,000–5,000 tok/s at batch 32" for Tenstorrent. It does not match the repo tables.</td><td>—</td><td>—</td></tr>
-<tr><td>MLPerf results from Cerebras or Tenstorrent</td><td>—</td><td>none found <span class="tag unv">Unverified</span></td></tr>
+<tr><td>MLPerf results from Cerebras or Tenstorrent</td><td>—</td><td>none: coverage of MLPerf Inference v6.0 (Apr 2026) lists neither <span class="tag indep">Press</span> <span class="tag unv">Unverified</span></td></tr>
 </table></div>
 
 <div class="callout key">
@@ -314,7 +315,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 <li><b>Chip, card, system or rack?</b> 23 kW is a whole CS-3 system; 700 W is one GPU module.</li>
 <li><b>Per user or aggregate?</b> Wormhole Galaxy: 72.5 tok/s per user is ~2,269 in aggregate.</li>
 <li><b>What batch, and is TTFT included?</b> The 72.5 is at batch 32. Fast decode does not shorten prefill.</li>
-<li><b>Quantised?</b> Cerebras said in October 2024 that "all models continue to use 16-bit original weights" <span class="tag vendor">Vendor</span>; check each new claim again.</li>
+<li><b>Quantised?</b> Cerebras said in October 2024 that "all models continue to use 16-bit original weights" <span class="tag vendor">Vendor</span>, and its 2026 GPT-5.6 Sol post says that model is "not … quantized to lower precision" <span class="tag vendor">Vendor</span>; check each new claim again.</li>
 <li><b>Who measured?</b> gpt-oss-120B: ~3,000 claimed, ~1,700 measured, a factor of 0.57 <span class="tag derived">Derived</span>.</li>
 <li><b>Which spec revision?</b> Rubin HBM4 went from 22 to 19.2 TB/s after announcement.</li>
 <li><b>Shipping or announced?</b> The p150 was cut by firmware from 140 to 120 cores, 774 to 664 TF.</li>
@@ -377,7 +378,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 </div>
 
 <h2>Back to the memory wall</h2>
-<p>Chapter 1 asked how to feed compute that grows faster than memory bandwidth. <strong>NVIDIA</strong> buys more HBM bandwidth each generation and raises intensity with batching and fused kernels; the ridge still climbs (295 → ~2,600 FLOP/byte from H100 to Rubin). Since 2026 it also adds small SRAM chips (Groq 3 LPX) for decode, which concedes the wafer's point about bandwidth while keeping the chips reticle-sized. <strong>Tenstorrent</strong> keeps tiles in a large per-core SRAM, streams weights from cheap GDDR6, and spreads models across chips over Ethernet that costs it almost no bandwidth. <strong>Cerebras</strong> makes the SRAM big enough to hold the working set and pays in capacity, power per system and communication between PEs. The labs confirmed that answer from the inside: memory was never the bottleneck, messages and their completion tasks were, and every byte had to be placed by hand.</p>
+<p>Chapter 1 asked how to feed compute that grows faster than memory bandwidth. <strong>NVIDIA</strong> buys more HBM bandwidth each generation and raises intensity with batching and fused kernels; the ridge still climbs (295 → ~2,600 FLOP/byte from H100 to Rubin), though part of that growth is the number format: 295 is BF16 and ~2,600 is NVFP4, and decode intensity at 4-bit also rises 4× (<a href="01-memory-wall.html#taller">Ch. 1</a>). Since 2026 it also adds small SRAM chips (Groq 3 LPX) for decode, which concedes the wafer's point about bandwidth while keeping the chips reticle-sized. <strong>Tenstorrent</strong> keeps tiles in a large per-core SRAM, streams weights from cheap GDDR6, and spreads models across chips over Ethernet that costs it almost no bandwidth. <strong>Cerebras</strong> makes the SRAM big enough to hold the working set and pays in capacity, power per system and communication between PEs. The labs confirmed that answer from the inside: memory <em>bandwidth</em> was never the bottleneck; capacity was (Lab 3 fits ~5,450 cells per PE and Lab 5 ~1,835), and so were messages, their completion tasks and the instruction stream. Every byte had to be placed by hand.</p>
 <h3 id="next">Where to go next</h3>
 <ul>
 <li>The SDK tutorials, in order (gemv-00 → 09, then the topic tutorials): <code>cerebras-sdk/extras/csl-extras-*/examples/tutorials</code> <span class="tag sdk">SDK 2.10.1</span>.</li>
@@ -849,7 +850,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
   // ---------- 7. cost and energy ----------
   const KP = {
     cb: { capex: 10e6, yr: 4, kw: 92, e: 0.10, ts: 2314, n: 1,
-      capexT: tg("unv") + " $8–12M per 70B instance, unverified estimate (Medium)", kwT: "4 × ~23 kW " + tg(V), tsT: tg("indep") + " AA via interview", nT: "unknown: the sources do not report concurrency" },
+      capexT: tg("unv") + " $8–12M per 70B instance (Medium); analysts: $2–3M per system, or ~$3.1M per CS-3 from Condor Galaxy-1's $100M for 32 " + tg(A), kwT: "4 × ~23 kW " + tg(V), tsT: tg("indep") + " AA via interview", nT: "unknown: the sources do not report concurrency" },
     tt: { capex: 70e3, yr: 4, kw: 12, e: 0.10, ts: 72.5, n: 32,
       capexT: tg(V) + " from $70k (JP page)", kwT: tg(A) + " Galaxy Blackhole figure (Flopper), assumed for Wormhole", tsT: tg(["vendor", "Vendor repo table"]), nT: "batch 32 " + tg(V) + " (vendor total ~2,269)" }
   };

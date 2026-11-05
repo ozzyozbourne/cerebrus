@@ -231,7 +231,7 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 <text x="420" y="51" text-anchor="middle" font-size="12" class="mono">x[2N_PE : 3N_PE]</text>
 <text x="580" y="51" text-anchor="middle" font-size="12" class="mono">x[3N_PE : 4N_PE]</text>
 <path d="M100 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M260 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M420 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M580 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/>
-<defs><marker id="dl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="f-muted" style="fill: var(--muted)"/></marker></defs>
+<defs><marker id="dl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill: var(--muted)"/></marker></defs>
 <text x="340" y="84" text-anchor="middle" font-size="11.5" class="muted">memcpy_h2d(xs, x, 0, 0, 4, 1, N_PE): slice k goes to PE (k, 0)</text>
 <rect x="40" y="100" width="120" height="46" rx="6" class="acc"/><rect x="200" y="100" width="120" height="46" rx="6" class="blu"/><rect x="360" y="100" width="120" height="46" rx="6" class="grn"/><rect x="520" y="100" width="120" height="46" rx="6" class="pur"/>
 <text x="100" y="119" text-anchor="middle" font-size="12.5">PE (0, 0)</text><text x="260" y="119" text-anchor="middle" font-size="12.5">PE (1, 0)</text><text x="420" y="119" text-anchor="middle" font-size="12.5">PE (2, 0)</text><text x="580" y="119" text-anchor="middle" font-size="12.5">PE (3, 0)</text>
@@ -240,14 +240,14 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 </svg>
 <figcaption><b>The host deals the array; the PE never computes an index.</b> With ROW_MAJOR order and width 4, the first N_PE elements go to PE (0, 0), the next N_PE to PE (1, 0), and so on <span class="tag sdk">SDK</span>. The same call with height &gt; 1 deals rows of PEs. <code>memcpy_d2h</code> with the same arguments gathers the slices back in the same order.</figcaption>
 </figure>
-<p>So CUDA's <code>blockIdx</code> becomes the layout loop's <code>x</code>, and <code>threadIdx</code> becomes the position inside the PE's DSD. SAXPY needs no index on the device at all: the slice a PE holds <em>is</em> its share of the work. When a PE must behave differently by position, the layout hands it a <a href="appendix-a-glossary.html#g-param">param</a>, as <a href="12-lab-neighbours.html#roles">program 03</a> does with <code>.role = if (x == 0) 0 else if (x == P - 1) 2 else 1</code> (first, middle, last), or the PE reads its coordinate at run time, as <code>&lt;collectives_2d&gt;</code> does in <a href="14-lab-gemm.html#collectives">Lab 4</a>. Params cost one ELF per distinct value set; a run-time coordinate keeps one ELF for all (<a href="10-csl-toolchain.html#builds">Ch. 10</a>).</p>
+<p>So CUDA's <code>blockIdx</code> becomes the layout loop's <code>x</code>, and <code>threadIdx</code> becomes the position inside the PE's DSD. SAXPY needs no index on the device at all: the slice a PE holds <em>is</em> its share of the work. When a PE must behave differently by position, the layout hands it a <a href="appendix-a-glossary.html#g-param">param</a>, as <a href="12-lab-neighbours.html#roles">program 03</a> does: its loop computes <code>role = if (x == 0) 0 else if (x == P - 1) 2 else 1</code> (first, middle, last) and passes <code>.role = role</code>, or the PE reads its coordinate at run time, as <code>&lt;collectives_2d&gt;</code> does in <a href="14-lab-gemm.html#collectives">Lab 4</a>. Params cost one ELF per distinct value set; a run-time coordinate keeps one ELF for all (<a href="10-csl-toolchain.html#builds">Ch. 10</a>).</p>
 
 <h2 id="budget">One PE's budget</h2>
-<p>Everything a kernel uses on a PE comes out of the limits below. memcpy, the host-I/O runtime, takes its share first (<a href="07-host-io.html#reserves">Chapter 7</a>). WSE-3 is the column to design for; WSE-2 differs in the rows marked in bold. Units: as in the chapters, KB here means 1,024 B, so 48 KB = 49,152 B and 44,500 B &asymp; 43.5 KB.</p>
+<p>Everything a kernel uses on a PE comes out of the limits below. memcpy, the host-I/O runtime, takes its share first (<a href="07-host-io.html#reserves">Chapter 7</a>). WSE-3 is the column to design for; WSE-2 differs in the rows marked in bold. Libraries take their share too (<a href="#libs-row">row below</a>): Labs 4 and 5 budget theirs in <a href="14-lab-gemm.html#design">Ch. 14&rsquo;s design method</a> and <a href="15-lab-cg.html#bud">Ch. 15&rsquo;s budget map</a>. Units: as in the chapters, KB here means 1,024 B, so 48 KB = 49,152 B and 44,500 B &asymp; 43.5 KB.</p>
 
 <div class="stat-row">
 <div class="stat"><div class="v">48 KB</div><div class="l">SRAM per PE, code + data <span class="tag vendor">Vendor</span></div></div>
-<div class="stat"><div class="v">&asymp; 43.5 KB</div><div class="l">(&asymp; 44,500 B) left for arrays on WSE-3, &plusmn; 0.7 KB with code size <span class="tag measured">Measured</span></div></div>
+<div class="stat"><div class="v">&asymp; 42.6&ndash;43.9 KB</div><div class="l">(&asymp; 43,600&ndash;44,900 B) left for arrays on WSE-3, depending on code size; typical &asymp; 44,500 B (matvec probe) <span class="tag measured">Measured</span></div></div>
 <div class="stat"><div class="v">20 of 24</div><div class="l">colors free; memcpy owns 20&ndash;23 <span class="tag sdk">SDK</span></div></div>
 <div class="stat"><div class="v">8&ndash;20</div><div class="l">safe local task IDs <span class="tag sdk">SDK</span></div></div>
 <div class="stat"><div class="v">8</div><div class="l">microthreads; two ops never share one <span class="tag sdk">SDK</span></div></div>
@@ -257,27 +257,28 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 <tr><th>Resource</th><th>WSE-3</th><th>WSE-2</th><th>What memcpy takes / rule</th><th>Source</th></tr>
 <tr><td>SRAM</td><td>48 KB = 49,152 B, 8 banks</td><td>same</td><td>code, memcpy runtime and its buffers, task table</td><td><span class="tag vendor">Vendor</span> <a href="03-processing-element.html#memory">Ch. 3</a></td></tr>
 <tr><td>fixed overhead (code, memcpy runtime, task table)</td><td>smallest measured: 4,240 B (SAXPY, incl. 1 KB task table); matvec benchmark (N = 8): 4,636 B</td><td><b>smallest: &asymp; 2,850 B (SAXPY); matvec: 3,134 B</b></td><td>grows with your code and tasks: Lab 3 leaves room for only &asymp; 43,600 B of arrays on WSE-3, so its overhead is up to &asymp; 5.5 KB <span class="tag derived">Derived</span></td><td><span class="tag measured">Measured</span> <a href="10-csl-toolchain.html#memory">Ch. 10</a>, <a href="03-processing-element.html#memory-map">Ch. 3</a></td></tr>
-<tr><td>usable for arrays</td><td>&asymp; 43,600&ndash;44,900 B (&asymp; 42.6&ndash;43.9 KB): SAXPY links at N = 5,610 (49,120 B used) and fails at 5,620; Lab 3 at n &asymp; 5,450</td><td><b>&asymp; 45,200&ndash;46,300 B (&asymp; 44&ndash;45 KB)</b>: SAXPY links at N = 5,784; Lab 3 at n &asymp; 5,650</td><td>overflow is a link error, never a run-time one; near the limit, bisect with <code>cs_readelf -m</code></td><td><span class="tag measured">Measured</span> <a href="10-csl-toolchain.html#memory">Ch. 10</a>, <a href="11-lab-first-programs.html#saxpy">Ch. 11</a>, <a href="13-lab-stencil.html#fixed-cost">Ch. 13</a></td></tr>
+<tr><td>usable for arrays</td><td>&asymp; 43,600&ndash;44,900 B (&asymp; 42.6&ndash;43.9 KB): largest SAXPY that links is N = 5,615 (49,152 B, exactly full); 5,616 fails (&ldquo;ran out of PE memory for task table&rdquo;); Lab 3 at n &asymp; 5,450</td><td><b>&asymp; 45,200&ndash;46,300 B (&asymp; 44&ndash;45 KB)</b>: SAXPY links at N = 5,784; Lab 3 at n &asymp; 5,650</td><td>overflow is a link error, never a run-time one; near the limit, bisect with <code>cs_readelf -m</code></td><td><span class="tag measured">Measured</span> <a href="10-csl-toolchain.html#memory">Ch. 10</a>, <a href="11-lab-first-programs.html#saxpy">Ch. 11</a>, <a href="13-lab-stencil.html#fixed-cost">Ch. 13</a></td></tr>
 <tr><td>routable colors</td><td>24</td><td>24</td><td>20 (context switch), 21 (D2H data), 22 (commands), 23 (H2D data): use 0&ndash;19; streaming H2D/D2H colors (&le; 4 each) come out of those (memcpy routes them; you do not list them twice)</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#color-budget">Ch. 4</a>, <a href="07-host-io.html#reserves">Ch. 7</a></td></tr>
-<tr><td>switch-capable colors</td><td>0&ndash;9, 12, 13, 16, 17, 20, 21</td><td>same</td><td>4 route positions per color</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#switches">Ch. 4</a></td></tr>
+<tr><td>switch-capable colors</td><td>0&ndash;9, 12, 13, 16, 17, 20, 21</td><td>same</td><td>a color can cycle through up to 4 route settings (<a href="appendix-a-glossary.html#g-switch-route-positions">switch positions</a>), advanced by control wavelets</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#switches">Ch. 4</a></td></tr>
 <tr><td><a href="appendix-a-glossary.html#g-route-rx-tx">rx</a> directions per route</td><td>exactly 1 (compile error with 2)</td><td><b>several</b> (one-hot)</td><td>tx: any set of the 5 ports</td><td><span class="tag measured">Measured</span> <a href="04-fabric.html#route-register">Ch. 4</a></td></tr>
 <tr><td>fabric inputs per DSD op</td><td>at most 1</td><td><b>more than one</b></td><td>WSE-3 workaround: drain one input into a FIFO</td><td><span class="tag sdk">SDK</span> <a href="06-dsds.html#fabric-dsds">Ch. 6</a></td></tr>
 <tr><td>filters per PE</td><td>6 (one bank)</td><td>6 (4 + 2)</td><td>memcpy uses a <a href="appendix-a-glossary.html#g-filter-range-counter">counter filter</a> on every row</td><td><span class="tag sdk">SDK</span> <a href="04-fabric.html#filters">Ch. 4</a></td></tr>
 <tr><td>input / output queues</td><td>8 / 8</td><td><b>8 / 6</b></td><td>queue 0 (and 1 on WSE-3, the command color) belong to memcpy; queue 1 is free on WSE-2, but start at 2 so the code ports</td><td><span class="tag sdk">SDK</span> <a href="07-host-io.html#reserves">Ch. 7</a></td></tr>
 <tr><td>queue depths (WSE-3)</td><td colspan="2">input 6 / 4 / 2 wavelets for queues 0&ndash;1 / 2&ndash;3 / 4&ndash;7; output 2 / 6 / 2 for 0&ndash;1 / 2&ndash;3 / 4&ndash;5</td><td>small queues are why back-pressure reaches the host fast</td><td><span class="tag sdk">SDK</span> <a href="07-host-io.html#modes">Ch. 7</a></td></tr>
 <tr><td><a href="appendix-a-glossary.html#g-data-task">data tasks</a></td><td>one per input queue (0&ndash;7): 6 free (2&ndash;7)</td><td><b>one per receive color</b>; task ID = color</td><td>a fabric DSD reading a queue needs its data task unbound or blocked</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#budget">Ch. 5</a></td></tr>
-<tr><td><a href="appendix-a-glossary.html#g-local-task">local task IDs</a></td><td>8&ndash;30 (compiler); use <b>8&ndash;20</b></td><td><b>0&ndash;30</b>, minus memcpy's and the IDs of colors you receive on: in practice 0&ndash;20, 25, 26</td><td>memcpy: 21, 24, 27, 28, 30; 29 = teardown (never bind); 31 = NOP; 21&ndash;23 also marked reserved on WSE-3; on WSE-2, 22 and 23 are the data tasks of memcpy's colors 22/23; 24 is <code>SYS_EN_MAIN</code> (context switch), reused by the SDK stencil on WSE-2</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#budget">Ch. 5</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-local-task">local task IDs</a></td><td>8&ndash;30 (compiler); use <b>8&ndash;20</b></td><td><b>0&ndash;30</b>, minus memcpy's and the IDs of colors you receive on: in practice 0&ndash;20, 25, 26. Example: receiving on color 10 binds data task 10, so local task 10 is no longer yours</td><td>memcpy: 21, 24, 27, 28, 30; 29 = teardown (never bind); 31 = NOP; 21&ndash;23 also marked reserved on WSE-3; on WSE-2, 22 and 23 are the data tasks of memcpy's colors 22/23; 24 is <code>SYS_EN_MAIN</code> (context switch), reused by the SDK stencil on WSE-2</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#budget">Ch. 5</a></td></tr>
 <tr><td>activatable IDs</td><td colspan="2">below 31 only: the DSD's activate/unblock field is 5 bits</td><td>control wavelets can reach higher IDs</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#portability">Ch. 5</a></td></tr>
 <tr><td><a href="appendix-a-glossary.html#g-control-task">control task IDs</a></td><td colspan="2">0&ndash;63 (64 is rejected)</td><td>memcpy: 33&ndash;37 and 40</td><td><span class="tag measured">Measured</span> <a href="05-tasks.html#sentinels">Ch. 5</a></td></tr>
 <tr><td>task priority</td><td colspan="2">one bit per ID for IDs 0&ndash;31 (HIGH/LOW); order among equals undocumented</td><td>wavelet tasks: set on the color (WSE-2) or queue (WSE-3)</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#priority">Ch. 5</a></td></tr>
-<tr><td><a href="appendix-a-glossary.html#g-microthread">microthreads</a></td><td>8, IDs 0&ndash;7; <code>.ut_id</code> or default = queue ID</td><td><b>8, always = queue ID</b></td><td>memcpy moves its data with microthread 0; a FIFO takes 2; two concurrent ops must never share one</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#portability">Ch. 5</a>, <a href="06-dsds.html#fifos">Ch. 6</a></td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-microthread">microthreads</a></td><td>8, IDs 0&ndash;7; <code>.ut_id</code> or default = queue ID</td><td><b>8, always = queue ID</b></td><td>memcpy moves its data with microthread 0, so at most 7 are yours; a FIFO takes 2; two concurrent ops must never share one</td><td><span class="tag sdk">SDK</span> <a href="05-tasks.html#portability">Ch. 5</a>, <a href="06-dsds.html#fifos">Ch. 6</a></td></tr>
 <tr><td><a href="appendix-a-glossary.html#g-dsr-data-structure-register">DSRs</a> / <a href="appendix-a-glossary.html#g-gpr">GPRs</a></td><td>48 / 16</td><td>not published</td><td>non-comptime DSDs cost DSRs (<code>--dump-dsr-alloc-graph</code>)</td><td><span class="tag vendor">Vendor</span> <a href="06-dsds.html#dsrs">Ch. 6</a></td></tr>
+<tr id="libs-row"><td>library modules (<code>&lt;collectives_2d&gt;</code>, stencil, allreduce)</td><td colspan="2">each instance takes colors, task IDs, queues and DSRs <em>you</em> assign it: <code>&lt;collectives_2d&gt;</code> owns 2 colors, 2 local task IDs, 2 input/output queue pairs and 1 DSR set per axis, so SUMMA&rsquo;s two instances take colors 0&ndash;3, tasks 8&ndash;11 and queues 2&ndash;5 (program 06). Lab 5: stencil colors 0&ndash;7, tasks 14&ndash;16, queues 4&ndash;7; allreduce color 8, tasks 17&ndash;20, queue 2 (program 07)</td><td>library code also raises the fixed overhead: beside two <code>&lt;collectives_2d&gt;</code> instances it is &asymp; 6,750&ndash;8,560 B on WSE-3 <span class="tag derived">Derived</span> from SUMMA&rsquo;s link limits (T = 45 links, 46 fails); the checker&rsquo;s program 06 preset uses the upper end</td><td><span class="tag sdk">SDK</span> <a href="14-lab-gemm.html#collectives">Ch. 14</a>, <a href="15-lab-cg.html#bud">Ch. 15</a></td></tr>
 <tr><td>software-managed cache</td><td>512 B</td><td>256 B</td><td>no CSL API for it that we found; the CSL standard library never mentions it</td><td><span class="tag vendor">Vendor</span> <a href="03-processing-element.html#feed">Ch. 3</a></td></tr>
 <tr><td><a href="appendix-a-glossary.html#g-fifo">FIFO</a> minimum alignment</td><td>16 B</td><td>8 B</td><td>allocate FIFO buffers on a 16 B (WSE-3) / 8 B (WSE-2) boundary (<code>FIFO_MIN_ALIGNMENT</code>)</td><td><span class="tag sdk">SDK</span> <a href="03-processing-element.html#bank-model">Ch. 3</a></td></tr>
 <tr><td>SRAM banks</td><td colspan="2">8 banks, 16-byte stripe: bank = (byte address &divide; 2) mod 8</td><td>the SDK's matvec pads rows to 16 B &ldquo;to avoid bank conflicts&rdquo;; see also the operand-collision row below</td><td><span class="tag sdk">SDK</span> <a href="03-processing-element.html#bank-model">Ch. 3</a></td></tr>
 <tr><td>fabric around your W &times; H</td><td colspan="2">at least (W + 7) &times; (H + 2) at offsets 4,1; CS-2 hardware is 750 &times; 994, so at most 743 &times; 992</td><td>1 halo + 3 memcpy columns west, 2 memcpy + 1 halo east, 1 halo row above and below (<a href="#fabric-fig">figure</a>)</td><td><span class="tag sdk">SDK</span> <a href="10-csl-toolchain.html#fabric-size">Ch. 10</a></td></tr>
 <tr><td>I/O channels</td><td colspan="2">&le; 16 and &le; your rectangle's rows</td><td>about 7 Gb/s each on hardware</td><td><span class="tag sdk">SDK</span> <a href="07-host-io.html#frame">Ch. 7</a></td></tr>
-<tr><td>clock</td><td>not published (SDK assumes 850 MHz)</td><td><b>1.1 GHz</b> <span class="tag vendor">Vendor, HC22</span></td><td>convert cycles at both when you quote time</td><td><a href="02-the-wafer.html#generations">Ch. 2</a></td></tr>
+<tr><td>clock</td><td>not published: the SDK benchmarks assume 850 MHz <span class="tag sdk">SDK</span>; press estimates for CS-4 put it near 1.4 GHz <span class="tag unv">Analyst, unverified</span></td><td><b>1.1 GHz</b> <span class="tag vendor">Vendor, HC22</span></td><td>say which clock when you turn cycles into time (850 MHz &ndash; 1.4 GHz for WSE-3)</td><td><a href="02-the-wafer.html#generations">Ch. 2</a></td></tr>
 </table></div>
 
 <figure id="mem-fig">
@@ -291,8 +292,8 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 </figure>
 
 <div class="widget" id="bud">
-<h4>Budget checker: will my kernel fit on one PE?</h4>
-<p class="hint">Enter what one PE of your kernel needs, or load a course program. Lists are comma-separated IDs; ranges like <code>8-12</code> work. For async ops, write each concurrent op's queue as <code>o2</code> (output queue 2) or <code>i4</code> (input queue 4); on WSE-3 add <code>:5</code> to give it <code>.ut_id</code> 5. Do not list streaming H2D/D2H colors under "colors you route"; count them in the streaming box. Every limit comes from the table above. <b>OK</b> means within the documented limit, not that the program is correct. Loading a preset explains what it shows; a WSE-3-only preset switches the chip and says so.</p>
+<h4 id="checker">Budget checker: will my kernel fit on one PE?</h4>
+<p class="hint">Enter what one PE of your kernel needs, or load a course program. Lists are comma-separated IDs; ranges like <code>8-12</code> work. For async ops, write each concurrent op's queue as <code>o2</code> (output queue 2) or <code>i4</code> (input queue 4); on WSE-3 add <code>:5</code> to give it <code>.ut_id</code> 5. Do not list streaming H2D/D2H colors under "colors you route"; count them in the streaming box. Every limit comes from the table above. <b>OK</b> means within the documented limit, not that the program is correct. Loading a preset explains what it shows; a WSE-3-only preset switches the chip and says so. Library modules are counted only through the IDs you hand them; their DSRs are not modelled (Lab 4&rsquo;s preset shows the pattern; Ch. 15&rsquo;s <a href="15-lab-cg.html#bud">budget map</a> does it for Lab 5).</p>
 <div class="controls">
 <label>Chip <select id="bu-chip"><option value="wse3">WSE-3</option><option value="wse2">WSE-2</option></select></label>
 <label>Load <select id="bu-pre">
@@ -304,6 +305,7 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 <option value="p04">Lab 3 · program 04 heat stencil (n = 16)</option>
 <option value="p04bad">Lab 3 · first version (queues 2,3 / 2,3)</option>
 <option value="p04ut">Lab 3 · queues 2,3 / 2,3 with .ut_id 4,5</option>
+<option value="p06">Lab 4 · program 06 SUMMA (P = 4, T = 8)</option>
 <option value="p25">25-point stencil (WSE-2 SDK benchmark) ported to WSE-3</option>
 </select></label>
 </div>
@@ -314,7 +316,7 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 <label>f16 elements <input type="number" id="bu-f16" min="0" value="0"></label>
 <label>other bytes <input type="number" id="bu-oth" min="0" value="0"></label>
 <label>fixed overhead, B <input type="number" id="bu-ovh" min="0" value="4240"></label>
-<small>FIFO buffers and timestamp arrays count as "other". Overhead defaults to the smallest measured program (SAXPY: 4,240 B WSE-3, &asymp; 2,850 B WSE-2); it grows with code (matvec 4,636 / 3,134 B; Lab 3 up to &asymp; 5.5 KB), so treat anything within 0.5 KB of 48 KB as "bisect".</small>
+<small>FIFO buffers and timestamp arrays count as "other". Overhead defaults to the smallest measured program (SAXPY: 4,240 B WSE-3, &asymp; 2,850 B WSE-2); it grows with code (matvec 4,636 / 3,134 B; Lab 3 up to &asymp; 5.5 KB), so treat anything within 0.5 KB of 48 KB as "bisect". Right at the edge the overhead can be about 8 B smaller than this (alignment): SAXPY at N = 5,615 links at exactly 49,152 B.</small>
 </fieldset>
 <fieldset><legend>Fabric</legend>
 <label>colors you route <input type="text" id="bu-col" value=""></label>
@@ -484,7 +486,7 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
   const E = {}; ids.forEach(k => E[k] = $("#bu-" + k));
   const PRE = {
     p01: { v: { f32: 128, oth: 0, col: "", str: 0, loc: "", ctl: "", dq: "", iq: "", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 0 }, params: "N:64",
-      note: "Program 01 (Ch. 10, 11): two f32 arrays of N = 64. It is the smallest program in the course, so its fixed part is the overhead default. Try f32 = 11,220 (N = 5,610): Ch. 10 measured it linking at 49,120 B; 11,240 (N = 5,620) fails to link." },
+      note: "Program 01 (Ch. 10, 11): two f32 arrays of N = 64. It is the smallest program in the course, so its fixed part is the overhead default. Try f32 = 11,230 (N = 5,615): the largest SAXPY that links, at exactly 49,152 B (Ch. 11); the checker says \"check\" because at the edge the real overhead is 4,232 B, not 4,240. 11,232 (N = 5,616) fails to link." },
     p02: { v: { f32: 4, oth: 4, col: "", str: 1, loc: "", ctl: "", dq: "2", iq: "2", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 0 }, params: "N:100 --params=MEMCPYH2D_DATA_1_ID:0",
       note: "Program 02: one streaming H2D color (color 0, chosen by MEMCPYH2D_DATA_1_ID), counted in the streaming box, not under colors. On WSE-3 its data task binds to input queue 2; on WSE-2 to the color itself (task ID 0)." },
     p03: { v: { f32: 32, oth: 12, col: "0,1", str: 0, loc: "9", ctl: "", dq: "", iq: "2", oq: "2", ops: "i2o2", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 }, params: "P:8,M:32",
@@ -497,10 +499,13 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
       note: "Lab 3's first version: sends and receives on queues 2 and 3 share microthreads 2 and 3. Measured on both chips: FATAL \"trying to term ut_instr[3], but it's not ours\" at cycle 2,123 (WSE-3) / 2,125 (WSE-2), and the host hangs (Ch. 5). Two fixes: input queues 4,5 (the program 04 preset), or, on WSE-3 only, .ut_id 4,5 (next preset)." },
     p04ut: { v: { f32: 34, oth: 24, col: "0-3", str: 0, loc: "10-13", ctl: "", dq: "", iq: "2,3", oq: "2,3", ops: "o2,o3,i2:4,i3:5", fifo: 0, w: 8, h: 1, rx: 1, fin: 1 }, params: "P:8,n:16", chip: "wse3",
       note: "The WSE-3-only fix: keep queues 2,3 but give the receives .ut_id 4 and 5, so no two ops share a microthread. WSE-2 has no .ut_id, so this preset is WSE-3 only." },
+    p06: { v: { f32: 321, oth: 84, col: "0-3", str: 0, loc: "8-15", ctl: "", dq: "", iq: "2-5", oq: "2-5", ops: "i2,i3", fifo: 0, w: 4, h: 4, rx: 1, fin: 1 }, params: "P:4,Mt:8,Kt:8,Nt:8,kernel:0", ovh: { wse3: 8564, wse2: 6744 },
+      note: "Program 06 (Lab 4, Ch. 14), kernel 0: five 8 × 8 f32 tiles (A, B, C and the two receive buffers, plus a 1-word T_tile) and 84 B of timestamps. Two <collectives_2d> instances own colors 0–3, tasks 8–11 and queues 2–5; your tasks are 12–15. A step's x and y broadcasts run at once on microthreads 2 and 3 (a root sends on o2/o3 instead). The overhead is the upper end of what SUMMA's link limits allow beside the library. Try f32 = 10,126 (T = 45): exactly 49,152 B, and it links; T = 46 fails." },
     p25: { v: { f32: 0, oth: 0, col: "4-7", str: 0, loc: "2,3,8-20,24-26", ctl: "", dq: "", iq: "", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 1 }, chip: "wse3",
       note: "The SDK's 25-point stencil (benchmarks/25-pt-stencil) routes colors 4–7 and binds 18 local tasks: 2, 3, 8–20 and 24–26, which works on WSE-2. This preset shows why it does not port to WSE-3 as written: 2 and 3 are below 8, 24 is memcpy's, and 25–26 are outside the safe 8–20 (Ch. 5). Memory is not modelled for it." },
   };
-  const OVH = { wse3: 4240, wse2: 2850 }, SRAM = 49152, MARGIN = 512;
+  const OVH = { wse3: 4240, wse2: 2850 }, SRAM = 49152, MARGIN = 512, EDGE = 16; // EDGE: alignment slack measured at the SAXPY limit
+  const ovhFor = (p, chip) => (p && p.ovh ? p.ovh[chip] : OVH[chip]);
   let curParams = "", note = "";
   function list(s) {
     const out = [], bad = [];
@@ -537,8 +542,9 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
     const add = (name, used, limit, st, msg, frac, meter = true) => rows.push({ name, used, limit, st, msg, frac, meter });
     // memory
     const ovh = num("ovh"), arr = 4 * num("f32") + 2 * num("f16") + num("oth"), tot = arr + ovh;
-    add("SRAM", `${tot.toLocaleString()} B`, "49,152 B", tot > SRAM ? "bad" : tot > SRAM - MARGIN ? "warn" : "ok",
-      tot > SRAM ? "over 48 KB: the linker stops with \"ran out of PE memory\""
+    add("SRAM", `${tot.toLocaleString()} B`, "49,152 B", tot > SRAM + EDGE ? "bad" : tot > SRAM - MARGIN ? "warn" : "ok",
+      tot > SRAM + EDGE ? "over 48 KB: the linker stops with \"ran out of PE memory\""
+        : tot > SRAM ? `${tot - SRAM} B over by this estimate, but at the very edge alignment can make the overhead about 8 B smaller (SAXPY N = 5,615 links at exactly 49,152 B). Bisect with cs_readelf -m`
         : tot > SRAM - MARGIN ? `within ${MARGIN} B of 48 KB: overhead varies with code (4,240 B for SAXPY, more for bigger programs), so this may or may not link. Bisect with cs_readelf -m`
         : `arrays ${arr.toLocaleString()} B + overhead ${ovh.toLocaleString()} B; ${(SRAM - tot).toLocaleString()} B to spare`, tot / SRAM);
     drawMem(ovh, arr);
@@ -655,8 +661,8 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
     $("#bu-cmd code").textContent = `cslc --arch=${chip} ./layout.csl ${fd} \\\n  ${curParams ? `--params=${curParams} ` : ""}-o out --memcpy --channels ${ch}\ncs_python run.py --name out`;
   }
   E.chip.onchange = () => {
-    E.ovh.value = OVH[E.chip.value];
     const p = PRE[$("#bu-pre").value];
+    E.ovh.value = ovhFor(p, E.chip.value);
     $("#bu-note").textContent = p ? (p.chip && p.chip !== E.chip.value ? `${p.note} You switched to WSE-2, but this preset is meant for WSE-3.` : p.note) : "";
     check();
   };
@@ -667,7 +673,7 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
     E.f16.value = 0; E.ch.value = 1;
     let sw = "";
     if (p.chip && E.chip.value !== p.chip) { E.chip.value = p.chip; sw = " Chip switched to WSE-3."; }
-    E.ovh.value = OVH[E.chip.value];
+    E.ovh.value = ovhFor(p, E.chip.value);
     curParams = p.params || ""; note = p.note + sw;
     $("#bu-note").textContent = note;
     check();

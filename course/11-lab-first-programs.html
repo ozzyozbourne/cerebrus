@@ -283,7 +283,7 @@ SUCCESS!
   <span class="b">@export_symbol</span>(ts_ptr, <span class="s">&quot;ts&quot;</span>);
   <span class="b">@export_symbol</span>(saxpy);
 }</code></pre>
-<p>The host reads <code>ts</code> as six 16-bit words and joins each three into a 48-bit count (the end of <code>timed/run.py</code>). <code>tsc.enable_tsc()</code> starts the counter from zero on this PE, so a stamp means "cycles since this PE called it" <span class="tag sdk">SDK 2.10.1, &lt;time&gt;</span>. Only subtract two stamps taken on the <em>same</em> PE: each PE calls <code>enable_tsc()</code> when the launch reaches it, so stamps from different PEs carry different offsets. <a href="12-lab-neighbours.html#measuring">Lab 2</a> times many PEs and relies on exactly this rule; <a href="appendix-c-measuring.html#tsc">Appendix C</a> has the details.</p>
+<p>The host reads <code>ts</code> as six 16-bit words and joins each three into a 48-bit count (the end of <code>timed/run.py</code>). <code>tsc.enable_tsc()</code> starts the counter from zero on this PE, so a stamp means "cycles since this PE called it" <span class="tag sdk">SDK 2.10.1, &lt;time&gt; (reset_tsc_counter)</span>. Only subtract two stamps taken on the <em>same</em> PE: each PE calls <code>enable_tsc()</code> when the launch reaches it, so stamps from different PEs carry different offsets. <a href="12-lab-neighbours.html#measuring">Lab 2</a> times many PEs and relies on exactly this rule; <a href="appendix-c-measuring.html#tsc">Appendix C</a> has the details.</p>
 <p>Run it with <code>bash commands.sh N HALF PAD</code>, for example <code>bash commands.sh 1024 1 0</code>. <code>PAD</code> counts elements of the array's type, not 16-bit words: <code>PAD 1</code> is 4 bytes in f32 mode (two 16-bit words) and 2 bytes in f16 mode, so f16 <code>PAD 4</code> moves y by 8 bytes.</p>
 <div class="filename">course/programs/01-saxpy/timed/expected_output.txt</div>
 <pre class="output"><code>N=64 f32 @fmacs PAD=0: kernel 143 cycles (TSC)
@@ -543,7 +543,7 @@ SUCCESS!
 
 <div class="callout bug">
 <strong>The bug, and the debugging method</strong>
-<p><a href="07-host-io.html#modes">Chapter 7's widget</a> animates this race; here is how it was found. The first version had no <code>wait_done</code>. All 100 tasks fired and max/min were right, but the sum was 30.818 instead of 26.138 <span class="tag measured">Measured</span>. Steps taken:</p>
+<p><a href="07-host-io.html#cmd">Chapter 7's widget</a> animates this race; here is how it was found. The first version had no <code>wait_done</code>. All 100 tasks fired and max/min were right, but the sum was 30.818 instead of 26.138 <span class="tag measured">Measured</span>. Steps taken:</p>
 <ol>
 <li>Copied the program to a scratch directory, added an exported <code>seen[N]</code> array, and recorded each received value: all 100 matched the input exactly, so the transport was fine.</li>
 <li>Recorded the running sum after each task instead: every partial sum matched <code>numpy.cumsum</code>. So the device computed the right answer.</li>
@@ -647,7 +647,7 @@ function codeLines(file) {
     ["pe", "sram", "@fmacs ×64", "pe", 18, 3124, 3250, "blocked", 3, "One instruction walks all 64 elements: y[i] = y[i] + x[i]·2.5. Seq 0 at cycle 3,124, Seq 63 at 3,250: 127 cycles, 2 per element (a bank conflict; see 'Measure the kernel')."],
     ["pe", "mod", "unblock_cmd_stream()", "pe", 20, 3251, 3251, "free", 3, "Your line executes UBLK at cycle 3,251. Without it the stream stays blocked forever and the next memcpy aborts with 'could be a kernel stall'.", 1],
     ["host", "mod", "memcpy_d2h(y) · cmd · color 22", "run", 23, 3252, 3776, "busy", 3, "The read command (already waiting if Python sent it early) is decoded and the send path set up. Cycles 3,252–3,776."],
-    ["sram", "rt", "data · color 21 · 1 elem + 1 ctrl ×64", "run", 23, 3777, 7645, "busy", 3, "One element at a time: a data send (task T21, 35 cycles) then a control wavelet that advances memcpy's switch (T30, 21 cycles). About 60 cycles per element: 57% of the whole run."],
+    ["sram", "rt", "data · color 21 · 1 elem + 1 ctrl ×64", "run", 23, 3777, 7645, "busy", 3, "One element at a time: a data send (task T21, 35 cycles) then a control wavelet that advances memcpy's switch (T30, 21 cycles). About 56 cycles per element: 57% of the whole run. memcpy's round-robin unit is one element (chunk = 1), so even one PE pays a control wavelet per element."],
     ["rt", "host", "64 floats → out · stop()", "run", 24, 7689, 7740, "free", 3, "memcpy's exit task T28 unblocks at 7,689; the simulator stops after 50 idle cycles, at 7,740. run.py compares with numpy and prints SUCCESS!", 1],
   ];
   const rowY = i => 58 + i * 21.5;
@@ -757,6 +757,10 @@ function codeLines(file) {
   // on_value() start cycles from sim.log (WSE-3, N=100), with and without the barrier. Measured.
   const ST = { bar: [1331,1368,1406,1444,1484,1524,1564,1604,1644,1684,1722,1762,1802,1842,1882,1922,1962,2002,2042,2082,2122,2162,2202,2242,2280,2320,2360,2400,2440,2480,2520,2560,2600,2640,2680,2720,2760,2800,2840,2880,2920,2960,3000,3040,3080,3120,3160,3200,3240,3280,3320,3360,3400,3440,3480,3520,3560,3600,3640,3680,3720,3760,3798,3838,3878,3918,3958,3998,4038,4078,4118,4158,4198,4238,4278,4318,4390,4430,4470,4510,4550,4590,4630,4670,4712,4771,4830,4889,4948,5033,5072,5111,5150,5189,5226,5265,5304,5343,5382,5421],
     nob: [1325,1362,1400,1438,1478,1518,1558,1598,1638,1678,1716,1756,1796,1836,1876,1916,1956,1996,2036,2076,2116,2156,2196,2236,2274,2314,2354,2394,2434,2474,2514,2554,2594,2634,2674,2714,2754,2794,2834,2874,2914,2954,2994,3034,3074,3114,3154,3194,3234,3274,3314,3354,3394,3434,3474,3514,3554,3594,3634,3674,3714,3754,3792,3832,3872,3912,3952,3992,4032,4072,4112,4152,4192,4232,4272,4312,4384,4424,4464,4504,4544,4584,4624,4664,4706,4765,4824,4883,4942,5001,5060,5119,5178,5266,5502,5598,5694,5790,5886,5953] };
+  // memcpy's own tasks on the same core [start, end, task], from a traced rerun that matches the runs above to within a few cycles
+  // (WSE-3, N = 100), up to the stats readback. Measured.
+  const MT = { bar: [[107,124,"T01"],[167,187,"T01"],[236,918,"T01"],[994,1104,"T01"],[1108,1327,"T29"],[4355,4386,"T29"],[4707,4709,"T27"],[4749,4769,"T01"],[4808,4828,"T01"],[4867,4887,"T01"],[4926,4946,"T01"],[4985,5030,"T01"],[5463,5671,"T01"],[5677,5875,"T29"],[5876,5910,"T21"],[5911,5931,"T30"],[5936,5970,"T21"],[5971,5991,"T30"],[5996,6030,"T21"],[6031,6051,"T30"],[6056,6090,"T21"],[6091,6111,"T30"],[6116,6144,"T21"]],
+    nob: [[106,123,"T01"],[167,187,"T01"],[236,913,"T01"],[989,1099,"T01"],[1103,1322,"T29"],[4350,4381,"T29"],[4702,4704,"T27"],[4744,4764,"T01"],[4803,4823,"T01"],[4862,4882,"T01"],[4921,4941,"T01"],[4980,5000,"T01"],[5039,5059,"T01"],[5098,5118,"T01"],[5157,5177,"T01"],[5216,5264,"T01"],[5302,5500,"T29"],[5540,5574,"T21"],[5575,5595,"T30"],[5636,5670,"T21"],[5671,5691,"T30"],[5732,5766,"T21"],[5767,5787,"T30"],[5828,5862,"T21"],[5863,5883,"T30"],[5924,5952,"T21"]] };
   // running f32 sum after k values (np.cumsum of rng(1).uniform(-10,10,100)); device matches it exactly
   const CS = [0.236432,9.24571,2.1289,11.1019,7.33852,5.80504,12.3591,10.5431,11.535,2.08613,7.1564,7.91926,4.5139,10.2825,6.34637,5.41633,-1.90284,-3.84058,-9.77148,-14.5252,-9.51792,-13.9097,-14.2059,-4.59118,4.64197,9.13777,9.9623,5.50013,-1.28683,8.11168,8.43305,0.75036,3.22015,8.75382,11.0139,19.3598,10.1517,10.7235,9.9102,1.15719,3.98375,11.0364,12.8952,8.09718,14.8948,15.0847,15.3025,20.3631,13.3215,19.7141,23.3798,29.1218,22.9541,29.0014,22.8278,14.4589,21.5634,28.7891,36.3198,35.758,31.239,21.3808,24.2953,28.6935,35.4048,31.0424,25.3468,28.1334,34.2345,43.5079,36.5184,36.1626,44.057,42.5113,44.3013,34.7912,38.2604,46.6421,53.1786,60.889,64.0961,59.0072,64.3775,58.611,65.2365,56.4909,63.0006,56.2908,53.7937,50.1285,53.9552,47.5267,45.4518,35.5683,30.818176,29.242,21.3604,24.0236,21.6321,26.137941];
   const RUN = {
@@ -770,6 +774,8 @@ function codeLines(file) {
     el("text", { x: 8, y: y + 16, "font-size": 11, class: "muted" }, svg).textContent = b;
     el("line", { x1: x0, x2: x1, y1: y + 22, y2: y + 22, class: "line" }, svg);
   });
+  el("rect", { x: 124, y: 76, width: 10, height: 8, class: "f-amb" }, svg); el("text", { x: 138, y: 84, "font-size": 10.5, class: "muted" }, svg).textContent = "on_value()";
+  el("rect", { x: 210, y: 77, width: 10, height: 6, class: "f-pur", opacity: 0.75 }, svg); el("text", { x: 224, y: 84, "font-size": 10.5, class: "muted" }, svg).textContent = "memcpy task (T01/T21/T29/T30)";
   [0, 2000, 4000, 6000, 8000].forEach(c => el("text", { x: X(c), y: 222, "text-anchor": "middle", "font-size": 10.5, class: "muted" }, svg).textContent = fmt(c));
   el("text", { x: x1, y: 240, "text-anchor": "end", "font-size": 11, class: "muted" }, svg).textContent = "simulated cycles (WSE-3, N = 100, measured)";
   const dyn = el("g", {}, svg);
@@ -782,6 +788,7 @@ function codeLines(file) {
     el("line", { x1: X(R.h2d[1]), x2: X(R.h2d[1]), y1: 26, y2: 128, class: "s-pur", "stroke-width": 1.5, "stroke-dasharray": "3 2" }, dyn);
     const done84 = st.filter(c => c < R.h2d[1]).length;
     el("text", { x: X(R.h2d[1]) + 4, y: 28, "font-size": 11 }, dyn).textContent = `H2D "done" @${fmt(R.h2d[1])}: ${done84}/100 run`;
+    MT[mode].forEach(([a, b, t]) => { const m = el("rect", { x: X(a), y: 96, width: Math.max(1.2, X(b) - X(a)), height: 10, class: "f-pur", opacity: 0.75 }, dyn); el("title", {}, m).textContent = `memcpy ${t}: ${fmt(a)}–${fmt(b)}`; });
     st.forEach((c, i) => el("rect", { x: X(c) - 0.6, y: 90, width: 1.4, height: 22, class: "f-amb", "data-i": i }, dyn));
     if (R.blk) {
       el("rect", { x: X(R.blk[0]), y: 157, width: X(R.blk[1]) - X(R.blk[0]), height: 22, rx: 3, class: "red", "stroke-width": 1 }, dyn);
@@ -798,7 +805,8 @@ function codeLines(file) {
     cur.setAttribute("x1", X(t)); cur.setAttribute("x2", X(t));
     const k = st.filter(c => c <= t).length;
     const done = (c) => st.filter(s => s < c).length;
-    let s = `cycle ${fmt(t)}: ${k} of 100 on_value() tasks have started; running sum = ${k ? CS[k - 1] : 0}\n`;
+    const mt = MT[mode].find(([a, b]) => t >= a && t <= b);
+    let s = `cycle ${fmt(t)}: ${k} of 100 on_value() tasks have started; running sum = ${k ? CS[k - 1] : 0}` + (mt ? `; the core is running memcpy's ${mt[2]}` : "") + "\n";
     if (t < R.h2d[1]) s += "memcpy is still streaming; the host waits in memcpy_h2d().";
     else if (R.blk && t < R.blk[0]) s += "memcpy_h2d() has returned; the host has sent launch('wait_done').";
     else if (R.blk && t < R.blk[1]) s += `stream BLOCKED by wait_done (count was ${done(R.blk[0])} < 100): reads must wait.`;

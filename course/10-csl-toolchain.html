@@ -93,7 +93,7 @@
 <main>
 <div class="kicker">Chapter 10 · Part III · Programming</div>
 <h1>CSL and the toolchain</h1>
-<p class="lede">CSL, the Cerebras Software Language, looks like Zig. Its real content is a type system for hardware resources: colors, queues, tasks and descriptors. This chapter covers the three files every program has and how their names must match, the language, what <code>cslc</code> actually builds, how to read the outputs and decode the errors, the Python alternative (SdkLayout), and how to set the SDK up.</p>
+<p class="lede"><a href="appendix-a-glossary.html#g-csl">CSL</a>, the Cerebras Software Language, looks like Zig. Its real content is a type system for hardware resources: colors, queues, tasks and descriptors. This chapter covers the three files every program has and how their names must match, the language, what <code>cslc</code> actually builds, how to read the outputs and decode the errors, the Python alternative (SdkLayout), and how to set the SDK up.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
@@ -112,8 +112,8 @@
 <p>"A complete program consists of a host program … and at least two CSL code files, one of which defines the layout of the program on a set of PEs, and one or more of which define the programs running on the individual PEs" <span class="tag sdk">SDK 2.10.1, gemv-01</span>. Grid coordinates are always (x = column, y = row), and sizes are width × height.</p>
 <div class="files3">
 <div class="f-l"><h3>layout.csl</h3><p class="when">runs at <b>compile time</b></p><ul><li>size of the PE rectangle</li><li>which code file and params each PE gets</li><li>routes for every color (<code>@set_color_config</code>)</li><li>names the host may use</li></ul></div>
-<div class="f-p"><h3>pe_program.csl</h3><p class="when">runs <b>on each PE</b> (one or more files)</p><ul><li>arrays in the PE's 48 KB <span class="tag vendor">Vendor</span></li><li>DSDs, queues, tasks</li><li>RPC functions for the host</li><li>no <code>main</code>: code runs only when the host calls an RPC or a task is woken (<a href="05-tasks.html">Ch 5</a>)</li><li>one compiled program per distinct PE (see "What cslc builds")</li></ul></div>
-<div class="f-h"><h3>run.py</h3><p class="when">runs <b>on the host</b> (under <code>cs_python</code>)</p><ul><li>SdkRuntime: load, run, stop</li><li>memcpy data in and out</li><li>launch RPCs</li><li>check results with numpy</li></ul></div>
+<div class="f-p"><h3>pe_program.csl</h3><p class="when">runs <b>on each PE</b> (one or more files)</p><ul><li>arrays in the PE's 48 KB <span class="tag vendor">Vendor</span></li><li>DSDs, queues, tasks</li><li><a href="appendix-a-glossary.html#g-launch-rpc">RPC</a> functions for the host</li><li>no <code>main</code>: code runs only when the host calls an RPC or a task is woken (<a href="05-tasks.html">Ch 5</a>)</li><li>one compiled program per distinct PE (see "What cslc builds")</li></ul></div>
+<div class="f-h"><h3>run.py</h3><p class="when">runs <b>on the host</b> (under <code>cs_python</code>)</p><ul><li><a href="appendix-a-glossary.html#g-sdkruntime">SdkRuntime</a>: load, run, stop</li><li>memcpy data in and out</li><li>launch RPCs</li><li>check results with numpy</li></ul></div>
 </div>
 
 <div class="widget" id="nm">
@@ -183,7 +183,7 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <h3>One run, step by step</h3>
 <div class="widget" id="rs">
 <h4>Host ↔ memcpy ↔ PE during one SAXPY run</h4>
-<p class="hint">Step through run.py. The bar at the right is the PE's command stream (color 22): green = open, red = blocked. Tick the box to replay the run with <code>unblock_cmd_stream()</code> deleted. Where to put the call in async code is <a href="07-host-io.html">Chapter 7</a>'s widget.</p>
+<p class="hint">Step through run.py. The bar at the right is the PE's <a href="appendix-a-glossary.html#g-command-stream">command stream</a> (color 22): green = open, red = blocked. Tick the box to replay the run with <code>unblock_cmd_stream()</code> deleted. Where to put the call in async code is <a href="07-host-io.html">Chapter 7</a>'s widget.</p>
 <div class="controls">
   <button class="btn secondary small" type="button" id="rs-prev">◀ Prev</button>
   <button class="btn small" type="button" id="rs-next">Next ▶</button>
@@ -212,8 +212,8 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <div>
 <h3 id="hardware-parts">Hardware parts</h3>
 <ul>
-<li><code>param</code>: compile-time constants from the layout or <code>--params</code>. PEs with different params become different PE programs.</li>
-<li><code>comptime { }</code>: bindings (<code>@bind_data_task</code>, <code>@initialize_queue</code>…) and exports, evaluated by the compiler.</li>
+<li><a href="appendix-a-glossary.html#g-param"><code>param</code></a>: compile-time constants from the layout or <code>--params</code>. PEs with different params become different PE programs.</li>
+<li><a href="appendix-a-glossary.html#g-comptime"><code>comptime { }</code></a>: bindings (<code>@bind_data_task</code>, <code>@initialize_queue</code>…) and exports, evaluated by the compiler.</li>
 <li>Resource types name the hardware (table below). For a first single-PE program you need only <code>mem1d_dsd</code>.</li>
 <li><code>@is_arch("wse3")</code> picks per-chip code in one source file.</li>
 <li><code>&lt;layout&gt;</code> gives a PE its own coordinates at run time: <code>@import_module("&lt;layout&gt;").get_x_coord()</code>, so you need not pass <code>.x = x</code> as a param <span class="tag sdk">SDK 2.10.1, gemv-07</span>.</li>
@@ -247,7 +247,7 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <tr><td><code>mem1d_dsd</code></td><td>a hardware loop over SRAM</td><td><a href="06-dsds.html">Ch 6</a>, program 01</td></tr>
 <tr><td><code>fabin_dsd</code> / <code>fabout_dsd</code></td><td>a hardware loop over wavelets from / to a queue</td><td><a href="06-dsds.html">Ch 6</a>, program 03</td></tr>
 </table></div>
-<p class="legend">Types and builtin names <span class="tag sdk">SDK 2.10.1</span>; 24 colors per PE <span class="tag sdk">SDK 2.10.1</span>, see Chapter 4.</p>
+<p class="legend">Types and builtin names <span class="tag sdk">SDK 2.10.1</span>; 24 colors per PE <span class="tag sdk">SDK 2.10.1</span>, see <a href="04-fabric.html#color-budget">Chapter 4</a>.</p>
 
 <details class="card-d">
 <summary>Language reference card: the features you meet in the SDK examples</summary>
@@ -293,7 +293,7 @@ Every bug we hit while writing this course's programs was about a resource, not 
 <ul>
 <li>an export's mutability flag (<code>true</code> in the layout, a <code>const</code> pointer on the device; program 02): a compile error, decoded below;</li>
 <li>a race where the host read results before the last data task ran (<a href="07-host-io.html">Chapter 7</a>, copy vs streaming; program 02 in <a href="11-lab-first-programs.html">Lab 1</a>);</li>
-<li>two asynchronous DSD operations on the same microthread, which collide or stall (<a href="05-tasks.html">Chapter 5</a>, <a href="06-dsds.html">Chapter 6</a>; the Lab 3 rebuild with queues 2/3 aborts with "trying to term ut_instr[3], but it's not ours").</li>
+<li>two asynchronous DSD operations on the same microthread, which collide or stall (<a href="05-tasks.html">Chapter 5</a>, <a href="06-dsds.html">Chapter 6</a>; the <a href="13-lab-stencil.html">Lab 3</a> rebuild with queues 2/3 aborts with "trying to term ut_instr[3], but it's not ours").</li>
 </ul>
 The scalar language is the easy part.
 </div>
@@ -328,7 +328,7 @@ The scalar language is the easy part.
 }</code></pre>
 <div class="table-wrap"><table>
 <tr><th>Module</th><th>What for</th><th>Key calls</th><th>Tutorial</th></tr>
-<tr><td><code>&lt;memcpy/get_params&gt;</code> (layout), <code>&lt;memcpy/memcpy&gt;</code> (PE)</td><td>host I/O</td><td><code>get_params(x)</code>, <code>unblock_cmd_stream()</code></td><td>gemv-01, Ch 7</td></tr>
+<tr><td><code>&lt;memcpy/get_params&gt;</code> (layout), <code>&lt;memcpy/memcpy&gt;</code> (PE)</td><td>host I/O</td><td><code>get_params(x)</code>, <code>unblock_cmd_stream()</code></td><td>gemv-01, <a href="07-host-io.html#command-stream">Ch 7</a></td></tr>
 <tr><td><code>&lt;layout&gt;</code></td><td>run-time coordinates</td><td><code>get_x_coord()</code>, <code>get_y_coord()</code></td><td>gemv-07</td></tr>
 <tr><td><code>&lt;simprint&gt;</code></td><td>print to <code>sim.log</code></td><td><code>print_string</code>, <code>print_u32_decimal</code>, <code>print_f32</code>, <code>fmt</code>, <code>fmt_with_coords</code></td><td>topic-13</td></tr>
 <tr><td><code>&lt;debug&gt;</code></td><td>trace buffers the host reads</td><td><code>trace_string</code>, <code>trace_u32</code>, <code>trace_f32</code>, <code>trace_timestamp</code>, <code>put_u32</code></td><td>topic-12</td></tr>
@@ -340,7 +340,7 @@ The scalar language is the easy part.
 <tr><td>also</td><td colspan="3"><code>&lt;control&gt;</code>, <code>&lt;malloc&gt;</code>, <code>&lt;message_passing&gt;</code> ("note that B (base=19) clashes with memcpy"), <code>&lt;complex&gt;</code>, <code>&lt;string&gt;</code>, <code>&lt;dsd_ops&gt;</code>, <code>&lt;timer&gt;</code>, <code>&lt;directions&gt;</code>, <code>&lt;types&gt;</code></td></tr>
 <tr><td><code>&lt;kernels/fft/fft3d_layout&gt;</code>, <code>&lt;kernels/fft/fft3d&gt;</code></td><td>a ready-made 3-D FFT (pencil decomposition)</td><td>layout module (<code>width</code>, <code>memcpy</code>): <code>FFT_kernel(width, n, T)</code>; PE module params: <code>colors</code>, <code>ut_ids</code>, <code>iq_ids</code>, <code>oq_ids</code>, <code>local_task_ids</code>; calls <code>csfftExecC2C</code>, <code>csfftExecR2C</code></td><td>fft-3d (WSE-3 script only)</td></tr>
 <tr><td><code>&lt;kernels/tally/layout&gt;</code>, <code>&lt;kernels/tally/pe&gt;</code></td><td>global "every PE is done" tally, reported from one PE</td><td><code>get_params(i, j)</code></td><td>histogram-torus (WSE-2 script only)</td></tr>
-<tr><td><code>benchmark-libs/allreduce</code>, <code>benchmark-libs/stencil_3d_7pts</code> (in the extras, not the image)</td><td>reusable user-level modules: rectangle allreduce; 3-D 7-point SpMV</td><td>imported by relative path, colors passed as params</td><td>7pt-stencil-spmv and the four CG-family solvers (conjugate-gradient, preconditioned-conjugate-gradient, bicgstab, power-method); Ch 15</td></tr>
+<tr><td><code>benchmark-libs/allreduce</code>, <code>benchmark-libs/stencil_3d_7pts</code> (in the extras, not the image)</td><td>reusable user-level modules: rectangle allreduce; 3-D 7-point SpMV</td><td>imported by relative path, colors passed as params</td><td>7pt-stencil-spmv and the four CG-family solvers (conjugate-gradient, preconditioned-conjugate-gradient, bicgstab, power-method); <a href="15-lab-cg.html">Ch 15</a></td></tr>
 </table></div>
 <p class="legend">Function names read from <code>csl-libs/*.csl</code> in the SDK image <span class="tag sdk">SDK 2.10.1</span>. Every SDK example, with its chips and the chapter that explains it, is in <a href="appendix-d-sdk-index.html">Appendix D</a>.</p>
 <p><b>If an import fails with "Unable to open ./src/../../benchmark-libs/…".</b> Five benchmarks, <code>7pt-stencil-spmv</code> and the four CG-family solvers, import <code>benchmark-libs</code> by a relative path. The SDK wrappers run <code>cslc</code> in a container that sees only the current directory, <code>$TMPDIR</code> and any <code>CSL_IMPORT_PATH</code> entries, so the import fails even in place in the extras tree. Copy <code>benchmark-libs/</code> next to the example. If both copies are under <code>$TMPDIR</code> (<code>env.sh</code> sets it to <code>/home/user/cerebras-sdk/tmp</code>), that is enough. Anywhere else, also run <code>export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)</code> before the commands script; the wrapper bind-mounts that path. The compiler's own flag, <code>--import-path DIR</code>, adds a search directory for <code>&lt;…&gt;</code> imports, but alone it did not fix this case for us <span class="tag measured">Measured, WSE-3</span>. Details in <a href="appendix-d-sdk-index.html#run">Appendix D</a>.</p>
@@ -377,7 +377,7 @@ cs_python run.py --name out</code></pre>
 </div>
 
 <h3 id="fabric-size">The fabric-size rule</h3>
-<p>With <code>--memcpy</code>, your rectangle sits inside the memcpy frame (<a href="07-host-io.html">Chapter 7</a>): 1 halo + 3 memcpy columns on the west, which is why your (0,0) is fabric (4,1), and 2 memcpy + 1 halo on the east, plus one halo row above and below. The wrapper's own check (<code>_generate_memcpy</code> in <code>cslc</code>, run after your program has compiled; <code>width_west_buf</code> and <code>width_east_buf</code> are extra buffer columns, 0 by default, see <a href="#flags">Flags</a>) is <span class="tag sdk">SDK 2.10.1</span>:</p>
+<p>With <code>--memcpy</code>, your rectangle sits inside the <a href="appendix-a-glossary.html#g-memcpy-frame">memcpy frame</a> (<a href="07-host-io.html#frame">Chapter 7</a>): 1 <a href="appendix-a-glossary.html#g-halo">halo</a> + 3 memcpy columns on the west, which is why your (0,0) is fabric (4,1), and 2 memcpy + 1 halo on the east, plus one halo row above and below. The wrapper's own check (<code>_generate_memcpy</code> in <code>cslc</code>, run after your program has compiled; <code>width_west_buf</code> and <code>width_east_buf</code> are extra buffer columns, 0 by default, see <a href="#flags">Flags</a>) is <span class="tag sdk">SDK 2.10.1</span>:</p>
 <ul>
 <li><code>offset_x ≥ 4 + width_west_buf</code> and <code>offset_y ≥ 1</code>;</li>
 <li><code>fabric_w ≥ offset_x + W + 3 + width_east_buf</code> and <code>fabric_h ≥ offset_y + H + 1</code>.</li>
@@ -466,7 +466,7 @@ cs_python run.py --name out</code></pre>
 <p>Your color 3 sits next to memcpy's colors on every PE. Commands (22) and H2D data (23) enter from the west and are passed both to the PE (R) and east along the row; D2H data (21) leaves eastward. Its <code>sw-1</code> entry <code>rx=R</code> is a second router position: memcpy switches the router to it with a control wavelet, so the PE's own D2H data (from the ramp, R) can join the eastbound stream (<a href="04-fabric.html#switches">Chapter 4, switches</a>). PE coordinates in this table are rectangle coordinates.</p>
 
 <h2 id="sim-outputs">Simulator outputs</h2>
-<p>The simulator writes <code>sim.log</code>, <code>sim_stats.json</code>, <code>simconfig.json</code> and <code>simfab_traces/</code> into the directory you ran <code>cs_python</code> from; the host's <code>print</code> output goes to your terminal. A real <code>sim_stats.json</code> from program 01 (WSE-3, a quiet rerun) <span class="tag measured">Measured</span>:</p>
+<p>The simulator writes <a href="appendix-a-glossary.html#g-sim-log-sim-stats-json"><code>sim.log</code>, <code>sim_stats.json</code></a>, <code>simconfig.json</code> and <code>simfab_traces/</code> into the directory you ran <code>cs_python</code> from; the host's <code>print</code> output goes to your terminal. A real <code>sim_stats.json</code> from program 01 (WSE-3, a quiet rerun) <span class="tag measured">Measured</span>:</p>
 <pre class="output"><code>"cycle_count": 7740,          <span class="c"># whole run: load, every memcpy, your kernel, idle tail</span>
 "fabric_x": 8, "fabric_y": 3,  <span class="c"># --fabric-dims</span>
 "hwtile_count": 10,           <span class="c"># tiles simulated as full PEs</span>
@@ -523,7 +523,7 @@ w = (w &amp; <span class="n">0xffff</span>).astype(np.int64).reshape(P, <span cl
 
 <h3 id="hangs">When it hangs: a four-step procedure</h3>
 <ol>
-<li><b>Read the run.py traceback.</b> "received length … kernel stall" means some RPC never unblocked, or a task you waited for never ran.</li>
+<li><b>Read the run.py traceback.</b> "received length … <a href="appendix-a-glossary.html#g-kernel-stall-error">kernel stall</a>" means some RPC never unblocked, or a task you waited for never ran.</li>
 <li><b>Print from the device.</b> Add a <code>&lt;simprint&gt;</code> line at the entry and exit of each task, rerun, and look at the last line each PE printed: <code>grep 'PE(' sim.log</code>.</li>
 <li><b>Check the routes you think you set</b>: <code>--out-routes</code> at compile time, or <code>cs_readelf --routing out/bin/out_i_j.elf</code>.</li>
 <li><b>Only then go instruction by instruction</b>: the instruction trace below, or <code>csdb</code> (subcommands <code>memory</code>, <code>register</code>, <code>trace</code>, <code>wavelet</code>…; this course verified only its help screens).</li>
@@ -552,11 +552,11 @@ d.read_trace(4 + x, 1 + y, <span class="s">'trace'</span>)  <span class="c"># fa
 <p class="legend">Read after <code>rt.stop()</code>, so the program must finish. <code>read_trace</code> takes <b>fabric</b> coordinates, hence <code>4 + x, 1 + y</code> <span class="tag sdk">SDK 2.10.1, topic-12</span>.</p>
 </div>
 </div>
-<p><b>Instruction trace.</b> Setting <code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace</code> before <code>cs_python</code> makes the simulator log every instruction. For SAXPY this grew <code>sim.log</code> to about 6 MB (86,000 lines) and showed lines such as <code>@3124 P4.1: … [EX OP] … FMACS Dest:3f24aefe Src0:3ea86eb5 Src1:3e00bf6c Src2:40200000</code>, where <code>P4.1</code> is fabric (4,1), <code>T01</code> the task ID and <code>40200000</code> is 2.5 in hex <span class="tag measured">Measured</span>. It shows which task each PE runs, cycle by cycle, and is the quickest way to see where a PE stopped. Use it on small runs only. (<code>sdk_debug_shell instr-trace</code> does not read the simulator's default CTF traces; it says to use csdb <span class="tag sdk">SDK 2.10.1</span>.)</p>
+<p><b><a href="appendix-a-glossary.html#g-instruction-trace">Instruction trace</a>.</b> Setting <code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace</code> before <code>cs_python</code> makes the simulator log every instruction. For SAXPY this grew <code>sim.log</code> to about 6 MB (86,000 lines) and showed lines such as <code>@3124 P4.1: … [EX OP] … FMACS Dest:3f24aefe Src0:3ea86eb5 Src1:3e00bf6c Src2:40200000</code>, where <code>P4.1</code> is fabric (4,1), <code>T01</code> the task ID and <code>40200000</code> is 2.5 in hex <span class="tag measured">Measured</span>. It shows which task each PE runs, cycle by cycle, and is the quickest way to see where a PE stopped. Use it on small runs only. (<code>sdk_debug_shell instr-trace</code> does not read the simulator's default CTF traces; it says to use csdb <span class="tag sdk">SDK 2.10.1</span>.)</p>
 <p>A cheap trick we used for the streaming race in program 02: export an extra array, have the data task record each running sum into it, read it back, and compare with <code>numpy.cumsum</code>. On a deterministic simulator, recording state is often faster than stepping a debugger.</p>
 
 <h2 id="sdklayout">The other way to lay out: SdkLayout</h2>
-<p>The SDK has a second, newer way to build programs, with five tutorials (sdklayout-01 to -05) <span class="tag sdk">SDK 2.10.1</span>. Instead of <code>layout.csl</code> and <code>cslc</code>, a Python script under <code>cs_python</code> creates <em>code regions</em>, "paints" routes with symbolic colors, places regions anywhere on the fabric, and calls <code>layout.compile()</code> itself. "The SdkLayout engine will automatically find optimal routes" between ports you connect. memcpy is not used (<code>memcpy_required=False</code>), so there is no frame: running sdklayout-02 gave <code>fabric_x: 2, fabric_y: 1, iotile_count: 0</code> and <code>cycle_count: 81</code>, against 8 × 3 and 7,740 for SAXPY with memcpy <span class="tag measured">Measured</span>.</p>
+<p>The SDK has a second, newer way to build programs (<a href="appendix-a-glossary.html#g-sdklayout">SdkLayout</a>), with five tutorials (sdklayout-01 to -05) <span class="tag sdk">SDK 2.10.1</span>. Instead of <code>layout.csl</code> and <code>cslc</code>, a Python script under <code>cs_python</code> creates <em>code regions</em>, "paints" routes with symbolic colors, places regions anywhere on the fabric, and calls <code>layout.compile()</code> itself. "The SdkLayout engine will automatically find optimal routes" between ports you connect. memcpy is not used (<code>memcpy_required=False</code>), so there is no frame: running sdklayout-02 gave <code>fabric_x: 2, fabric_y: 1, iotile_count: 0</code> and <code>cycle_count: 81</code>, against 8 × 3 and 7,740 for SAXPY with memcpy <span class="tag measured">Measured</span>.</p>
 <div class="grid2">
 <div>
 <div class="filename">layout.csl + cslc (program 03 style)</div>
@@ -863,18 +863,18 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     "pe_program.csl": {
       1: "Receives the struct passed by <code>@set_tile_code</code> (<code>.memcpy_params = …</code>). No type: it is whatever get_params returned.",
       2: "Same name as layout's N, but a separate declaration. Its value comes from <code>.N = N</code> in layout.csl:9; leave that out and this param is uninitialised.",
-      4: "The device side of the host-I/O runtime. It reserves colors 20–23, local task IDs 21/24/27/28/30, control task IDs 33–37 and 40, and queue 0 (plus queue 1 on WSE-3) " + S + "; Chapter 7 has the table.",
+      4: "The device side of the host-I/O runtime. It reserves colors 20–23, local task IDs 21/24/27/28/30, control task IDs 33–37 and 40, and queue 0 (plus queue 1 on WSE-3) " + S + "; <a href=\"07-host-io.html#reserves\">Chapter 7</a> has the table.",
       7: "Arrays live in this PE's 48 KB SRAM " + V + "; there is nowhere else. Two arrays of 64 f32 plus code and runtime: 4,752 bytes " + M + ".",
       8: "twin:7",
       9: "The host addresses memory by symbol, not by type, so exports are many-item <code>[*]</code> pointers with no length; the length comes from the memcpy call. <code>var</code> matches the layout's mutable flag.",
       10: "twin:9",
-      13: "A memory DSD: N elements of x, stride 1. The compiler turns it into a descriptor held in a data-structure register.",
+      13: "A memory DSD: N elements of x, stride 1. The compiler turns it into a descriptor held in a <a href=\"appendix-a-glossary.html#g-dsr-data-structure-register\">data-structure register</a> (DSR).",
       14: "twin:13",
       16: "The RPC body. It runs on the PE when the host calls <code>launch('saxpy', a)</code>; memcpy's RPC control task calls it with the argument.",
       18: "One vector instruction: y[i] = y[i] + x[i] · a for all N elements. Name: f(loat) + mac + s (32-bit single). Siblings: <code>@fadds</code>, <code>@fmuls</code>, <code>@fsubs</code>, and <code>…h</code> for f16 (Chapter 6). Each operand can be a DSD or a scalar. Here it ran from cycle 3,124 to 3,250 " + M + ": 2 cycles per element, not the 1 per element of <a href=\"06-dsds.html#collisions\">Chapter 6</a>, because x and y start in the same SRAM bank. Rates are layout-dependent: peak needs the two source streams in opposite halves of the 16-byte bank cycle, and same-bank halves the rate. Pad one word between x and y and it drops to 1 cycle per element (<a href=\"11-lab-first-programs.html#kernel-time\">Lab 1</a>) " + M + ".",
       20: "Mandatory: releases this PE's command stream so the next host command can run. Forget it and the program still compiles; the host's next memcpy aborts with \"could be a kernel stall\" " + M + ".",
       23: "Compile-time block for bindings and exports.",
-      24: "Connects the device symbol <code>x_ptr</code> to the name \"x\" declared in the layout.",
+      24: "Connects the device symbol <code>x_ptr</code> to the name \"x\" declared in the layout. Misspell the name and cslc stops (\"not declared during layout evaluation\"); delete the line and it compiles, then the first <code>memcpy_h2d</code> fails with a <code>TypeError</code> " + M + ".",
       25: "twin:24",
       26: "No name string: the function is exported under its own name, which must match <code>@export_name(\"saxpy\", …)</code>. Delete this line and the build still succeeds, but <code>saxpy</code> is missing from out_rpc.json and launch fails " + M + ".",
     },
@@ -887,7 +887,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
       15: "Opens the compiled program. <code>cmaddr=None</code> selects the simulator; an IP:port means a real CS system, which also needs a recompile for its fabric size.",
       16: "Looks up exported symbols. The IDs come from <code>out/bin/out_rpc.json</code>: x = 1, y = 2, saxpy = 3 " + M + ".",
       17: "Loads every ELF (yours, the 5 frame programs and <code>generated/</code>) onto the simulated fabric and starts it.",
-      18: "<code>streaming=False</code> = copy mode (write into an exported array; Chapter 7). <code>ROW_MAJOR</code> = how the host array maps onto the PE rectangle. <code>MEMCPY_32BIT</code> = element size. <code>nonblock=False</code> = the call returns when the copy is done.",
+      18: "<code>streaming=False</code> = copy mode (write into an exported array; <a href=\"07-host-io.html#modes\">Chapter 7</a>). <code>ROW_MAJOR</code> = how the host array maps onto the PE rectangle. <code>MEMCPY_32BIT</code> = element size. <code>nonblock=False</code> = the call returns when the copy is done.",
       19: "Arguments: (symbol, host array, x0, y0, width, height, elements per PE, …). Writes N floats into x on the 1 × 1 rectangle at (0,0). Becomes a command on color 22 with data on color 23 " + S + ".",
       20: "twin:19",
       21: "Sends an RPC command with a = 2.5. In our runs it returned to Python even when the device never unblocked; the failure shows at the next command " + M + ".",
