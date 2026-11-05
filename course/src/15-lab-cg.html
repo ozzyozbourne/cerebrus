@@ -719,8 +719,8 @@
     }
     T("text", { x: 10, y: 372, "font-size": 12, class: "f-red" }, s, "PE 0 sends a teardown wavelet: every PE resets its routes and switch, and the next stage starts.");
     T("text", { x: 10, y: 392, "font-size": 11.5, class: "muted" }, s, "sw 0 = forward from the west, sw 1 = take from my own CE. Values arrive farthest first, one message per PE.");
-    T("text", { x: 10, y: 414, "font-size": 11.5, class: "f-pur" }, s, "Where ≈ 50 cycles per PE go (estimate from the library source, not measured): the sender's async @mov32 completes → task f_send_ctrl");
-    T("text", { x: 10, y: 432, "font-size": 11.5, class: "f-pur" }, s, "runs → control @mov32 → next switch flips → value crosses → the last PE's async @fadds re-activates f_send_data: 2–3 task runs + async starts.");
+    T("text", { x: 10, y: 414, "font-size": 11.5, class: "f-pur" }, s, "Where ≈ 50 cycles per PE go (estimated from the library source, not measured): the sender's async @mov32 completes →");
+    T("text", { x: 10, y: 432, "font-size": 11.5, class: "f-pur" }, s, "f_send_ctrl runs → control @mov32 → next switch flips → value crosses → last PE's async @fadds re-activates f_send_data.");
   })();
 
   // ---------- allreduce fit vs W + H ----------

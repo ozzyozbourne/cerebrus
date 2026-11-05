@@ -114,7 +114,7 @@ The cycle-level simulator has no Ethernet or TCP, so none of the labs can measur
 <div class="table-wrap"><table>
 <tr><th>Resource</th><th>Reserved by memcpy</th><th>Consequence for you</th></tr>
 <tr><td><a href="appendix-a-glossary.html#g-color">Colors</a></td><td>20 context switch, 21 D2H data, 22 <a href="appendix-a-glossary.html#g-command-stream">command stream</a>, 23 H2D data</td><td>use colors 0–19; each streaming H2D/D2H channel also takes one of these (program 02 gives color 0 to its stream)</td></tr>
-<tr><td>Local tasks (both chips)</td><td>21 (D2H data), 24 (main after context switch), 27 (unblock commands), 28 (exit), 30 (send control); 29 = teardown, 31 = NOP</td><td>never bind 21–31; never bind task 29 even outside memcpy (<a href="04-fabric.html#teardown">Chapter 4</a>)</td></tr>
+<tr><td>Local tasks (both chips)</td><td>21 (D2H data), 24 (main after context switch), 27 (unblock commands), 28 (exit), 30 (send control); 29 = teardown, 31 = NOP</td><td>avoid all of these IDs; never bind task 29 in any program (<a href="04-fabric.html#teardown">Chapter 4</a>)</td></tr>
 <tr><td>Local tasks, WSE-3</td><td>local IDs start at 8; the SDK's topic-09 map also marks 21–23 reserved</td><td>use <strong>8–20</strong>. Programs 01–05 use 9–13; Labs 4–5 go up to 20</td></tr>
 <tr><td>Local tasks, WSE-2</td><td>IDs 0–23 double as the data-task IDs of colors 0–23</td><td>use 0–20, but skip the IDs of colors you receive on (a data task on color c takes ID c). See the ID map in <a href="05-tasks.html#budget">Chapter 5's budget check</a></td></tr>
 <tr><td>Control tasks</td><td>33–37 (push params, H2D, D2H, RPC, ignore), 40 (context switch)</td><td>pick other IDs in [0, 64) for sentinels</td></tr>

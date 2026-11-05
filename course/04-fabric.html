@@ -94,6 +94,8 @@
 <div class="readout" id="bp-out" aria-live="polite"></div>
 </div>
 
+<p id="multicast-stall"><strong>A multicast waits for its slowest branch.</strong> A multicast route (a <code>tx</code> with several ports, <a href="#routes">below</a>) copies each wavelet to every tx port. If one branch has no room, the wavelet does not go ahead down the others. I checked this on a 3-PE column with program 05's routes and M = 64. I kept the middle PE's CE busy for about 1,050 cycles before it began to receive. The bottom PE was ready from the start, yet it finished at 1,136 cycles instead of 96, and the root's send finished at 1,119 instead of 82. With M = 8, which the root pushed into buffers within 21 cycles, the bottom PE still waited until cycle 1,080. WSE-2 behaves the same way (bottom PE done at 2,154 behind a 2,074-cycle delay) <span class="tag measured">Measured, SDK 2.10.1 simulator, each PE timed on its own TSC</span>. So a broadcast such as Lab 2's (<a href="12-lab-neighbours.html#broadcast">Chapter 12</a>) runs at the pace of its slowest receiver.</p>
+
 <h3 id="latency">Latency is paid once, length once per word</h3>
 <p>Wavelets pipeline. Sending a 1,000-element f32 vector 100 PEs east, the first wavelet arrives after about 2 (ramp) + 100 (hops) + 2 (ramp) ≈ 104 cycles, and the rest follow one per cycle behind it, so the whole vector lands after about 1,100 cycles: 1.0 µs at 1.1 GHz, 1.3 µs at 850 MHz <span class="tag derived">Derived</span>. Distance adds latency once; length costs one cycle per word. Each link carries 32 bits per cycle, which is 4.4 GB/s per direction at 1.1 GHz, or 3.4 GB/s at 850 MHz <span class="tag derived">Derived</span>. That is a fifth or less of the ~23 GB/s a PE gets from its own SRAM (Chapter 3). Moving a word to a neighbour is cheap, but keeping it local is cheaper.</p>
 <p>I checked this on the SDK simulator. A row of P PEs sends M wavelets east through pass-through routers, and the last PE streams them straight back west on a second color. PE 0 times the round trip with its own timestamp counter, so no clocks have to be compared across PEs. Each extra PE in the row adds 2 hops (out and back). The slope came out at <strong>2.0 cycles per hop on WSE-3 and 1.0 on WSE-2</strong>, and each extra wavelet adds 1 cycle on WSE-3 <span class="tag measured">Measured, SDK 2.10.1 simulator</span>.</p>
@@ -105,7 +107,92 @@
 <tr><td>WSE-2, M = 1</td><td>36</td><td>48</td><td>96</td><td>160</td><td>2.0 / PE = 1.0 / hop</td></tr>
 <tr><td>WSE-2, M = 64</td><td>162</td><td>162</td><td>159</td><td>223</td><td>about 2 cycles per wavelet; the distance is hidden until P = 64</td></tr>
 </tbody></table></div>
-<p class="small" style="font-size:14px;color:var(--muted)">Method: <code>--fabric-dims=P+7,3</code>, one color east and one west, an async <code>@fmovs</code> fabric-to-fabric relay at the far end, and <code>&lt;time&gt;</code> stamps on PE 0 before the send and in the receive-completion task <span class="tag measured">Measured</span>. The fixed ~36–44 cycles cover four ramps, the DSD start-up and the relay. In this test WSE-2 streamed at about one wavelet per 2 cycles, a CE-side limit I did not chase further. The simulator's per-hop cost is a model, not silicon. Papers report about 1 cycle per hop on hardware <span class="tag indep">Indep</span>. A CE that adds as well as relays (Lab 2) costs about 7 cycles per PE <span class="tag measured">Measured, Ch. 12</span>.</p>
+<p class="small" style="font-size:14px;color:var(--muted)">Method: <code>--fabric-dims=P+7,3</code>, one color east and one west, an async <code>@fmovs</code> fabric-to-fabric relay at the far end, and <code>&lt;time&gt;</code> stamps on PE 0 before the send and in the receive-completion task <span class="tag measured">Measured</span>. The fixed ~36–44 cycles cover four ramps, the DSD start-up and the relay. In this test WSE-2 streamed at about one wavelet per 2 cycles, a CE-side limit I did not chase further. The simulator's per-hop cost is a model, not silicon. Papers report about 1 cycle per hop on hardware <span class="tag indep">Indep</span>. The program is in the box below.</p>
+<p id="ce-hop"><strong>A hop through a CE costs 4–6 router hops.</strong> A PE that receives, adds and forwards (Lab 2's chain) costs about <strong>9.2 cycles per PE on WSE-3 and 6.0 on WSE-2</strong>, against 2.0 / 1.0 for a pure router hop <span class="tag measured">Measured, round trip, <a href="12-lab-neighbours.html#hop-cost">Ch. 12 #hop-cost</a></span>. (An older "~7 cycles per PE" came from comparing clocks on different PEs and is wrong.) Roughly, on WSE-3: one router hop (2) + down the ramp (≈ 2) + up the ramp (≈ 2) + the CE taking the wavelet from its input queue, adding, and handing it to its output queue (the remaining ≈ 3) ≈ 9 <span class="tag derived">Derived; only the total is measured, the ramp figure is from the papers</span>. That is the rule behind <a href="#relay">relaying, below</a>: keep traffic in the routers (pass-through, multicast), and send it through a CE only when the CE has work to do on it.</p>
+
+<details class="callout" id="try-hops">
+<summary><strong>Try it yourself: the hop-cost round trip</strong></summary>
+<p>Three files in one directory outside <code>/tmp</code> (cs_python fails there). PE 0 sends M wavelets east on c0 through P − 2 pass-through routers; the last PE's CE relays them back west on c1; PE 0 stamps its TSC before the send and in the receive-completion task.</p>
+<div class="filename">layout.csl</div>
+<pre><code><span class="k">param</span> P: i16; <span class="k">param</span> M: i16;
+<span class="k">const</span> c0: <span class="n">color</span> = <span class="b">@get_color</span>(0);   <span class="c">// eastbound</span>
+<span class="k">const</span> c1: <span class="n">color</span> = <span class="b">@get_color</span>(1);   <span class="c">// westbound</span>
+<span class="k">const</span> memcpy = <span class="b">@import_module</span>("&lt;memcpy/get_params&gt;", .{ .width = P, .height = 1 });
+<span class="k">layout</span> {
+  <span class="b">@set_rectangle</span>(P, 1);
+  <span class="k">for</span> (<span class="b">@range</span>(i16, P)) |x| {
+    <span class="k">const</span> role: i16 = <span class="k">if</span> (x == 0) 0 <span class="k">else if</span> (x == P - 1) 2 <span class="k">else</span> 1;
+    <span class="b">@set_tile_code</span>(x, 0, "pe_program.csl", .{ .memcpy_params = memcpy.get_params(x),
+                   .M = M, .role = role, .c0 = c0, .c1 = c1 });
+    <span class="k">if</span> (role == 0) {
+      <span class="b">@set_color_config</span>(x, 0, c0, .{ .routes = .{ .rx = .{RAMP}, .tx = .{EAST} } });
+      <span class="b">@set_color_config</span>(x, 0, c1, .{ .routes = .{ .rx = .{EAST}, .tx = .{RAMP} } });
+    } <span class="k">else if</span> (role == 1) {   <span class="c">// pure router hops: the CE never sees these</span>
+      <span class="b">@set_color_config</span>(x, 0, c0, .{ .routes = .{ .rx = .{WEST}, .tx = .{EAST} } });
+      <span class="b">@set_color_config</span>(x, 0, c1, .{ .routes = .{ .rx = .{EAST}, .tx = .{WEST} } });
+    } <span class="k">else</span> {
+      <span class="b">@set_color_config</span>(x, 0, c0, .{ .routes = .{ .rx = .{WEST}, .tx = .{RAMP} } });
+      <span class="b">@set_color_config</span>(x, 0, c1, .{ .routes = .{ .rx = .{RAMP}, .tx = .{WEST} } });
+    }
+  }
+  <span class="b">@export_name</span>("start", <span class="k">fn</span>()<span class="k">void</span>); <span class="b">@export_name</span>("go", <span class="k">fn</span>()<span class="k">void</span>); <span class="b">@export_name</span>("t", [*]u16, <span class="k">true</span>);
+}</code></pre>
+<div class="filename">pe_program.csl</div>
+<pre><code><span class="k">param</span> memcpy_params; <span class="k">param</span> M: i16; <span class="k">param</span> role: i16; <span class="k">param</span> c0: <span class="n">color</span>; <span class="k">param</span> c1: <span class="n">color</span>;
+<span class="k">const</span> sys_mod = <span class="b">@import_module</span>("&lt;memcpy/memcpy&gt;", memcpy_params);
+<span class="k">const</span> tsc = <span class="b">@import_module</span>("&lt;time&gt;");
+<span class="k">var</span> t = <span class="b">@zeros</span>([2 * tsc.tsc_size_words]u16);   <span class="c">// start stamp, end stamp</span>
+<span class="k">var</span> t_ptr: [*]u16 = &amp;t;
+<span class="k">var</span> v: [M]f32; <span class="k">var</span> w: [M]f32;
+<span class="k">const</span> v_dsd = <span class="b">@get_dsd</span>(mem1d_dsd, .{ .tensor_access = |i|{M} -&gt; v[i] });
+<span class="k">const</span> w_dsd = <span class="b">@get_dsd</span>(mem1d_dsd, .{ .tensor_access = |i|{M} -&gt; w[i] });
+<span class="k">const</span> oq: output_queue = <span class="b">@get_output_queue</span>(<span class="k">if</span> (role == 0) 2 <span class="k">else</span> 3);
+<span class="k">const</span> iq: input_queue  = <span class="b">@get_input_queue</span>(4);
+<span class="k">const</span> send_c = <span class="k">if</span> (role == 0) c0 <span class="k">else</span> c1;
+<span class="k">const</span> recv_c = <span class="k">if</span> (role == 0) c1 <span class="k">else</span> c0;
+<span class="k">const</span> out_dsd = <span class="b">@get_dsd</span>(fabout_dsd, <span class="k">if</span> (<span class="b">@is_arch</span>("wse3")) .{ .extent = M, .output_queue = oq }
+                                     <span class="k">else</span> .{ .extent = M, .output_queue = oq, .fabric_color = send_c });
+<span class="k">const</span> in_dsd  = <span class="b">@get_dsd</span>(fabin_dsd, .{ .extent = M, .input_queue = iq });
+<span class="k">const</span> done_id: local_task_id = <span class="b">@get_local_task_id</span>(10);
+<span class="k">const</span> idle_id: local_task_id = <span class="b">@get_local_task_id</span>(11);
+<span class="k">task</span> done() <span class="k">void</span> { tsc.get_timestamp(<span class="b">@ptrcast</span>(*[3]u16, &amp;t[3])); sys_mod.unblock_cmd_stream(); }
+<span class="k">task</span> idle() <span class="k">void</span> { }
+<span class="k">fn</span> start() <span class="k">void</span> {
+  tsc.enable_tsc();
+  <span class="c">// the relay is armed before PE 0 sends, so launch skew is not timed</span>
+  <span class="k">if</span> (role == 2) <span class="b">@fmovs</span>(out_dsd, in_dsd, .{ .async = <span class="k">true</span>, .activate = idle_id });
+  sys_mod.unblock_cmd_stream();
+}
+<span class="k">fn</span> go() <span class="k">void</span> {
+  <span class="k">if</span> (role != 0) { sys_mod.unblock_cmd_stream(); <span class="k">return</span>; }
+  tsc.get_timestamp(<span class="b">@ptrcast</span>(*[3]u16, &amp;t[0]));
+  <span class="b">@fmovs</span>(w_dsd, in_dsd, .{ .async = <span class="k">true</span>, .activate = done_id });   <span class="c">// arm the receive</span>
+  <span class="b">@fmovs</span>(out_dsd, v_dsd, .{ .async = <span class="k">true</span> });                        <span class="c">// then send</span>
+}
+<span class="k">comptime</span> {
+  <span class="b">@bind_local_task</span>(done, done_id); <span class="b">@bind_local_task</span>(idle, idle_id);
+  <span class="k">if</span> (role != 1) {
+    <span class="b">@initialize_queue</span>(oq, <span class="k">if</span> (<span class="b">@is_arch</span>("wse3")) .{ .color = send_c } <span class="k">else</span> .{});
+    <span class="b">@initialize_queue</span>(iq, .{ .color = recv_c });
+  }
+  <span class="b">@export_symbol</span>(start); <span class="b">@export_symbol</span>(go); <span class="b">@export_symbol</span>(t_ptr, "t");
+}</code></pre>
+<div class="filename">run.py (core) and the commands</div>
+<pre><code>rt = SdkRuntime(args.name); rt.load(); rt.run()
+rt.launch('start', nonblock=False); rt.launch('go', nonblock=False)
+w = np.zeros(6, dtype=np.uint32)        <span class="c"># 16-bit words arrive in u32 slots</span>
+rt.memcpy_d2h(w, rt.get_id('t'), 0, 0, 1, 1, 6, streaming=False, order=MemcpyOrder.ROW_MAJOR,
+              data_type=MemcpyDataType.MEMCPY_16BIT, nonblock=False)
+rt.stop(); w = (w &amp; 0xffff).astype(np.int64)
+ts = <span class="k">lambda</span> k: w[k] + (w[k+1] &lt;&lt; 16) + (w[k+2] &lt;&lt; 32)
+print("round trip on PE 0 =", ts(3) - ts(0), "cycles")
+
+P=8; M=1
+cslc --arch=wse3 ./layout.csl --fabric-dims=$((P+7)),3 --fabric-offsets=4,1 \
+  --params=P:$P,M:$M -o out --memcpy --channels 1
+cs_python run.py --name out</code></pre>
+<p>Rerun for this page (SDK 2.10.1 simulator): WSE-3 M = 1 gave 44 / 164 cycles at P = 2 / 32 and M = 64 gave 137 at P = 8; WSE-2 M = 1 gave 48 / 96 at P = 8 / 32 <span class="tag measured">Measured</span>, matching the table within a few cycles. Variations: change <code>--arch</code>, P and M. For the ≈ 9-cycle CE hop, time program 03's chain the same way, as <a href="12-lab-neighbours.html#hop-cost">Chapter 12</a> does.</p>
+</details>
 
 <div class="widget" id="lat">
 <h4>Stream-time calculator</h4>
