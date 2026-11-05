@@ -7,7 +7,7 @@ const sys_mod = @import_module("<memcpy/memcpy>", memcpy_params);
 const tsc = @import_module("<time>");          // the PE's 48-bit timestamp counter
 const T: type = if (HALF != 0) f16 else f32;
 
-// x and y are contiguous; PAD extra words at the end of x shift where y starts.
+// x and y are contiguous; PAD extra elements of T (not 32-bit words) at the end of x shift where y starts.
 var x: [N + PAD]T;
 var y: [N]T;
 var x_ptr: [*]T = &x;

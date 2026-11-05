@@ -177,7 +177,7 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <ol class="pinlist">
 <li><b>The loop runs at compile time.</b> <code>layout {}</code> is evaluated by the compiler, so <code>x</code> is a constant in each pass and every <code>@set_tile_code</code> and <code>@set_color_config</code> is fixed before anything runs on the wafer.</li>
 <li><b>Two colors, by column parity.</b> The file's own comment (lines 8–10): "A middle PE receives on one color and sends on the other; with a single color its router could not tell 'incoming from WEST, deliver to me' from 'outgoing from me, go EAST'." The pattern is <a href="04-fabric.html#checkerboard">Chapter 4's checkerboard</a>.</li>
-<li><b>Role × parity gives the PE programs.</b> The first PE (even, sends only), the last PE (receives only), and middle PEs of even and odd parity are the four distinct combinations of params and routes, so P = 8 builds 4 ELFs (<a href="#builds">What cslc builds</a>) <span class="tag measured">Measured</span>.</li>
+<li><b>Role × parity gives the PE programs.</b> The first PE (even, sends only), the last PE (receives only), and middle PEs of even and odd parity are the four distinct combinations of params and routes, so P = 8 builds 4 <a href="appendix-a-glossary.html#g-elf">ELFs</a> (<a href="#builds">What cslc builds</a>) <span class="tag measured">Measured</span>.</li>
 </ol>
 
 <h3>One run, step by step</h3>

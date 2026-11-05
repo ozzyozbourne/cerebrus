@@ -18,11 +18,13 @@ Open `course/index.html` in a browser. It is plain static HTML with no build ste
 |---|---|---|
 | 01-saxpy | layout, memcpy copy mode, RPC, memory DSDs | 7,740 |
 | 02-wavelet-tasks | streaming memcpy, input queues, data tasks, barrier RPC | 7,021 |
-| 03-row-reduce | colors, routes, checkerboard, fabric-to-fabric DSD op | 6,860 |
-| 04-heat-stencil | halo exchange on 4 colors, completion tasks, iteration | 11,665 |
+| 03-row-reduce | colors, routes, checkerboard, fabric-to-fabric DSD op | 6,861 |
+| 04-heat-stencil | halo exchange on 4 colors, completion tasks, iteration | 11,666 |
 | 05-column-broadcast | multicast routes | 7,620 |
-| 06-summa | 2-D SUMMA GEMM with `<collectives_2d>`, TSC broadcast/compute split (adapted from SDK) | 36,971 |
-| 07-cg | conjugate-gradient solver: stencil + allreduce modules, host vs device loop (adapted from SDK) | 145,003 |
+| 06-summa | 2-D SUMMA GEMM with `<collectives_2d>`, TSC broadcast/compute split (adapted from SDK) | 36,959 |
+| 07-cg | conjugate-gradient solver: stencil + allreduce modules, host vs device loop (adapted from SDK) | 145,166 |
+
+The cycle column is the whole-run `[N simulated cycles, WSE-3]` line of each `expected_output.txt`. Whole-run counts include host I/O and vary between reruns: usually by 1–4%, and by much more in some cases (−3% to +41% was seen on one Appendix C example), so compare kernel timings (TSC) rather than these totals; see Appendix C.
 
 All seven pass on both `--arch=wse3` and `--arch=wse2` with the Cerebras SDK 2.10.1 simulator.
 
@@ -43,4 +45,4 @@ python3 course/tools/build.py
 
 ## Sources
 
-The facts come from the research in `reports/Cerebras architecture course research.md` and `research_notes/`. Every number in the course carries a provenance tag (Vendor, Indep, Analyst, SDK 2.10.1, Measured, Derived). The research sessions could not open most vendor documentation sites directly. Many web figures therefore come from search-engine extracts of the primary sources and should be checked against those documents before you rely on them.
+The facts come from the research in `reports/Cerebras architecture course research.md` and `research_notes/`. Every number in the course carries a provenance tag (Vendor, Indep, Analyst, SDK 2.10.1, Measured, Derived, or Unverified for facts no reachable source confirmed). The research sessions could not open most vendor documentation sites directly. Many web figures therefore come from search-engine extracts of the primary sources and should be checked against those documents before you rely on them. `course/appendix-e-sources.html` lists the sources behind each chapter and the live list of unverified figures.

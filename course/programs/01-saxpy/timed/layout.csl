@@ -1,5 +1,5 @@
 // 01-saxpy/timed: the SAXPY kernel timed on the PE with the timestamp counter.
-// HALF:0 -> f32 @fmacs, HALF:1 -> f16 @fmach. PAD: extra words between x and y.
+// HALF:0 -> f32 @fmacs, HALF:1 -> f16 @fmach. PAD: extra elements of T (4 B each for f32, 2 B for f16) between x and y.
 param N: i16;
 param HALF: i16;
 param PAD: i16;
