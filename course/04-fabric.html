@@ -339,10 +339,26 @@ cs_python run.py --name out</code></pre>
 <p>A <strong>counter filter</strong> counts every wavelet, up from its start value to <code>limit</code> and back to 0, and passes a wavelet to the CE only when the counter reads 0. memcpy uses one on every row to deal a host stream round-robin. For a row of width w it sets <code>limit = w − 1</code> and starts PE p at <code>(w − p) mod w</code>, so on a row of 4 the stream x0 x4 x8 x12 x1 … is dealt PE 0: x0 x1 x2 x3, PE 1: x4 … x7, and so on <span class="tag sdk">SDK 2.10.1, memcpy/wse2/memcpyh2d.csl</span> (<a href="07-host-io.html#copy-path">Chapter 7</a> follows a copy through it). Both chips have 6 filters: WSE-2 splits them into two banks (4 + 2), and WSE-3 has one bank of 6 with a reworked counter (pass and drop counts in half-wavelets) <span class="tag sdk">SDK 2.10.1</span>.</p>
 
 <h3 id="teardown">Teardown: rewriting routes between phases</h3>
-<p>A color configured with <code>.teardown = true</code> can be put into teardown state by a TEARDOWN control wavelet. The router sets that color's bit in a teardown-pending register, which has one bit per routable color, and the CE runs local task 29. The handler rewrites the router (<code>@set_local_color_config</code>, plus <code>tile_config</code> calls for filters and switches) and then releases the color <span class="tag sdk">SDK 2.10.1, tile_config/teardown.csl, topic-16</span>. This is how <code>&lt;collectives_2d&gt;</code> provides MPI-style broadcast, scatter, gather and reduce, rooted at any PE, with just two colors per axis <span class="tag sdk">SDK 2.10.1, topic-11</span>. memcpy uses the same mechanism on its own colors. Never bind your own task to 29.</p>
+<p>A color configured with <code>.teardown = true</code> can be put into <a href="appendix-a-glossary.html#g-teardown">teardown</a> state by a TEARDOWN control wavelet. The router sets that color's bit in a teardown-pending register, which has one bit per routable color, and the CE runs local task 29. The handler rewrites the router (<code>@set_local_color_config</code>, plus <code>tile_config</code> calls for filters and switches) and then releases the color <span class="tag sdk">SDK 2.10.1, tile_config/teardown.csl, topic-16</span>. This is how <a href="appendix-a-glossary.html#g-collectives-2d"><code>&lt;collectives_2d&gt;</code></a> provides MPI-style broadcast, scatter, gather and reduce, rooted at any PE, with just two colors per axis <span class="tag sdk">SDK 2.10.1, topic-11</span> (<a href="14-lab-gemm.html#collectives">Chapter 14</a> looks inside it). memcpy uses the same mechanism on its own colors. Never bind your own task to 29.</p>
+<figure>
+<svg viewBox="0 0 760 250" width="760" role="img" aria-label="Three panels: a color's route before teardown, the teardown wavelet arriving, and the handler installing a new route">
+  <g id="td"></g>
+</svg>
+<figcaption><b>One teardown, step by step</b>, for one color c at one PE. <b>1</b>: c runs its phase-1 route. <b>2</b>: a TEARDOWN control wavelet arrives on c; the router sets c's bit in the teardown-pending register and activates local task 29. <b>3</b>: task 29 reads the register, finds c, writes c's new route with <code>@set_local_color_config</code> and calls <code>teardown.exit(c)</code>, which clears c's teardown-in-progress bit <span class="tag sdk">SDK 2.10.1, tile_config/teardown.csl</span>. The routes drawn are an example. That c carries no traffic between steps 2 and 3 is my reading of the in-progress bit, not a documented rule <span class="tag unv">Unverified</span>.</figcaption>
+</figure>
+
+<details class="callout" id="try-switches">
+<summary><strong>Try it yourself: switches and filters on WSE-3</strong></summary>
+<p>Both tutorials ship a WSE-3 script. Copy them outside <code>/tmp</code> and run them; <code>$EX</code> is the SDK examples directory.</p>
+<pre><code>cp -r $EX/tutorials/topic-06-switches ~/t6 &amp;&amp; cd ~/t6 &amp;&amp; bash commands_wse3.sh
+<span class="c"># East result: [0]  South result: [2]  North result: [4]  West result: [6]  SUCCESS!</span>
+cp -r $EX/tutorials/topic-08-filters ~/t8 &amp;&amp; cd ~/t8 &amp;&amp; bash commands_wse3.sh
+<span class="c"># SUCCESS!  (run.py's oracle: 6.5 7 … 10.5 = (10 + i) / 2 for i = 3…11)</span></code></pre>
+<p>Rerun for this page <span class="tag measured">Measured, SDK 2.10.1 simulator, WSE-3</span>. Topic-06's four results are rows 2, 4, 6 and 8 of the <a href="#switches">trace table</a>. In topic-08 the receivers halve each value (<code>recv.csl</code>), so PE 1's 6.5, 7, 7.5 are indices 3–5, and indices 0–2 appear nowhere. To experiment, set <code>current_switch_pos = 0</code> in topic-06 and predict the new results from the table, or change a <code>min_idx</code> in topic-08. Topic-14 (color swap), the histogram-torus and the 25-pt-stencil benchmarks ship only <code>commands_wse2.sh</code> in SDK 2.10.1; game-of-life ships both.</p>
+</details>
 
 <h2 id="relay">Reaching PEs you have no route to</h2>
-<p>The router never inspects destinations. If a destination is not on a configured path, a CE must receive the wavelet, decide, and send it again. The game-of-life benchmark gets diagonal neighbours this way: "each PE … also forwards the received state from its N and S neighbors to its E and W neighbors", so a PE hears its diagonals through the side links <span class="tag sdk">SDK 2.10.1, game-of-life</span>. The histogram-torus benchmark folds a ring onto the mesh and "actively reroute[s]" each wavelet east–west after a north–south leg <span class="tag sdk">SDK 2.10.1</span>. Each software hop costs ramp latency plus task time instead of one cycle, so these patterns are saved for irregular traffic.</p>
+<p>The router never inspects destinations. If a destination is not on a configured path, a CE must receive the wavelet, decide, and send it again. The game-of-life benchmark gets diagonal neighbours this way: "each PE … also forwards the received state from its N and S neighbors to its E and W neighbors", so a PE hears its diagonals through the side links <span class="tag sdk">SDK 2.10.1, game-of-life</span>. The histogram-torus benchmark (WSE-2 only in SDK 2.10.1) folds a ring onto the mesh and "actively reroute[s]" each wavelet east–west after a north–south leg <span class="tag sdk">SDK 2.10.1</span>. Each software hop costs ramp latency plus task time, at least the ≈ 9 / 6 cycles of a CE hop (<a href="#ce-hop">above</a>) instead of 2 / 1 for a router hop, so these patterns are saved for irregular traffic.</p>
 <figure>
 <svg viewBox="0 0 620 200" width="620" role="img" aria-label="A diagonal neighbour's value reaching the centre in two hops through a CE relay">
   <g id="sw"></g>
@@ -451,6 +467,36 @@ cs_python run.py --name out</code></pre>
       }
     }
     T("text", { x: 380, y: 158, "text-anchor": "middle", "font-size": 12, class: "muted" }, chk, "end PEs need one rule; middle PEs need two, one per color");
+  })();
+
+  // ---------- teardown figure ----------
+  (function () {
+    const g = $("#td"), PW = 230;
+    const defs = T("defs", {}, g);
+    [["tdA", "--accent"], ["tdB", "--blue"], ["tdP", "--purple"]].forEach(([id, v]) => { const m = T("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto" }, defs); T("path", { d: "M0,0 L10,5 L0,10 z", fill: cssVar(v) }, m); });
+    const panels = [
+      { t: "1 · phase 1", route: "c: rx WEST → tx RAMP", from: "W", col: "--accent", m: "tdA", note: ["data flows in from the west"], state: "pending bit c = 0" },
+      { t: "2 · TEARDOWN arrives", route: "c: in teardown", from: "W", col: "--purple", m: "tdP", ctrl: true, note: ["router sets pending bit,", "CE's task 29 activates"], state: "pending bit c = 1" },
+      { t: "3 · task 29 rewrites", route: "c: rx EAST → tx RAMP", from: "E", col: "--blue", m: "tdB", note: ["@set_local_color_config(c, …)", "teardown.exit(c)"], state: "pending bit c = 0" },
+    ];
+    panels.forEach((p, i) => {
+      const x0 = 15 + i * (PW + 20), cxp = x0 + PW / 2;
+      T("rect", { x: x0, y: 8, width: PW, height: 234, rx: 10, class: "box", "stroke-width": 1, opacity: 0.6 }, g);
+      T("text", { x: x0 + 10, y: 28, "font-size": 13, "font-weight": 700 }, g, p.t);
+      T("rect", { x: cxp - 40, y: 50, width: 80, height: 56, rx: 8, class: i === 1 ? "pur" : "blu", "stroke-width": 1.5 }, g);
+      T("text", { x: cxp, y: 82, "text-anchor": "middle", "font-size": 12 }, g, "router");
+      T("rect", { x: cxp - 40, y: 140, width: 80, height: 34, rx: 6, class: "acc", "stroke-width": 1.2 }, g);
+      T("text", { x: cxp, y: 162, "text-anchor": "middle", "font-size": 12 }, g, i === 2 ? "CE: task 29" : i === 1 ? "CE ← task 29" : "CE");
+      T("line", { x1: cxp, y1: 106, x2: cxp, y2: 138, stroke: cssVar(p.col), "stroke-width": 2, "marker-end": `url(#${p.m})`, "stroke-dasharray": i === 1 ? "4 3" : "none" }, g);
+      const xa = p.from === "W" ? x0 + 8 : x0 + PW - 8, xb = p.from === "W" ? cxp - 42 : cxp + 42;
+      T("line", { x1: xa, y1: 78, x2: xb, y2: 78, stroke: cssVar(p.col), "stroke-width": 3, "marker-end": `url(#${p.m})` }, g);
+      if (p.ctrl) T("circle", { cx: (xa + xb) / 2, cy: 78, r: 7, fill: cssVar("--surface"), stroke: cssVar("--purple"), "stroke-width": 2.5 }, g);
+      T("text", { x: cxp, y: 124, "text-anchor": "middle", "font-size": 11, class: "mono muted" }, g, "");
+      T("text", { x: cxp, y: 44, "text-anchor": "middle", "font-size": 11, class: "mono" }, g, p.route);
+      p.note.forEach((n, k) => T("text", { x: cxp, y: 196 + k * 16, "text-anchor": "middle", "font-size": 11, class: k || i !== 2 ? "muted" : "mono" }, g, n));
+      if (i === 2) { /* both lines mono */ }
+      T("text", { x: cxp, y: 234, "text-anchor": "middle", "font-size": 11, class: "f-pur mono" }, g, p.state);
+    });
   })();
 
   // ---------- 2-D checkerboard figure ----------

@@ -244,7 +244,7 @@ Cerebras's ML compiler and its production inference kernels are closed. The prim
 <ul>
 <li><b>The budget.</b> At 1.4 GHz the per-layer budget at 2,100 tok/s is ~8,330 cycles, and the measured GEMV is ~62% of it rather than all of it <span class="tag derived">Derived</span>.</li>
 <li><b>What-if A overshoots the launch.</b> Move the clock to 1.40 GHz with A selected: ~1.2 ms per token, ~820 tok/s, almost twice the 450 tok/s of August 2024 <span class="tag derived">Derived</span>. Either the launch software did worse than this model (more collectives per layer, element-wise kernels, synchronous wafer I/O, none of which it counts), or the chip ran slower than the estimate. The budget cannot tell which, and that gap is a fair measure of how rough the model is.</li>
-<li><b>What-if B has slack.</b> At 1.4 GHz B gives ~270 µs (~3,700 tok/s). Removing any one lever still leaves ~2,700 tok/s: without speculation ~365 µs, at the measured kernel rate ~375 µs <span class="tag derived">Derived</span>. At that clock the published 2,100 tok/s needs fewer of the software changes.</li>
+<li><b>What-if B has slack.</b> At 1.4 GHz B gives ~270 µs (~3,800 tok/s). Removing any one lever still leaves ~2,700 tok/s: without speculation ~365 µs, at the measured kernel rate ~375 µs <span class="tag derived">Derived</span>. At that clock the published 2,100 tok/s needs fewer of the software changes.</li>
 <li><b>The one-user ceiling</b> scales with the clock: ~2,000–4,000 tok/s at 850 MHz becomes ~3,300–6,600 at 1.4 GHz <span class="tag derived">Derived</span>. Both ranges contain the measured 2,314.</li>
 </ul>
 </div>
