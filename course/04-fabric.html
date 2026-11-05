@@ -196,11 +196,12 @@ cs_python run.py --name out</code></pre>
 
 <div class="widget" id="lat">
 <h4>Stream-time calculator</h4>
-<p class="hint">Time ≈ ramp up + distance × hop cost + ramp down + (length − 1). All results are <span class="tag derived">Derived</span> from the inputs you pick.</p>
+<p class="hint">Time ≈ op start-up + ramp up + distance × hop cost + ramp down + (length − 1). The start-up is the ≈ 15–17 cycles a DSD operation takes before its first element moves <span class="tag measured">Measured, <a href="06-dsds.html#op-speed">Ch. 6</a></span>; leave it on when you compare with simulator TSC readings, which include it (the round trips above pay it on each op). All results are <span class="tag derived">Derived</span> from the inputs you pick.</p>
 <div class="controls">
 <label>distance <input type="range" id="lat-d" min="1" max="1742" value="100"> <span class="mono" id="lat-dv"></span></label>
 <label>length <input type="range" id="lat-m" min="0" max="12" value="10"> <span class="mono" id="lat-mv"></span></label>
 <label>hop cost <select id="lat-h"><option value="1">1 cycle (papers, Indep)</option><option value="2">2 cycles (WSE-3 simulator, Measured)</option></select></label>
+<label><input type="checkbox" id="lat-s" checked> op start-up ≈ 17</label>
 <label>clock <select id="lat-c"><option value="1.1">1.1 GHz (WSE-2, Vendor)</option><option value="0.85">850 MHz (SDK assumption)</option></select></label>
 </div>
 <svg id="lat-svg" viewBox="0 0 700 90" width="700" role="img" aria-label="Breakdown of stream time"></svg>
@@ -532,18 +533,18 @@ cs_python run.py --name out</code></pre>
     function upd() {
       const d = +$("#lat-d").value, M = 2 ** +$("#lat-m").value, h = +$("#lat-h").value, f = +$("#lat-c").value;
       $("#lat-dv").textContent = `${d} hops`; $("#lat-mv").textContent = `${M} wavelets`;
-      const ramp = 4, hops = d * h, stream = M - 1, tot = ramp + hops + stream, ns = tot / f;
+      const su = $("#lat-s").checked ? 17 : 0, ramp = 4, hops = d * h, stream = M - 1, tot = su + ramp + hops + stream, ns = tot / f;
       svg.innerHTML = "";
-      const W = 660, parts = [["ramps", ramp, "amb"], ["hops", hops, "blu"], ["stream", stream, "grn"]];
+      const W = 660, parts = [["start-up", su, "pur"], ["ramps", ramp, "amb"], ["hops", hops, "blu"], ["stream", stream, "grn"]];
       let x = 20;
       parts.forEach(([n, v, cls]) => { const w = Math.max(v ? 2 : 0, W * v / tot); if (w) T("rect", { x, y: 14, width: w, height: 30, class: cls, "stroke-width": 1 }, svg); x += w; });
       x = 20; let lx = 20;
-      parts.forEach(([n, v]) => { T("text", { x: lx, y: 66, "font-size": 12, class: "muted" }, svg, `${n} ${v.toLocaleString()} (${(100 * v / tot).toFixed(0)}%)`); lx += 220; });
+      parts.forEach(([n, v]) => { T("text", { x: lx, y: 66, "font-size": 12, class: "muted" }, svg, `${n} ${v.toLocaleString()} (${(100 * v / tot).toFixed(0)}%)`); lx += 165; });
       const bw = 4 * M / ns; // bytes per ns = GB/s
-      $("#lat-out").textContent = `first wavelet ≈ ${(ramp + hops).toLocaleString()} cycles · last ≈ ${tot.toLocaleString()} cycles ≈ ${ns >= 1000 ? (ns / 1000).toFixed(2) + " µs" : ns.toFixed(0) + " ns"}\neffective bandwidth ≈ ${bw.toFixed(2)} GB/s (link peak ${(4 * f).toFixed(1)} GB/s)` +
+      $("#lat-out").textContent = `first wavelet ≈ ${(su + ramp + hops).toLocaleString()} cycles · last ≈ ${tot.toLocaleString()} cycles ≈ ${ns >= 1000 ? (ns / 1000).toFixed(2) + " µs" : ns.toFixed(0) + " ns"}\neffective bandwidth ≈ ${bw.toFixed(2)} GB/s (link peak ${(4 * f).toFixed(1)} GB/s)` +
         (d >= 1742 ? "\nd = 1,742 is CS-2 corner to corner (750 × 994 fabric)." : "");
     }
-    ["lat-d", "lat-m", "lat-h", "lat-c"].forEach(id => { $("#" + id).oninput = upd; $("#" + id).onchange = upd; });
+    ["lat-d", "lat-m", "lat-h", "lat-c", "lat-s"].forEach(id => { $("#" + id).oninput = upd; $("#" + id).onchange = upd; });
     upd();
   })();
 

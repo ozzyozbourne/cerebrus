@@ -213,7 +213,7 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <h3 id="hardware-parts">Hardware parts</h3>
 <ul>
 <li><a href="appendix-a-glossary.html#g-param"><code>param</code></a>: compile-time constants from the layout or <code>--params</code>. PEs with different params become different PE programs.</li>
-<li><a href="appendix-a-glossary.html#g-comptime"><code>comptime { }</code></a>: bindings (<code>@bind_data_task</code>, <code>@initialize_queue</code>…) and exports, evaluated by the compiler.</li>
+<li><a href="appendix-a-glossary.html#g-comptime"><code>comptime { }</code></a>: bindings (<code>@bind_data_task</code>, <code>@initialize_queue</code>…; <a href="#task-syntax">examples below</a>) and exports, evaluated by the compiler.</li>
 <li>Resource types name the hardware (table below). For a first single-PE program you need only <code>mem1d_dsd</code>.</li>
 <li><code>@is_arch("wse3")</code> picks per-chip code in one source file.</li>
 <li><code>&lt;layout&gt;</code> gives a PE its own coordinates at run time: <code>@import_module("&lt;layout&gt;").get_x_coord()</code>, so you need not pass <code>.x = x</code> as a param <span class="tag sdk">SDK 2.10.1, gemv-07</span>.</li>
@@ -222,7 +222,7 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 </div>
 
 <h3 id="task-syntax">What a task looks like</h3>
-<p> A <code>task</code> is a function the hardware starts; a <code>comptime</code> binding gives it an ID. From program 02 (<a href="11-lab-first-programs.html#wavelet-tasks">Lab 1</a>), a data task that runs once per arriving wavelet:</p>
+<p>A <code>task</code> is a function the hardware starts; a <code>comptime</code> binding gives it an ID. From program 02 (<a href="11-lab-first-programs.html#wavelet-tasks">Lab 1</a>), a data task that runs once per arriving wavelet:</p>
 <div class="filename">course/programs/02-wavelet-tasks/pe_program.csl (lines 17–20, 23, 45, 47; body elided, comments on 23 and 45 ours)</div>
 <pre><code><span class="k">const</span> h2d_iq: <span class="n">input_queue</span> = <span class="b">@get_input_queue</span>(2);
 <span class="k">const</span> recv_task_id: <span class="n">data_task_id</span> =

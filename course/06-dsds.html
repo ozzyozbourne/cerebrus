@@ -447,7 +447,7 @@ If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD 
 <tr><th>Ways to absorb a burst</th><th>Cost</th><th>SDK example</th></tr>
 <tr><td>Nothing: rely on the hardware queues</td><td>free, but stalls past a few wavelets (14 in that I/O setup)</td><td>pipeline-01</td></tr>
 <tr><td>FIFO on the same PE</td><td>+2 microthreads, + buffer SRAM</td><td>pipeline-02, topic-09</td></tr>
-<tr><td>FIFO on a neighbouring "halo" PE (an extra PE at the edge of the kernel's rectangle, <a href="07-host-io.html#frame">Chapter 7</a>)</td><td>the kernel PE keeps its microthreads and memory</td><td>pipeline-03</td></tr>
+<tr><td>FIFO on a neighbouring "halo" PE (pipeline-03 adds an "artificial halo": extra PEs on the west and east of the kernel that hold the FIFOs; compare memcpy's own halo, <a href="07-host-io.html#frame">Chapter 7</a>)</td><td>the kernel PE keeps its microthreads and memory</td><td>pipeline-03</td></tr>
 <tr><td>FIFO as the WSE-3 two-input workaround</td><td>as above</td><td>sdklayout-03 <code>@mov16(fifo, input2, …); @add16(output, input1, fifo, …)</code></td></tr>
 </table></div>
 
