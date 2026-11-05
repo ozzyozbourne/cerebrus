@@ -209,13 +209,37 @@ cs_python run.py --name out</code></pre>
 </div>
 
 <h2 id="routes">Routes are set at load time</h2>
-<p>For each PE and each color, the layout file declares a route: the input port a wavelet of that color is accepted from (<code>rx</code>) and the set of ports it is sent to (<code>tx</code>). It is configured when the program is loaded, and the router never looks anything up per wavelet. A PE can rewrite its own routes between phases (teardown, below), but there is no per-packet routing. Here is the route pair from Lab 2's row reduction (Chapter 12), sending from PE (0,0) to PE (1,0):</p>
+<p>For each PE and each color, the layout file declares a route: the input port a wavelet of that color is accepted from (<code>rx</code>) and the set of ports it is sent to (<code>tx</code>). It is configured when the program is loaded, and the router never looks anything up per wavelet. A PE can rewrite its own routes between phases (teardown, below), but there is no per-packet routing. Here is the <a href="appendix-a-glossary.html#g-route-rx-tx">route</a> pair from Lab 2's row reduction (<a href="12-lab-neighbours.html#row-reduce">Chapter 12</a>), sending from PE (0,0) to PE (1,0), written with <a href="appendix-a-glossary.html#g-set-color-config"><code>@set_color_config</code></a>:</p>
 <div class="filename">layout.csl</div>
 <pre><code><span class="k">const</span> c0: <span class="n">color</span> = <span class="b">@get_color</span>(0);
 <span class="c">// PE (0,0): accept from my own CE, send EAST</span>
 <span class="b">@set_color_config</span>(0, 0, c0, .{ .routes = .{ .rx = .{RAMP}, .tx = .{EAST} } });
 <span class="c">// PE (1,0): accept from WEST, deliver down the RAMP to my CE</span>
 <span class="b">@set_color_config</span>(1, 0, c0, .{ .routes = .{ .rx = .{WEST}, .tx = .{RAMP} } });</code></pre>
+<p id="ce-half"><strong>The other half: how the CE gets onto a color.</strong> <code>rx = RAMP</code> only says "accept what my own CE sends on c0". The CE puts wavelets there, and takes them off, with a <em>fabric DSD</em>: a DSD that names a hardware queue (and so a color) instead of memory addresses (<a href="06-dsds.html#fabric-dsds">Chapter 6</a>). Program 03 pairs every route with a few lines of <code>pe_program.csl</code>:</p>
+<div class="grid2">
+<div>
+<div class="filename">layout.csl: router half</div>
+<pre><code><span class="c">// sender: CE → RAMP → EAST</span>
+<span class="b">@set_color_config</span>(x, 0, send_c,
+  .{ .routes = .{ .rx = .{RAMP}, .tx = .{EAST} } });
+<span class="c">// receiver: WEST → RAMP → CE</span>
+<span class="b">@set_color_config</span>(x, 0, recv_c,
+  .{ .routes = .{ .rx = .{WEST}, .tx = .{RAMP} } });</code></pre>
+</div>
+<div>
+<div class="filename">pe_program.csl: CE half</div>
+<pre><code><span class="k">const</span> out_dsd = <span class="b">@get_dsd</span>(fabout_dsd,
+  .{ .extent = M, .output_queue = oq });   <span class="c">// WSE-2: + .fabric_color</span>
+<span class="k">const</span> in_dsd  = <span class="b">@get_dsd</span>(fabin_dsd,
+  .{ .extent = M, .input_queue = iq });
+<span class="b">@initialize_queue</span>(oq, .{ .color = send_c }); <span class="c">// WSE-2: .{}</span>
+<span class="b">@initialize_queue</span>(iq, .{ .color = recv_c });
+<span class="c">// middle PE: receive, add own v, send, in one op</span>
+<span class="b">@fadds</span>(out_dsd, in_dsd, v_dsd, .{ .async = <span class="k">true</span>, ... });</code></pre>
+</div>
+</div>
+<p class="small" style="font-size:14px;color:var(--muted)">Condensed from <code>programs/03-row-reduce/pe_program.csl</code> <span class="tag sdk">course program</span>. The router half decides where a color goes; the CE half binds a queue to that color (<a href="appendix-a-glossary.html#g-initialize-queue"><code>@initialize_queue</code></a>; on WSE-2 the output DSD names the color itself) and moves the data. Neither half works alone. <a href="06-dsds.html#fabric-dsds">Chapter 6</a> explains the right-hand side, and <a href="05-tasks.html#path">Chapter 5</a> what runs when a wavelet arrives.</p>
 <p><strong>Why static?</strong> A packet-switched network puts a destination address in every message, and every router decodes it. Here the wavelet carries only a 5-bit color and the route is already in a register. That keeps all 32 bits for payload, keeps each hop to about a cycle, and keeps 900,000 routers tiny. The price is that every communication pattern must be planned at compile time, and every distinct pattern through a PE costs a color. Hold on to that: it is why colors become the scarcest resource at the end of this chapter. (Tenstorrent makes the opposite choice, with addressed packets, in Chapter 16.)</p>
 
 <p>Four shapes cover most programs:</p>

@@ -388,7 +388,7 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 <p>A first estimate for a kernel on one PE is the sum of:</p>
 <ul>
 <li>its vector ops: start-up + elements &divide; rate. Use &asymp; 15&ndash;17 cycles of start-up for an isolated op and &asymp; 6 (WSE-3) for each further op in the same task. The 6 holds only for back-to-back ops on compile-time DSDs, with no scalar code between them and no loop;</li>
-<li>&asymp; 14.6 cycles per async transfer with its completion task, plus &asymp; 13 cycles of step bookkeeping if the kernel is a task chain like Lab 3's;</li>
+<li>&asymp; 14.6 cycles per async transfer with its completion task, plus &asymp; 13 cycles of step bookkeeping if the kernel is a task chain like <a href="13-lab-stencil.html#fixed-cost">Lab 3</a>'s;</li>
 <li>&asymp; 9 cycles (WSE-3) / 6 (WSE-2) per PE a value must pass through on the way;</li>
 <li>&asymp; 30 cycles per op when a scalar loop moves the DSD between ops (Ch. 6: 33&ndash;35 per step; Ch. 14: 2&middot;Mt + 29 clashed, 1.25&middot;Mt + 31 for odd Mt). Lab 4&rsquo;s loop of 64 <code>@fmacs</code> at T = 8 takes 2,903 cycles, &asymp; 64 &times; (2&middot;8 + 29) = 2,880, not the 64 &times; (6 + 16) &asymp; 1,400 that the in-task start-up would suggest <span class="tag measured">Measured</span> (<a href="14-lab-gemm.html#findings">Ch. 14</a>).</li>
 </ul>
@@ -510,7 +510,7 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
     p25: { v: { f32: 0, oth: 0, col: "4-7", str: 0, loc: "2,3,8-20,24-26", ctl: "", dq: "", iq: "", oq: "", ops: "", fifo: 0, w: 1, h: 1, rx: 1, fin: 1 }, chip: "wse3",
       note: "The SDK's 25-point stencil (benchmarks/25-pt-stencil) routes colors 4–7 and binds 18 local tasks: 2, 3, 8–20 and 24–26, which works on WSE-2. This preset shows why it does not port to WSE-3 as written: 2 and 3 are below 8, 24 is memcpy's, and 25–26 are outside the safe 8–20 (Ch. 5). Memory is not modelled for it." },
   };
-  const OVH = { wse3: 4240, wse2: 2850 }, SRAM = 49152, MARGIN = 512, EDGE = 16; // EDGE: alignment slack measured at the SAXPY limit
+  const OVH = { wse3: 4240, wse2: 2850 }, SRAM = 49152, MARGIN = 512, EDGE = 8; // alignment slack measured at the SAXPY limit (4,232 vs 4,240 B)
   const ovhFor = (p, chip) => (p && p.ovh ? p.ovh[chip] : OVH[chip]);
   let curParams = "", note = "";
   function list(s) {

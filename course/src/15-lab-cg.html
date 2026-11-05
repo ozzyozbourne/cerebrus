@@ -146,7 +146,7 @@
 </ol>
 <figure>
 <svg id="ar-svg" viewBox="0 0 760 440" width="760" role="img" aria-label="The allreduce's three stages on a 4 by 3 grid, with the order in which one row's values arrive"></svg>
-<figcaption><b>One allreduce, three stages, one color.</b> Top, on a 4 × 3 grid: (1) every row reduces west to east into its last PE; (2) every column reduces north to south at once, but only the last column's sum (into the bottom-right PE) is used; (3) the sum goes back up the last column and west along every row by multicast. A teardown wavelet ends each stage, and every PE then calls <code>reset_routes</code> before the next one. Bottom: one row in stage 1, in time order. Each PE sends its value, then a switch-advance control wavelet that moves the next router from "forward from the west" (position 0) to "take from my CE" (position 1), so the values reach the last PE one at a time, farthest first, and it adds each with <code>@fadds</code>. One message per PE, so the stage costs time per PE, not per hop.</figcaption>
+<figcaption><b>One allreduce, three stages, one color.</b> Top, on a 4 × 3 grid: (1) every row reduces west to east into its last PE; (2) every column reduces north to south at once, but only the last column's sum (into the bottom-right PE) is used; (3) the sum goes back up the last column and west along every row by multicast. A teardown wavelet ends each stage, and every PE then calls <code>reset_routes</code> before the next one. Bottom: one row in stage 1, in time order. Each PE sends its value, then a switch-advance control wavelet that sets its own router back to "forward from the west" (position 0) and moves the next router to "take from my CE" (position 1), releasing the value waiting there, so the values reach the last PE one at a time, farthest first, and it adds each with <code>@fadds</code>. One message per PE, so the stage costs time per PE, not per hop.</figcaption>
 </figure>
 <p>Between stages each PE calls <code>reset_routes</code>, clears its switch position and exits <a href="appendix-a-glossary.html#g-teardown">teardown</a> mode on that color (<code>tile_config</code>). The teardown wavelet is how the PEs agree that a stage is over. This is the same sequence as <a href="14-lab-gemm.html#collectives">Chapter 14's <code>&lt;collectives_2d&gt;</code></a>: the operation blocks a lock task (<code>C_LOCK</code>), the teardown handler (task 29) activates it, the stage's own work unblocks it when it has finished, and only with both does the lock task run and move the state machine on (the block + activate join of <a href="05-tasks.html#join-rule">Chapter 5</a>). Two things are new here: one color is reused for three stages, and a state machine chains them (row, column, broadcast, then <code>f_callback</code>). That is why it needs only one color, one queue and four task IDs. The cost is that a stage can only start once the previous one has drained, so the three stages run strictly one after another, and every message is a single wavelet whose cost is almost all latency.</p>
 <div class="callout key">
@@ -685,12 +685,15 @@
         el("rect", { x: cx(i), y: cy(j), width: B, height: B, rx: 4, class: cls }, s);
       }
       if (st === 0) for (let j = 0; j < GY; j++) for (let i = 0; i < GX - 1; i++) arrow(cx(i) + B, cy(j) + B / 2, cx(i + 1) - 1, cy(j) + B / 2);
-      if (st === 1) for (let j = 0; j < GY - 1; j++) arrow(cx(GX - 1) + B / 2, cy(j) + B, cx(GX - 1) + B / 2, cy(j + 1) - 1);
+      if (st === 1) for (let i = 0; i < GX; i++) for (let j = 0; j < GY - 1; j++) {
+        const a = arrow(cx(i) + B / 2, cy(j) + B, cx(i) + B / 2, cy(j + 1) - 1);
+        if (i < GX - 1) a.setAttribute("opacity", 0.3);   // every column reduces; only the last one's sum is used
+      }
       if (st === 2) {
         for (let j = GY - 1; j > 0; j--) arrow(cx(GX - 1) + B / 2, cy(j), cx(GX - 1) + B / 2, cy(j - 1) + B + 1);
         for (let j = 0; j < GY; j++) for (let i = GX - 1; i > 0; i--) arrow(cx(i), cy(j) + B / 2, cx(i - 1) + B + 1, cy(j) + B / 2);
       }
-      const note = ["last PE of each row holds its row's sum", "bottom-right PE holds the total", "every PE holds the total"][st];
+      const note = ["last PE of each row holds its row's sum", "all columns run; only the last one counts", "every PE holds the total"][st];
       T("text", { x: ox, y: 184, "font-size": 11.5, class: "muted" }, s, note);
       if (st < 2) {
         T("text", { x: ox + 232, y: 92, "text-anchor": "middle", "font-size": 10.5, class: "f-red" }, s, "teardown");
@@ -709,13 +712,13 @@
         el("rect", { x: px(i), y, width: W, height: 24, rx: 4, class: i === 3 ? "acc" : i === j ? "pur" : "box" }, s);
         T("text", { x: px(i) + W / 2, y: y + 16, "text-anchor": "middle", "font-size": 11.5, class: "mono" }, s, `PE ${i}`);
         if (i === 1 || i === 2) {
-          const pos = i <= j ? 1 : 0;
+          const pos = i === j ? 1 : 0;   // the sender's own ctrl wavelet sets it back to 0
           T("text", { x: px(i) - 8, y: y + 16, "text-anchor": "end", "font-size": 10.5, class: pos ? "f-amb" : "muted" }, s, `sw ${pos}`);
         }
       }
       el("path", { d: `M${px(j) + W / 2} ${y} C ${px(j) + W / 2} ${y - 12}, ${px(3) + W / 2} ${y - 12}, ${px(3) + W / 2 - 4} ${y - 1}`, fill: "none", class: "s-pur", "stroke-width": 1.6, "marker-end": "url(#arh)" }, s);
       T("text", { x: px(3) + W + 8, y: y + 16, "font-size": 11.5 }, s, `+= v${j}`);
-      if (j < 2) T("text", { x: px(j) + W / 2, y: y + 36, "text-anchor": "middle", "font-size": 10.5, class: "f-amb" }, s, `then ctrl: PE ${j + 1}'s switch → 1`);
+      if (j < 2) T("text", { x: px(j) + W / 2, y: y + 36, "text-anchor": "middle", "font-size": 10.5, class: "f-amb" }, s, j ? `then ctrl: PE ${j} → sw 0, PE ${j + 1} → sw 1` : `then ctrl: PE ${j + 1}'s switch → 1`);
     }
     T("text", { x: 10, y: 372, "font-size": 12, class: "f-red" }, s, "PE 0 sends a teardown wavelet: every PE resets its routes and switch, and the next stage starts.");
     T("text", { x: 10, y: 392, "font-size": 11.5, class: "muted" }, s, "sw 0 = forward from the west, sw 1 = take from my own CE. Values arrive farthest first, one message per PE.");
