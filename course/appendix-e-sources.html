@@ -100,7 +100,7 @@ details.bib-group > summary { cursor: pointer; font-weight: 700; font-size: 16px
 <li>Read a provenance tag and say how much weight the number can bear.</li>
 <li>Check a figure yourself, from its tag back to a primary document or a simulator run.</li>
 <li>Find every Unverified or second-hand figure in the course, and the evidence that would settle it.</li>
-<li>Name the seven open questions about the PE and fabric that the measurements left open.</li>
+<li>Name the six open questions about the PE and fabric that the measurements left open, and say which simulator harness would test each.</li>
 </ul>
 </div>
 
@@ -121,14 +121,14 @@ details.bib-group > summary { cursor: pointer; font-weight: 700; font-size: 16px
 <tr><th>Tag</th><th>Means</th><th>How much weight it bears</th></tr>
 <tr><td><span class="tag measured">Measured</span></td><td>Run during this course's build in the Cerebras SDK 2.10.1 simulator (or compiled with cslc). The text says which chip (WSE-2 or WSE-3) and size.</td><td>High for the simulator. It is cycle-level, but it is not silicon: host I/O timing and anything outside the fabric are modelled.</td></tr>
 <tr><td><span class="tag sdk">SDK 2.10.1</span></td><td>Read directly from the installed SDK: tutorial READMEs, benchmark code, the CSL standard library in the container image, tool output.</td><td>High for programming facts. The SDK is the vendor's own working code.</td></tr>
-<tr><td><span class="tag vendor">Vendor</span></td><td>Published or presented by Cerebras, NVIDIA or Tenstorrent (datasheets, Hot Chips decks, ISA docs, press releases).</td><td>Accurate about what was claimed. Check the precision, sparsity, date and "announced vs shipping".</td></tr>
+<tr><td><span class="tag vendor">Vendor</span></td><td>Published or presented by the maker of the product, model or library the number is about: Cerebras, NVIDIA, Tenstorrent, and also Meta, Google, AMD or Groq when the figure is theirs (datasheets, Hot Chips decks, ISA docs, model cards, library source, press releases). A label such as "Vendor, Meta" names the maker.</td><td>Accurate about what was claimed. Check the precision, sparsity, date and "announced vs shipping".</td></tr>
 <tr><td><span class="tag vendor">Vendor via secondary</span></td><td>A vendor figure that reached the course through press, a forum, a search-engine extract or a reprint, because the vendor's page was unreachable. Same colour as Vendor; the label says "via".</td><td>Probably right, but the wording, units or revision may have shifted. Listed below.</td></tr>
 <tr><td><span class="tag indep">Indep</span></td><td>A third-party measurement (Artificial Analysis, Chips and Cheese, peer-reviewed papers). Labels "Secondary" and "Press" use the same colour for third-party descriptions that are not measurements.</td><td>Good evidence for what was measured; check the configuration. "Secondary" and "Press" are weaker, and listed below.</td></tr>
 <tr><td><span class="tag analyst">Analyst</span></td><td>A third-party estimate, not a measurement (SemiAnalysis, Futurum, GPU-cloud blogs).</td><td>A reasoned guess. Often the only dense-FLOP figure available.</td></tr>
 <tr><td><span class="tag derived">Derived</span></td><td>Arithmetic done in this course from tagged inputs. The inputs are next to it.</td><td>As good as its inputs. Re-do the sum.</td></tr>
 <tr><td><span class="tag unv">Unverified</span></td><td>No reachable source confirmed it. Kept because it is useful background, and listed below.</td><td>Treat as a lead, not a fact.</td></tr>
 </table></div>
-<p>Two limits applied throughout the build. Most vendor documentation sites (sdk.cerebras.ai, cerebras.ai, docs.tenstorrent.com, most NVIDIA pages) could not be fetched from the build environment, so many web facts came from search extracts of the cited pages. And the simulator is not hardware: no measured number here is a silicon measurement.</p>
+<p>Two limits applied throughout the build. Most vendor documentation sites (sdk.cerebras.ai, cerebras.ai, docs.tenstorrent.com, most NVIDIA pages) could not be fetched during the build, so many web facts came from search extracts of the cited pages. Some became reachable later: in the November 2026 review, cerebras.ai's Llama 405B post and the Cerebras training docs (the cb16 format page) were fetched directly, and the figures taken from them were upgraded in their chapters. And the simulator is not hardware: no measured number here is a silicon measurement.</p>
 
 <h2 id="check">How to check a figure</h2>
 <ol>
