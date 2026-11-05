@@ -70,11 +70,11 @@ Each task is like a callback on an event loop, or a short interrupt service rout
   <path d="M480 170 V196 H350 V144" fill="none" class="s-red dash" stroke-width="1.5" marker-end="url(#a5r)"/>
   <text x="420" y="214" text-anchor="middle" font-size="11" class="f-red">blocked: wavelets stay in the queue (a fabric DSD may drain them)</text>
   <text x="380" y="242" text-anchor="middle" font-size="13">Payload becomes the task's argument:  <tspan class="mono">task on_value(v: f32) void { ... }</tspan></text>
-  <text x="380" y="260" text-anchor="middle" font-size="12" class="muted">IDs in the table: 2 = data task (input queue 2, as in program 02); 10, 11 = local tasks (as in Lab 3).</text>
+  <text x="380" y="260" text-anchor="middle" font-size="12" class="muted">IDs in the table: 2 = data task (input queue 2, as in program 02 on WSE-3; on WSE-2 it uses color 0); 10, 11 = local tasks (as in Lab 3).</text>
   <text x="380" y="280" text-anchor="middle" font-size="12" class="muted">The table is a schematic of the per-task bits described below, not a documented register layout.</text>
   </g>
 </svg>
-<figcaption><b>Arrival is activation.</b> The hardware "picks the next task to run from those that have been activated and unblocked" <span class="tag vendor">SDK docs, via search extract</span>. The task-state table is schematic <span class="tag derived">Derived</span>; the WSE-2/WSE-3 difference in where the task ID comes from is from the SDK topic-05 tutorial <span class="tag sdk">SDK 2.10.1</span>.</figcaption>
+<figcaption><b>Arrival is activation.</b> When a task ends, "the hardware selects the next runnable task — one that has been activated and unblocked", and "A task must be unblocked and activated for it to be scheduled by the task picker" <span class="tag vendor">SDK docs, sdk.cerebras.ai/computing-with-cerebras</span>. The task-state table is schematic <span class="tag derived">Derived</span>; the WSE-2/WSE-3 difference in where the task ID comes from is from the SDK topic-05 tutorial <span class="tag sdk">SDK 2.10.1</span>.</figcaption>
 </figure>
 
 <h2 id="activates">What activates a task</h2>
@@ -147,7 +147,7 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
 <ul>
 <li><strong><a href="appendix-a-glossary.html#g-run-to-completion">Run to completion</a>.</strong> A task must not wait. A synchronous fabric op inside a task <em>does</em> wait, in the instruction, and if the data it waits for needs another task to run first, the PE deadlocks. SDK pipeline-01 shows exactly this: with a blocking <code>@add16(outDsd, inDsd, 1)</code>, "The CE has no resource to run the H2D command received by the router, so it stalls" <span class="tag sdk">SDK 2.10.1, pipeline-01</span>. Start long work asynchronously and let its completion activate a <em>different</em> task.</li>
 <li><strong>Tasks do not call tasks; they activate them, and activation is a single bit.</strong> For local tasks the bit is all there is: two <code>@activate</code>s, or two async completions, that land before the task runs give <strong>one</strong> run. Data tasks behave differently because the input queue sits behind the bit. Each wavelet waits in the queue, and the data task runs once per wavelet: program 02 sends 100 wavelets and <code>on_value</code> counts exactly 100 <span class="tag measured">Measured</span>. The rule of thumb: <em>events that carry data are buffered; events that carry no data collapse.</em></li>
-<li id="blocking"><strong>Blocking.</strong> <code>@block(id)</code> stops a task from being picked even if it is activated; <code>@unblock(id)</code> releases it (<a href="appendix-a-glossary.html#g-block-unblock">glossary</a>). <strong>If a data task is bound to the color (WSE-2) or input queue (WSE-3) that a fabric DSD reads, block that data task</strong>; otherwise it fires on each wavelet and consumes it first <span class="tag sdk">SDK 2.10.1, pipeline-01</span>. With no data task bound there is nothing to block: Lab 3 binds no data task to its receive queues 4 and 5, has no <code>@block</code>, and passes on both chips <span class="tag measured">Measured</span>. Blocked wavelets wait in the queue. When the queue fills, the lossless fabric pushes <a href="appendix-a-glossary.html#g-back-pressure"><em>back-pressure</em></a> upstream until the sender stalls (<a href="04-fabric.html#back-pressure">Chapter 4</a>). Queues are small, and the SDK publishes their depths: input queues 0–1 hold 6 wavelets, 2–3 hold 4 and 4–7 hold 2, so input queue 2, which program 02 uses, holds 4 <span class="tag sdk">SDK 2.10.1, memcpy/wse3 and wse2/memcpy.csl</span> (table in <a href="07-host-io.html#modes">Chapter 7</a>). Routers add a little more buffering along the path: SDK pipeline-01, whose I/O "stalls when size exceeds 14", is counting all the "internal queues to hold the data for I/O", not one queue <span class="tag sdk">SDK 2.10.1, pipeline-01</span>.</li>
+<li id="blocking"><strong>Blocking.</strong> <code>@block(id)</code> stops a task from being picked even if it is activated; <code>@unblock(id)</code> releases it (<a href="appendix-a-glossary.html#g-block-unblock">glossary</a>). <strong>If a data task is bound to the color (WSE-2) or input queue (WSE-3) that a fabric DSD reads, block that data task</strong>; otherwise it fires on each wavelet and consumes it first <span class="tag derived">Derived, from pipeline-01 and Lab 3 (Measured)</span>. (The pipeline-01 README states the rule without the condition, "blocks the wavelet's color", although its own <code>pe_program.csl</code> binds no data task and has no <code>@block</code> <span class="tag sdk">SDK 2.10.1, pipeline-01</span>.) With no data task bound there is nothing to block: Lab 3 binds no data task to its receive queues 4 and 5, has no <code>@block</code>, and passes on both chips <span class="tag measured">Measured</span>. Blocked wavelets wait in the queue. When the queue fills, the lossless fabric pushes <a href="appendix-a-glossary.html#g-back-pressure"><em>back-pressure</em></a> upstream until the sender stalls (<a href="04-fabric.html#back-pressure">Chapter 4</a>). Queues are small, and the SDK publishes their depths: input queues 0–1 hold 6 wavelets, 2–3 hold 4 and 4–7 hold 2, so input queue 2, which program 02 uses on WSE-3, holds 4 <span class="tag sdk">SDK 2.10.1, memcpy/wse3 and wse2/memcpy.csl</span> (table in <a href="07-host-io.html#modes">Chapter 7</a>). Routers add a little more buffering along the path: SDK pipeline-01, whose I/O "stalls when size exceeds 14", is counting all the "internal queues to hold the data for I/O", not one queue <span class="tag sdk">SDK 2.10.1, pipeline-01</span>.</li>
 <li><strong>Self-start and self-send.</strong> <code>@activate(id)</code> inside a <code>comptime</code> block (code the compiler runs to set up bindings, <a href="10-csl-toolchain.html#hardware-parts">Chapter 10</a>; <a href="appendix-a-glossary.html#g-comptime">glossary</a>) runs that task at program start. A PE can also feed its own data task by routing a color RAMP → RAMP, which "immediately sends them back to the compute element" <span class="tag sdk">SDK 2.10.1, topic-09</span>.</li>
 </ul>
 
@@ -158,7 +158,7 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
 
 <div class="widget" id="buf">
 <h4>Buffered versus collapsed: why data tasks never lose wavelets</h4>
-<p class="hint">While the CE is busy with some other task, N events arrive. Left: N wavelets for a data task. Right: N <code>@activate</code> calls (or async completions) for a local task. Step through, then watch both tasks run once the CE is free. The queue is drawn as input queue 2 (program 02's), which holds 4 wavelets <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>; router buffering behind it is lumped into one box <span class="tag derived">schematic</span>.</p>
+<p class="hint">While the CE is busy with some other task, N events arrive. Left: N wavelets for a data task. Right: N <code>@activate</code> calls (or async completions) for a local task. Step through, then watch both tasks run once the CE is free. The queue is drawn as input queue 2 (program 02's on WSE-3), which holds 4 wavelets <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>; router buffering behind it is lumped into one box <span class="tag derived">schematic</span>.</p>
 <div class="controls">
 <label>Events N <input type="range" id="b-n" min="1" max="10" value="3"><output id="b-nv">3</output></label>
 <button class="btn" id="b-step" type="button">Step</button>
@@ -284,12 +284,12 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
   <rect x="552" y="26" width="50" height="22" rx="3" class="pur" stroke-width="1"/><text x="577" y="41" text-anchor="middle" font-size="10" class="mono">t_re</text>
   <rect x="602" y="26" width="110" height="22" rx="3" class="grn" stroke-width="1"/><text x="657" y="41" text-anchor="middle" font-size="10" class="mono">update() → next</text>
   <rect x="130" y="74" width="232" height="16" rx="3" class="acc" stroke-width="1"/>
-  <rect x="150" y="100" width="262" height="16" rx="3" class="acc" stroke-width="1"/>
-  <rect x="170" y="126" width="312" height="16" rx="3" class="blu" stroke-width="1"/>
-  <rect x="190" y="152" width="362" height="16" rx="3" class="blu" stroke-width="1"/>
+  <rect x="170" y="100" width="242" height="16" rx="3" class="acc" stroke-width="1"/>
+  <rect x="190" y="126" width="292" height="16" rx="3" class="blu" stroke-width="1"/>
+  <rect x="150" y="152" width="402" height="16" rx="3" class="blu" stroke-width="1"/>
   <path d="M362 74 V50" class="s-acc" stroke-width="1.2" marker-end="url(#a6)"/><path d="M412 100 V50" class="s-acc" stroke-width="1.2" marker-end="url(#a6)"/>
   <path d="M482 126 V50" class="s-acc" stroke-width="1.2" marker-end="url(#a6)"/><path d="M552 152 V50" class="s-acc" stroke-width="1.2" marker-end="url(#a6)"/>
-  <text x="380" y="190" text-anchor="middle" font-size="11" class="muted">Schematic, not to scale. The CE issues the four ops one after another; each microthread streams its transfer;</text><text x="380" y="205" text-anchor="middle" font-size="11" class="muted">each completion (arrow) activates one task, which runs when the CE is free.</text>
+  <text x="380" y="190" text-anchor="middle" font-size="11" class="muted">Schematic, not to scale. The CE issues the four ops in the order send E, recv E, send W, recv W; each microthread streams its transfer;</text><text x="380" y="205" text-anchor="middle" font-size="11" class="muted">each completion (arrow) activates one task, which runs when the CE is free.</text>
   </g>
 </svg>
 <figcaption><b>Two kinds of lane, one PE.</b> Tasks run one at a time on the CE; meanwhile the microthreads progress async ops. They share the PE's one datapath, memory ports and fabric ports (<a href="03-processing-element.html#microthreads">Chapter 3</a>), which is why "how the main thread ranks against microthreads" (<a href="#priority">priority</a>, below) is a real setting. Chapter 13 measures what this costs: ≈14.6 cycles per transfer, including its completion task, out of ≈90 fixed cycles per step <span class="tag measured">Measured, Ch 13</span> (<a href="13-lab-stencil.html#fixed-cost">where the 90 cycles go</a>). The bar lengths here are <span class="tag derived">schematic</span>.</figcaption>
@@ -309,7 +309,7 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
 <tr><td><code>MEDIUM_HIGH</code></td><td>between medium- and high-priority microthreads</td></tr>
 <tr><td><code>HIGH</code></td><td>same priority as high-priority microthreads</td></tr>
 </table></div>
-<p><strong>What is not documented:</strong> the order among ready tasks of equal priority, and the cycle cost of switching tasks. Do not write code that relies on either <span class="tag derived">Derived</span>. Lab 3's measured ≈90 fixed cycles per step <span class="tag measured">Measured, Ch 13</span> include four completion tasks and their scheduling, which gives a rough upper bound; <a href="13-lab-stencil.html#fixed-cost">Chapter 13</a> splits it into ≈14.6 cycles per transfer (issue, completion task and <code>op_done()</code>) plus ≈13 of step bookkeeping.</p>
+<p><strong>What is not documented:</strong> the order among ready tasks of equal priority, and the cycle cost of switching tasks. Do not write code that relies on either <span class="tag derived">Derived</span>. Lab 3's measured ≈90 fixed cycles per step <span class="tag measured">Measured, Ch 13</span> include four completion tasks and their scheduling, which gives a rough upper bound; <a href="13-lab-stencil.html#fixed-cost">Chapter 13</a> splits it into ≈14.6 cycles per transfer (issue, completion task and <code>op_done()</code>) plus ≈13 of step bookkeeping, 4 × 14.6 + 13 ≈ 71 in all <span class="tag derived">Derived, from Ch 13</span>. The remaining ≈19 cycles are the start-up of <code>update()</code>'s three vector instructions, about 6 each, which is compute, not task scheduling <span class="tag measured">Measured, Ch 13</span>. So ≈14.6 cycles per completion is the tighter per-task bound <span class="tag derived">Derived, from Ch 13</span>.</p>
 
 <h2 id="portability">WSE-2 versus WSE-3: the biggest portability hazard</h2>
 <div class="table-wrap"><table>
@@ -325,18 +325,18 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
 
 <figure>
 <svg id="ids-svg" viewBox="0 0 760 300" width="760" role="img" aria-label="Task-ID space on WSE-2 and WSE-3, IDs 0 to 43"></svg>
-<figcaption><b>The task-ID space.</b> Hover a cell for details. <code>@activate</code>, <code>.activate</code> and <code>.unblock</code> can only name IDs below 31: "there is only 5-bit 'ACT/UB color' field in fabin/fabout DSD"; "control wavelet indeed can trigger entrypoints bigger than 31" <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span>. Reserved IDs from the same file and from the task maps in the topic-09 tutorial. Highlighted: program 02's data task 2 and Lab 3's local tasks 10–13.</figcaption>
+<figcaption><b>The task-ID space.</b> Hover a cell for details. <code>@activate</code>, <code>.activate</code> and <code>.unblock</code> can only name IDs below 31: "there is only 5-bit 'ACT/UB color' field in fabin/fabout DSD"; "control wavelet indeed can trigger entrypoints bigger than 31" <span class="tag sdk">SDK 2.10.1, memcpy/sys_params.csl</span>. Reserved IDs from the same file and from the task maps in the topic-09 tutorial. Highlighted: program 02's data task (WSE-2: color 0; WSE-3: input queue 2) and Lab 3's local tasks 10–13.</figcaption>
 </figure>
 
 <h3 id="budget">Budget check</h3>
 <div class="table-wrap"><table class="small">
 <tr><th>Resource</th><th>WSE-2</th><th>WSE-3</th><th>Taken by memcpy</th><th>Left for you on WSE-3</th></tr>
 <tr><td>Data tasks</td><td>one per receive color (0–23)</td><td>one per input queue (0–7)</td><td>queues 0, 1 (WSE-3); colors 20–23</td><td><strong>6</strong> (queues 2–7)</td></tr>
-<tr><td>Local tasks</td><td>shares 0–30 with colors</td><td>8–30</td><td>24, 27, 28, 30; 29 = teardown</td><td><strong>18</strong> (8–23, 25, 26); <strong>15</strong> if you also avoid 21–23</td></tr>
+<tr><td>Local tasks</td><td>shares 0–30 with colors</td><td>8–30</td><td>21, 24, 27, 28, 30; 29 = teardown</td><td><strong>17</strong> (8–20, 22, 23, 25, 26); <strong>15</strong> if you also avoid 22–23</td></tr>
 <tr><td>Output queues</td><td>6</td><td>8</td><td>0 (and 1 on WSE-3)</td><td><strong>6</strong></td></tr>
 <tr><td>Microthreads</td><td>8, tied to queues</td><td>8</td><td>shares with its queues</td><td>8, two ops never at once on one</td></tr>
 </table></div>
-<p style="font-size:14px;color:var(--muted)">Counts <span class="tag derived">Derived</span> from <code>memcpy/sys_params.csl</code> and the topic-05 and topic-09 tutorials <span class="tag sdk">SDK 2.10.1</span>. Two caveats. The topic-09 WSE-3 task map also marks 21–23 "reserved (memcpy)", so stay in 8–20 (<a href="07-host-io.html#reserves">Chapter 7</a>'s rule) and add 25 and 26 only if you need more: <strong>15</strong> safe IDs in all. And 24 is <code>SYS_EN_MAIN</code>, the "first task after context switch", yet the WSE-2 25-point stencil binds its own task to 24, so 24 is probably needed only in some memcpy modes <span class="tag derived">Derived</span>.</p>
+<p style="font-size:14px;color:var(--muted)">Counts <span class="tag derived">Derived</span> from <code>memcpy/sys_params.csl</code> and the topic-05 and topic-09 tutorials <span class="tag sdk">SDK 2.10.1</span>. Two caveats. ID 21 is really taken: memcpy binds its D2H data task <code>f_send_data</code> to local task 21 (<code>MEMCPYD2H_DATA</code>) on both chips <span class="tag sdk">SDK 2.10.1, memcpy/wse3/memcpyd2h.csl</span>, and a program that binds its own task to 21 fails to compile with "task ID '21' bound to more than one task" <span class="tag measured">Measured, cslc, WSE-2 and WSE-3</span>. The topic-09 WSE-3 task map also marks 22–23 "reserved (memcpy)", although they compile, so stay in 8–20 (<a href="07-host-io.html#reserves">Chapter 7</a>'s rule) and add 25 and 26 only if you need more: <strong>15</strong> safe IDs in all. And 24 is <code>SYS_EN_MAIN</code>, the "first task after context switch", yet the WSE-2 25-point stencil binds its own task to 24, so 24 is probably needed only in some memcpy modes <span class="tag derived">Derived</span>.</p>
 <p>A worked squeeze: the 25-point stencil, shipped for WSE-2 only, binds <strong>18 local tasks</strong> (IDs 2, 3, 8–20 and 24–26), skips 4–7 because those are its channel colors, and skips 21–23 with "WARNING: ID 21: reserved (memcpy)" <span class="tag sdk">SDK 2.10.1, 25-pt-stencil/layout.csl</span>. On WSE-3 that is more than the 15 safe IDs (8–20, 25, 26), and its IDs 2 and 3 would have to move to 8 or above anyway, because WSE-3 local IDs start at 8. It could not be ported without sharing tasks <span class="tag derived">Derived</span>.</p>
 
 <p><strong>What this means in practice.</strong></p>
@@ -379,7 +379,7 @@ We rebuilt that version to check. It fails the same way on both chips: <code>sim
 </div>
 
 <h3 id="queue-flush">Reusing a queue on WSE-3: <code>@queue_flush</code> and teardown task 29</h3>
-<p>(<a href="appendix-a-glossary.html#g-queue-flush">Glossary: queue flush</a>; teardown wavelets are in <a href="04-fabric.html#teardown">Chapter 4</a>.) On WSE-3 each output queue is bound to one color. To send on a new color you must wait until the queue is <em>empty</em>, and an async op's completion only means "the microthread pushed all of its data into the output queue; the queue may not be empty yet". The hardware helps: after <code>@queue_flush(oq)</code>, "When oq becomes empty, WSE-3 will trigger the special teardown task 29, the same way a teardown wavelet does" <span class="tag sdk">SDK 2.10.1, topic-16</span>. This is the fourth activation source in the table above. The sequence:</p>
+<p>(<a href="appendix-a-glossary.html#g-queue-flush">Glossary: queue flush</a>; teardown wavelets are in <a href="04-fabric.html#teardown">Chapter 4</a>.) On WSE-3 each output queue is bound to one color. To send on a new color you must wait until the queue is <em>empty</em>, and an async op's completion is not enough: "the termination of a microthread only confirms that it pushed all of its data into the output queue; the queue may not be empty yet". The hardware helps: after <code>@queue_flush(oq)</code>, "When oq becomes empty, WSE-3 will trigger the special teardown task 29, the same way a teardown wavelet does" <span class="tag sdk">SDK 2.10.1, topic-16</span>. This is the fourth activation source in the table above. The sequence:</p>
 <ol>
 <li>send data 1 on <code>oq</code>; its completion task runs;</li>
 <li>the completion task calls <code>@queue_flush(oq)</code> (never before the send starts, or task 29 may fire at once on the still-empty queue);</li>
@@ -424,7 +424,7 @@ We rebuilt that version to check. It fails the same way on both chips: <code>sim
 <details><summary>On WSE-3 you send on output queue 3 and receive on input queue 3 at the same time, with no <code>.ut_id</code>. What happens?</summary><p>Both default to microthread 3. Two ops cannot use one microthread at once, so the program builds and then fails at run time (in our simulator run: a FATAL in <code>sim.log</code>, and a host that waits forever). Renumber a queue or set <code>.ut_id</code>. The same pairing fails on WSE-2, where microthread = queue ID always.</p></details>
 <details><summary>Your WSE-2 program uses data task ID 5 for color 5. What changes on WSE-3?</summary><p>Bind color 5 to an input queue (say queue 2, not 0 or 1, which memcpy uses on WSE-3) with <code>@initialize_queue</code>, and bind the task to <code>@get_data_task_id(queue)</code> instead of the color. If you forget, the compiler stops you.</p></details>
 <details><summary>Convert <code>for (s = 0; s &lt; T; s++) { exchange(); update(); }</code> into tasks. Which pieces are tasks and which are functions?</summary><p>Only the completion handlers need to be tasks. <code>start_step</code> and <code>update</code> are functions, and the loop counter is a global checked at the end of <code>update</code>.</p></details>
-<details><summary>How many independent completion tasks can a WSE-3 PE have alongside memcpy?</summary><p>At most 18 (IDs 8–23, 25, 26), or 15 if you also avoid 21–23 as the SDK's topic-09 map suggests. Data tasks are counted separately: at most 6 (input queues 2–7).</p></details>
+<details><summary>How many independent completion tasks can a WSE-3 PE have alongside memcpy?</summary><p>At most 17 (IDs 8–20, 22, 23, 25, 26; memcpy binds 21), or 15 if you also avoid 22–23 as the SDK's topic-09 map suggests. Data tasks are counted separately: at most 6 (input queues 2–7).</p></details>
 <details><summary>You want a task to run only after both a teardown event and an async op have happened, in either order. How?</summary><p>Block the task when the op starts, let the other event <code>@activate</code> it, and give the op <code>.unblock = task</code>. The picker needs activated ∧ unblocked, so it runs only after both.</p></details>
 </div>
 </main>
@@ -685,7 +685,8 @@ function txt(svg, x, y, s, attrs = {}) { const t = el("text", Object.assign({ x,
     } else {
       if (id <= 1) return ["mem", "input queue " + id + " (memcpy)"];
       if (id <= 7) return ["data", "data task on input queue " + id];
-      if (id >= 21 && id <= 23) return ["memsoft", "local ID marked \"reserved (memcpy)\" in the topic-09 WSE-3 map"];
+      if (id === 21) return ["mem", "MEMCPYD2H_DATA local task f_send_data (memcpy)"];
+      if (id >= 22 && id <= 23) return ["memsoft", "local ID marked \"reserved (memcpy)\" in the topic-09 WSE-3 map"];
       return ["local", "local task"];
     }
   }
@@ -699,10 +700,10 @@ function txt(svg, x, y, s, attrs = {}) { const t = el("text", Object.assign({ x,
     }
   };
   strip("wse2", 40, "WSE-2"); strip("wse3", 110, "WSE-3");
-  // highlights: program 02 data task 2 (wse3 queue 2) and Lab 3 IDs 10-13
-  [[40, 2], [110, 2]].forEach(([y, id]) => el("rect", { x: X0 + id * W - 2, y: y - 3, width: W + 2, height: 30, rx: 3, fill: "none", stroke: cssVar("--text"), "stroke-width": 1.6 }, svg));
+  // highlights: program 02 data task (wse2 color 0, wse3 queue 2) and Lab 3 IDs 10-13
+  [[40, 0], [110, 2]].forEach(([y, id]) => el("rect", { x: X0 + id * W - 2, y: y - 3, width: W + 2, height: 30, rx: 3, fill: "none", stroke: cssVar("--text"), "stroke-width": 1.6 }, svg));
   [40, 110].forEach(y => el("rect", { x: X0 + 10 * W - 2, y: y - 3, width: 4 * W + 2, height: 30, rx: 3, fill: "none", stroke: cssVar("--text"), "stroke-width": 1.6 }, svg));
-  txt(svg, X0 + 2 * W + 6, 30, "program 02", { "text-anchor": "middle", "font-size": 10 });
+  txt(svg, X0 + 1.5 * W, 30, "program 02", { "text-anchor": "middle", "font-size": 10 });
   txt(svg, X0 + 12 * W, 30, "Lab 3: 10–13", { "text-anchor": "middle", "font-size": 10 });
   // 5-bit reach bracket
   const by = 170;
@@ -714,7 +715,7 @@ function txt(svg, x, y, s, attrs = {}) { const t = el("text", Object.assign({ x,
   const leg = [["blu", "data task (WSE-2: = color)"], ["amb", "local task"], ["red", "memcpy"], ["pur", "teardown 29"], ["box", "NOP 31"], ["grn", "control only"]];
   leg.forEach(([c, l], i) => { const x = 10 + (i % 3) * 250, y = 222 + Math.floor(i / 3) * 22;
     el("rect", { x, y, width: 14, height: 12, rx: 2, class: c, "stroke-width": 1 }, svg); txt(svg, x + 20, y + 10, l, { "font-size": 11 }); });
-  txt(svg, 10, 290, "Faded red on WSE-3 21–23: marked reserved in the topic-09 task map. Outlined IDs: this course's own programs.", { "font-size": 10, class: "muted" });
+  txt(svg, 10, 290, "Faded red on WSE-3 22–23: marked reserved in the topic-09 task map. Outlined IDs: this course's own programs.", { "font-size": 10, class: "muted" });
 })();
 
 /* ---------- microthread collision explorer ---------- */

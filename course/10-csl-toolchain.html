@@ -138,9 +138,9 @@
 <li><b>Every host-callable function</b>: <code>@export_name("f", fn(args)void)</code> in layout.csl; <code>fn f(...)</code> plus <code>@export_symbol(f)</code> in pe_program.csl; <code>rt.launch('f', ...)</code> in run.py.</li>
 <li><b>Every RPC</b> must end, directly or through a task it starts, with <code>sys_mod.unblock_cmd_stream()</code>.</li>
 <li><b>Every <code>param</code> without a default</b> (<code>param enable: bool = true;</code> has one) declared in pe_program.csl must be passed in <code>@set_tile_code</code>'s struct, and every one declared in layout.csl must be given with <code>--params</code> (unsigned integers only; color params can come from <code>--colors</code> instead).</li>
-<li><b>Keep clear of memcpy's resources</b>: colors 20–23, its task IDs and queue 0 (and 1 on WSE-3). See <a href="07-host-io.html">Chapter 7's table</a>.</li>
+<li><b>Keep clear of memcpy's resources</b>: colors 20–23, its task IDs and queue 0 (and 1 on WSE-3). See <a href="07-host-io.html#reserves">Chapter 7's table</a>.</li>
 </ol>
-A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param (rule 4) are compile errors: an <code>@export_symbol</code> name the layout never declared gives "name 'xx' was not declared during layout evaluation" <span class="tag measured">Measured</span>. A <em>missing</em> <code>@export_symbol</code>, for an array or a function, and a missing unblock (rule 3) compile cleanly and fail only at run time, as does a typo in <code>rt.get_id('…')</code>, which is plain Python (see the <a href="#errors">error decoder</a> below).
+A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param (rule 4) are compile errors: an <code>@export_symbol</code> name the layout never declared gives "name 'xx' was not declared during layout evaluation" <span class="tag measured">Measured</span>. A <em>missing</em> <code>@export_symbol</code>, for an array or a function, and a missing unblock (rule 3) compile cleanly and fail only at run time, as does a typo in <code>rt.get_id('…')</code>, which is plain Python (it behaves like a missing export: <code>get_id</code> does not fail and the first memcpy raises a <code>TypeError</code>; see the missing-export row of the <a href="#errors">error decoder</a> below).
 </div>
 
 <div class="callout cuda">
@@ -183,7 +183,7 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <h3>One run, step by step</h3>
 <div class="widget" id="rs">
 <h4>Host ↔ memcpy ↔ PE during one SAXPY run</h4>
-<p class="hint">Step through run.py. The bar at the right is the PE's <a href="appendix-a-glossary.html#g-command-stream">command stream</a> (color 22): green = open, red = blocked. Tick the box to replay the run with <code>unblock_cmd_stream()</code> deleted. Where to put the call in async code is <a href="07-host-io.html">Chapter 7</a>'s widget.</p>
+<p class="hint">Step through run.py. The bar at the right is the PE's <a href="appendix-a-glossary.html#g-command-stream">command stream</a> (color 22): green = open, red = blocked. Tick the box to replay the run with <code>unblock_cmd_stream()</code> deleted. Where to put the call in async code is <a href="07-host-io.html#command-stream">Chapter 7</a>'s widget.</p>
 <div class="controls">
   <button class="btn secondary small" type="button" id="rs-prev">◀ Prev</button>
   <button class="btn small" type="button" id="rs-next">Next ▶</button>
@@ -242,7 +242,7 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <div class="table-wrap"><table>
 <tr><th>Type</th><th>What it names</th><th>First used</th></tr>
 <tr><td><code>color</code></td><td>a virtual channel on the fabric (24 per PE)</td><td><a href="04-fabric.html">Ch 4</a>, program 03</td></tr>
-<tr><td><code>input_queue</code> / <code>output_queue</code></td><td>the hardware FIFO between router and core; on WSE-3 tasks and fabric DSDs bind to these</td><td><a href="05-tasks.html">Ch 5</a>, program 02</td></tr>
+<tr><td><code>input_queue</code> / <code>output_queue</code></td><td>the hardware FIFO between router and core; fabric DSDs read/write through these on both chips, and on WSE-3 data tasks also bind to an input queue</td><td><a href="05-tasks.html">Ch 5</a>, program 02</td></tr>
 <tr><td><code>data_task_id</code></td><td>a task woken by an arriving wavelet</td><td><a href="05-tasks.html">Ch 5</a>, program 02</td></tr>
 <tr><td><code>local_task_id</code></td><td>a task you start yourself with <code>@activate</code> (or a completion task)</td><td><a href="05-tasks.html">Ch 5</a>, programs 03–05</td></tr>
 <tr><td><code>control_task_id</code></td><td>a task woken by a control wavelet; memcpy's commands use these</td><td><a href="07-host-io.html">Ch 7</a></td></tr>
@@ -280,12 +280,12 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 
 <h3 id="both-chips">Writing for both chips</h3>
 <p>All course programs build for WSE-2 and WSE-3 from one source. Three idioms do it (the full portability table is in <a href="05-tasks.html">Chapter 5</a>); <code>&lt;memcpy/memcpy&gt;</code> itself switches to its <code>wse2/</code> or <code>wse3/</code> implementation the same way <span class="tag sdk">SDK 2.10.1</span>.</p>
-<pre><code><span class="c">// 1. queues exist only as bindable objects on WSE-3 (sdklayout-02)</span>
+<pre><code><span class="c">// 1. output queues are bound to a color with @initialize_queue only on WSE-3; input queues are bound on both chips (sdklayout-02)</span>
 <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse3"</span>)) { <span class="b">@initialize_queue</span>(out_q, .{ .color = <span class="b">@get_color</span>(c) }); }
 <span class="c">// 2. a data task is named by its color on WSE-2, by its input queue on WSE-3 (topic-12)</span>
 <span class="k">const</span> recv_task_id: <span class="n">data_task_id</span> =
   <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse2"</span>)) <span class="b">@get_data_task_id</span>(comm) <span class="k">else if</span> (<span class="b">@is_arch</span>(<span class="s">"wse3"</span>)) <span class="b">@get_data_task_id</span>(comm_iq);
-<span class="c">// 3. a fabric DSD needs .fabric_color on WSE-2 only (program 03, pe_program.csl)</span>
+<span class="c">// 3. an output fabric DSD names its color with .fabric_color on WSE-2 only (program 03, pe_program.csl)</span>
 <span class="k">const</span> out_dsd = <span class="b">@get_dsd</span>(<span class="n">fabout_dsd</span>, <span class="k">if</span> (<span class="b">@is_arch</span>(<span class="s">"wse3"</span>)) .{ .extent = M, .output_queue = oq }
                                      <span class="k">else</span> .{ .extent = M, .output_queue = oq, .fabric_color = send_color });</code></pre>
 
@@ -321,7 +321,7 @@ The scalar language is the easy part.
 <svg id="mem-svg" viewBox="0 0 680 92" width="680" role="img" aria-label="48 KB memory bar"></svg>
 <div class="readout" id="mem-out" aria-live="polite"></div>
 </div>
-<p>So SAXPY minus its two arrays still uses about 4.2 KB on WSE-3: roughly 3.2 KB of code (saxpy's plus the memcpy runtime) and about 1 KB of <em>task table</em>, the table the hardware uses to find each task's code from its <a href="appendix-a-glossary.html#g-task-id">task ID</a> (<a href="05-tasks.html">Chapter 5</a>). The split is approximate, scaled from an earlier <code>cs_readelf</code> measurement of a minimal program (3.2 KB code + 1 KB task table) <span class="tag derived">Derived</span>. That is why the linker's first complaint is "ran out of PE memory for task table". Overflow is a <strong>link</strong> error, not a run-time one. To find your own limit, bisect: <code>for N in 5000 5600 5620; do cslc … --params=N:$N -o b$N; cs_readelf -m b$N/bin/out_0_0.elf; done</code>.</p>
+<p>So SAXPY minus its two arrays still uses about 4.2 KB on WSE-3: about 1 KB of <em>task table</em> (<a href="03-processing-element.html#memory-map">Chapter 3</a>) and so ≈3.2 KB of code and runtime data (4,240 − 1,024; saxpy's code plus the memcpy runtime and its DSR images) <span class="tag derived">Derived</span>. The task table is the table the hardware uses to find each task's code from its <a href="appendix-a-glossary.html#g-task-id">task ID</a> (<a href="05-tasks.html">Chapter 5</a>). That is why the linker's first complaint is "ran out of PE memory for task table". Overflow is a <strong>link</strong> error, not a run-time one. To find your own limit, bisect: <code>for N in 5000 5600 5620; do cslc … --params=N:$N -o b$N; cs_readelf -m b$N/bin/out_0_0.elf; done</code>.</p>
 
 <h2 id="stdlib">The standard library map</h2>
 <p>Modules are imported with <code>@import_module("&lt;name&gt;", .{params})</code>. They are plain CSL you can read inside the SIF (<code>csl-libs/</code>). For example, this is the whole of <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> <span class="tag sdk">SDK 2.10.1, csl-libs/layout.csl</span>:</p>
@@ -384,11 +384,11 @@ cs_python run.py --name out</code></pre>
 <li><code>offset_x ≥ 4 + width_west_buf</code> and <code>offset_y ≥ 1</code>;</li>
 <li><code>fabric_w ≥ offset_x + W + 3 + width_east_buf</code> and <code>fabric_h ≥ offset_y + H + 1</code>.</li>
 </ul>
-<p>At the usual offsets 4,1 that is: the rectangle must be <strong>at least</strong> 7 columns narrower and 2 rows shorter than the fabric. For an 8 × 4 rectangle: <code>--fabric-dims=15,6 --fabric-offsets=4,1</code>. A 6 × 2 rectangle needs 13,4; 12,4 fails with "Fabric dimension must be at least 13-by-4" <span class="tag measured">Measured</span>. On hardware the fabric is fixed, and the SDK is not consistent about its size. The single-tile-matvec README says "if you are running on a real CS-2, <code>fabric-dims</code> must be <code>750,994</code>" <span class="tag sdk">SDK 2.10.1</span>, which would cap your rectangle at 743 × 992 <span class="tag derived">Derived</span>. The same README then runs <code>./sweep.py --dims 750,994</code> and says "Dims here refers to the dimensions of the program rectangle", and <code>sweep.py</code> turns that into <code>--fabric-dims={width+7},{height+2}</code> = 757,996 <span class="tag sdk">SDK 2.10.1</span>. So the exact CS-2 fabric is 750 × 994 or 757 × 996 <span class="tag unv">Unverified</span> (<a href="02-the-wafer.html#cs2-dims">Chapter 2's note on that size</a>). No CS-3 fabric size appears in the SDK files; on a real system, take it from your system's documentation or administrator, then apply the rule above. The same frame arithmetic is drawn in <a href="07-host-io.html#frame">Chapter 7's frame calculator</a>.</p>
+<p>At the usual offsets 4,1 that is: the rectangle must be <strong>at least</strong> 7 columns narrower and 2 rows shorter than the fabric. For an 8 × 4 rectangle: <code>--fabric-dims=15,6 --fabric-offsets=4,1</code>. A 6 × 2 rectangle needs 13,4; 12,4 fails with "Fabric dimension must be at least 13-by-4" <span class="tag measured">Measured</span>. On hardware the fabric is fixed, and the SDK is not consistent about its size. The single-tile-matvec README says "if you are running on a real CS-2, <code>fabric-dims</code> must be <code>750,994</code>" <span class="tag sdk">SDK 2.10.1</span>, which would cap your rectangle at 743 × 992 <span class="tag derived">Derived</span>. The same README then runs <code>./sweep.py --dims 750,994</code> and says "Dims here refers to the dimensions of the program rectangle", and <code>sweep.py</code> turns that into <code>--fabric-dims={width+7},{height+2}</code> = 757,996 <span class="tag sdk">SDK 2.10.1</span>. So the CS-2 fabric is either 750 × 994 or at least 757 × 996 <span class="tag unv">Unverified</span> (<a href="02-the-wafer.html#cs2-dims">Chapter 2's note on that size</a>). No CS-3 fabric size appears in the SDK files; on a real system, take it from your system's documentation or administrator, then apply the rule above. The same frame arithmetic is drawn in <a href="07-host-io.html#frame">Chapter 7's frame calculator</a>.</p>
 
 <div class="widget" id="cb">
 <h4>What will the cslc wrapper say?</h4>
-<p class="hint">Set a rectangle and the flags. The page applies the wrapper's checks in its order and prints the message it would raise, or the PE programs a SAXPY-style program (same params everywhere, no routes) would get. A grid picture of the frame is <a href="07-host-io.html">Chapter 7</a>'s calculator.</p>
+<p class="hint">Set a rectangle and the flags. The page applies the wrapper's checks in its order and prints the message it would raise, or the PE programs a SAXPY-style program (same params everywhere, no routes) would get. A grid picture of the frame is <a href="07-host-io.html#frame">Chapter 7</a>'s calculator.</p>
 <div class="controls">
   <label>W <input type="number" id="cb-w" min="1" max="800" value="1" style="width:5em"></label>
   <label>H <input type="number" id="cb-h" min="1" max="1000" value="1" style="width:5em"></label>
@@ -431,7 +431,7 @@ cs_python run.py --name out</code></pre>
 <li><b>Group PEs.</b> PEs with identical code, params <em>and router configuration</em> become one PE program.</li>
 <li><b>Compile and link each group.</b> Semantic errors point at a line; memory overflow comes from the linker <code>ld.lld</code> ("ran out of PE memory", "Failed to link").</li>
 <li><b>Write metadata.</b> <code>out.json</code> (the params) and <code>bin/out_rpc.json</code> (the export IDs the host looks up).</li>
-<li><b>Wrapper checks and the frame.</b> Only if the driver succeeded does the Python wrapper's <code>_generate_memcpy</code> run. It reads the fabric and kernel sizes from the ELFs it just built in <code>out/bin/</code>, checks the offsets, channels and fabric size against memcpy's needs (<a href="#fabric-size">the fabric-size rule</a>), and generates the west and east frame programs (<code>out/west/</code>, <code>out/east/</code>). Errors here are Python <code>RuntimeError</code> tracebacks, so a wrong <code>--fabric-dims</code> is reported only <em>after</em> your own program has compiled (about 24 s for SAXPY <span class="tag measured">Measured</span>), and <code>out/bin/</code> already holds your ELFs.</li>
+<li><b>Wrapper checks and the frame.</b> Only if the driver succeeded does the Python wrapper's <code>_generate_memcpy</code> run. It reads the fabric and kernel sizes from the ELFs it just built in <code>out/bin/</code>, checks the offsets, channels and fabric size against memcpy's needs (<a href="#fabric-size">the fabric-size rule</a>), and generates the west and east frame programs (<code>out/west/</code>, <code>out/east/</code>). Errors here are Python <code>RuntimeError</code> tracebacks, so a wrong <code>--fabric-dims</code> is reported only <em>after</em> your own program has compiled (about 24 s for SAXPY on our shared container, 5 s when it was quiet <span class="tag measured">Measured</span>), and <code>out/bin/</code> already holds your ELFs.</li>
 </ol>
 <p class="legend">Stage order <span class="tag derived">Derived</span> from <code>cslc --help</code> and the wrapper source (<code>main()</code> calls <code>cslc-driver</code> first and returns on failure, then <code>_generate_memcpy</code>), and the messages each stage printed <span class="tag measured">Measured</span>.</p>
 
@@ -479,8 +479,8 @@ cs_python run.py --name out</code></pre>
 <ul>
 <li><b>Idle stop.</b> The simulator stops after an idle window once the host has stopped; <code>simconfig.json</code> has <code>"sunsetCount": 50</code>, and most runs stopped after exactly 50 idle cycles <span class="tag measured">Measured</span>.</li>
 <li><b>A deadlock and a success can both end "Stopped due to idleness".</b> Only your host-side check (the <code>assert_allclose</code>) tells you which.</li>
-<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2) every time. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. In our parallel runs for <a href="11-lab-first-programs.html#noise">Lab 1</a>, program 01 took +1.4 % to +2.3 % longer, and one variant up to about 4×, while in-kernel timestamps did not move <span class="tag measured">Measured</span>; <a href="appendix-c-measuring.html#noise">Appendix C</a> describes how such runs are measured. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
-<li><b>To time a kernel</b>, read the PE's own <a href="appendix-a-glossary.html#g-timestamp-counter-tsc">timestamp counter</a> with <code>&lt;time&gt;</code> (topic-02), which stays stable under load (the pattern is below), or difference two runs as <a href="13-lab-stencil.html#measurements">Lab 3</a> does. Do not read a single <code>cycle_count</code>.</li>
+<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,738–7,740 (WSE-3) and 6,826 (WSE-2). First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. In the runs for <a href="11-lab-first-programs.html#noise">Lab 1</a>, program 01 once gave 16,940 while other simulations ran, while in-kernel timestamps did not move <span class="tag measured">Measured</span>; <a href="appendix-c-measuring.html#noise">Appendix C</a> describes how such runs are measured. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
+<li><b>To time a kernel</b>, read the PE's own <a href="appendix-a-glossary.html#g-timestamp-counter-tsc">timestamp counter</a> with <code>&lt;time&gt;</code> (topic-02), which stays stable under load (the pattern is below), For a per-step cost, take the TSC slope between two step counts, as <a href="13-lab-stencil.html#measurements">Lab 3</a> does. Do not read or difference <code>cycle_count</code> totals.</li>
 <li>A fatal stop writes no <code>sim_stats.json</code> at all <span class="tag measured">Measured</span>. <code>sim.log</code> names the chip internally: FYN = WSE-2, SDR = WSE-3.</li>
 </ul>
 <h3 id="tsc">Timing a kernel with the TSC</h3>
@@ -506,7 +506,7 @@ w = (w &amp; <span class="n">0xffff</span>).astype(np.int64).reshape(P, <span cl
 
 <h2 id="debugging">Debugging</h2>
 <h3 id="errors">Error decoder</h3>
-<p>Each row is a one-line change to program 01, compiled or run on WSE-3 <span class="tag measured">Measured</span>. Note the four that compile cleanly.</p>
+<p>Each row is a one-line change to program 01, compiled or run on WSE-3 <span class="tag measured">Measured</span>. Note the three that compile cleanly.</p>
 <div class="table-wrap"><table>
 <tr><th>Mistake</th><th>When</th><th>What you see</th><th>Fix</th></tr>
 <tr><td><code>const y_ptr</code> but <code>@export_name("y", …, true)</code></td><td>compile</td><td><code>pe_program.csl:25:18: error: exported symbol mutability mismatch</code> · <code>note: expected name to be mutable</code> · <code>note: symbol declared here</code></td><td>make the pointer <code>var</code>, or the flag <code>false</code></td></tr>
@@ -521,7 +521,7 @@ w = (w &amp; <span class="n">0xffff</span>).astype(np.int64).reshape(P, <span cl
 <tr><td>delete <code>@export_symbol(saxpy)</code></td><td><b>run time</b> (compiles cleanly; <code>saxpy</code> is simply missing from <code>out_rpc.json</code>)</td><td><code>FATAL: Error: the function saxpy does not exist</code></td><td>export it</td></tr>
 <tr><td>delete <code>sys_mod.unblock_cmd_stream()</code></td><td><b>run time</b>, at the next memcpy after <code>launch</code></td><td><code>the received length (0 bytes) is not expected (256 bytes), could be a kernel stall</code>; <code>cs_python</code> aborts after about 4 s; <code>sim.log</code> is cut off; no <code>sim_stats.json</code></td><td>unblock at the end of every RPC</td></tr>
 </table></div>
-<p class="legend">"256 bytes" is the D2H copy of 64 f32 that never arrived. Under heavy host load a correct program can also abort with "could be a kernel stall": 5 of 32 did in our parallel runs for <a href="11-lab-first-programs.html#noise">Lab 1</a> <span class="tag measured">Measured</span>. Rerun it alone before you hunt.</p>
+<p class="legend">"256 bytes" is the D2H copy of 64 f32 that never arrived. Under heavy host load a correct program can also abort with "could be a kernel stall": 3 of 28 runs made two or three at a time did for <a href="11-lab-first-programs.html#noise">Lab 1</a> <span class="tag measured">Measured</span>. Rerun it alone before you hunt.</p>
 
 <h3 id="hangs">When it hangs: a four-step procedure</h3>
 <ol>
@@ -554,7 +554,7 @@ d.read_trace(4 + x, 1 + y, <span class="s">'trace'</span>)  <span class="c"># fa
 <p class="legend">Read after <code>rt.stop()</code>, so the program must finish. <code>read_trace</code> takes <b>fabric</b> coordinates, hence <code>4 + x, 1 + y</code> <span class="tag sdk">SDK 2.10.1, topic-12</span>.</p>
 </div>
 </div>
-<p><b><a href="appendix-a-glossary.html#g-instruction-trace">Instruction trace</a>.</b> Setting <code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace</code> before <code>cs_python</code> makes the simulator log every instruction. For SAXPY this grew <code>sim.log</code> to about 6 MB (86,000 lines) and showed lines such as <code>@3124 P4.1: … [EX OP] … FMACS Dest:3f24aefe Src0:3ea86eb5 Src1:3e00bf6c Src2:40200000</code>, where <code>P4.1</code> is fabric (4,1), <code>T01</code> the task ID and <code>40200000</code> is 2.5 in hex <span class="tag measured">Measured</span>. It shows which task each PE runs, cycle by cycle, and is the quickest way to see where a PE stopped. Use it on small runs only. (<code>sdk_debug_shell instr-trace</code> does not read the simulator's default CTF traces; it says to use csdb <span class="tag sdk">SDK 2.10.1</span>.)</p>
+<p><b><a href="appendix-a-glossary.html#g-instruction-trace">Instruction trace</a>.</b> Setting <code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace</code> before <code>cs_python</code> makes the simulator log every instruction. For SAXPY this grew <code>sim.log</code> to about 6 MB (86,000 lines) and showed lines such as <code>@3124 P4.1: … [EX OP] … FMACS Dest:3f24aefe Src0:3ea86eb5 Src1:3e00bf6c Src2:40200000</code>, where <code>P4.1</code> is fabric (4,1) and <code>40200000</code> is 2.5 in hex <span class="tag measured">Measured</span>. It shows which task each PE runs, cycle by cycle, and is the quickest way to see where a PE stopped. Use it on small runs only. (<code>sdk_debug_shell instr-trace</code> does not read the simulator's default <a href="appendix-a-glossary.html#g-ctf-trace">CTF</a> traces; it says to use csdb <span class="tag sdk">SDK 2.10.1</span>.)</p>
 <p>A cheap trick we used for the streaming race in program 02: export an extra array, have the data task record each running sum into it, read it back, and compare with <code>numpy.cumsum</code>. On a deterministic simulator, recording state is often faster than stepping a debugger.</p>
 
 <h2 id="sdklayout">The other way to lay out: SdkLayout</h2>
@@ -706,7 +706,7 @@ In this course's cloud container, running as root without <code>CAP_SYS_RESOURCE
 <p><strong>Next in the SDK →</strong> <a href="appendix-d-sdk-index.html#after-ch10">Appendix D</a> lists the SDK tutorials and benchmarks to read or run after this chapter, easiest first.</p>
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>In program 03, which file decides that PE (3,0) talks to PE (4,0) on color 1, and how does device code use the color?</summary><p><code>layout.csl</code>, through <code>@set_color_config</code> on both PEs (tx EAST on (3,0), rx WEST on (4,0)). The device code receives the color as a param and uses it: on WSE-2 directly, on WSE-3 through an input/output queue it binds to the color with <code>@initialize_queue</code>.</p></details>
+<details><summary>In program 03, which file decides that PE (3,0) talks to PE (4,0) on color 1, and how does device code use the color?</summary><p><code>layout.csl</code>, through <code>@set_color_config</code> on both PEs (tx EAST on (3,0), rx WEST on (4,0)). The device code receives the color as a param and uses it: on the send side WSE-2 names the color in the fabout DSD (<code>.fabric_color</code>) and WSE-3 binds output queue 2 to it; on the receive side both chips bind input queue 2 to the color with <code>@initialize_queue</code> (<code>pe_program.csl</code>:58–59).</p></details>
 <details><summary>Program 03 passes each PE a role (first / middle / last) and send/receive colors that alternate by column. For P = 16, how many PE programs does cslc build, and why not 16?</summary><p>One per distinct combination of code, params and routes: first, last, and middle-even / middle-odd, so 4, the same as for P = 8. Compile time grows with the number of distinct combinations, not with the PE count. Passing <code>.x = x</code> to every PE would make 16; read coordinates at run time with <code>&lt;layout&gt;</code> instead. Different routes still split programs.</p></details>
 <details><summary>You need a 10 × 3 rectangle with memcpy. What flags do you pass in the simulator, and what changes on a real CS system?</summary><p><code>--fabric-dims=17,5 --fabric-offsets=4,1</code> (width + 7, height + 2). On a real system you recompile with <code>--fabric-dims</code> set to that machine's fabric (for a CS-2 the README says 750,994, though its own sweep script implies 757,996; ask for the CS-3 figure), keep the same offsets, and pass <code>--cmaddr</code> to run.py.</p></details>
 <details><summary>Your program compiles, then run.py dies with "could be a kernel stall". Where do you look, in order?</summary><p>The RPC just before the failing memcpy: does every path call <code>unblock_cmd_stream()</code>? Then <code>&lt;simprint&gt;</code> lines in <code>sim.log</code> to see which PE stopped where; then the routes (<code>--out-routes</code>); then the instruction trace or csdb. Rerun once first: heavy host load can also trigger it. Do not trust "Stopped due to idleness" as success.</p></details>
@@ -1044,7 +1044,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     out.textContent = (arch.value === "wse3"
       ? `WSE-3: largest N ≈ 5,614–5,615 (Derived from this line; Measured: 5,615 links at exactly 49,152 B, 5,616 and 5,620 fail).`
       : `WSE-2: largest N ≈ ${maxN.toLocaleString()} by this line (Derived; Measured: 5,784 links, 5,790 fails).`) +
-      (arch.value === "wse3" ? " The purple part is ≈ 3.2 KB code + memcpy runtime and ≈ 1 KB task table." : "");
+      (arch.value === "wse3" ? " The purple part is ≈ 1 KB task table (Chapter 3) and so ≈ 3.2 KB code and runtime data (4,240 − 1,024, Derived)." : "");
   }
   n.oninput = draw; arch.onchange = draw; draw();
 })();
@@ -1111,7 +1111,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     out.innerHTML = `<div>${esc(cmd)}</div><div style="margin-top:6px">` + (err
       ? `<span class="err-t">✕ ${esc(err)}</span>`
       : `<span class="ok-t">✓ passes the wrapper's checks.</span> Smallest fabric for this rectangle: ${bx} × ${by}. A SAXPY-style program (same params, no routes) gets ${groups} PE program${groups > 1 ? "s" : ""} (${W >= 3 ? "first, middle, last column" : W === 2 ? "first and last column" : "one PE"}).` +
-        (mode === "cs2" ? " On hardware also pass --cmaddr to run.py. 750 × 994 is the README's CS-2 figure; sweep.py implies 757 × 996 (Unverified)." : "")) + `</div>`;
+        (mode === "cs2" ? " On hardware also pass --cmaddr to run.py. 750 × 994 is the README's CS-2 figure; sweep.py implies at least 757 × 996 (Unverified)." : "")) + `</div>`;
   }
   ["w", "h", "ox", "oy", "ch", "bw", "be", "fw", "fh"].forEach(id => g(id).oninput = run);
   g("fab").onchange = run;
@@ -1144,7 +1144,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     el("text", { x: X0, y: 200, "font-size": 12, class: "muted" }, svg).textContent = "Same pe_program.csl and same .N everywhere. File names number groups, not PE coordinates.";
     out.textContent = r
       ? "out/bin/: out_0_0 out_0_1 out_1_0 out_1_1 out_2_0 out_2_1 .elf (Measured). cs_readelf --routing on out_0_1.elf shows color 3 WEST → RAMP."
-      : "out/bin/: out_0_0 out_1_0 out_2_0 .elf (Measured). cs_readelf -m out_1_0.elf: fabric (5..8, 1..2), 5,088 bytes each.";
+      : "out/bin/: out_0_0 out_1_0 out_2_0 .elf (Measured). cs_readelf -m out_1_0.elf: fabric (5..8, 1..2), 4,752 bytes each (the same as the 1 × 1 build).";
   }
   cbx.onchange = draw; draw();
 })();

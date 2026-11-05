@@ -20,8 +20,8 @@
 </figure>
 
 <div class="stat-row">
-  <div class="stat"><div class="v">18 + 5</div><div class="l">chapters and appendices, each with diagrams</div></div>
-  <div class="stat"><div class="v">90</div><div class="l">interactive widgets</div></div>
+  <div class="stat"><div class="v">18 + 5</div><div class="l">chapters and appendices; every chapter has diagrams</div></div>
+  <div class="stat"><div class="v">91</div><div class="l">interactive widgets</div></div>
   <div class="stat"><div class="v">7 / 7</div><div class="l">programs pass on WSE-3 and WSE-2 <span class="tag measured">Measured</span></div></div>
   <div class="stat"><div class="v">4</div><div class="l">real problems hit while writing the programs, <a href="18-comparison.html#lessons">explained in Ch. 18</a></div></div>
 </div>
@@ -32,15 +32,15 @@
 <h2>How to use this course</h2>
 <ul>
 <li><strong>Before you start.</strong> You need to read C-like code and a little Python, and know what a cache, DRAM bandwidth and a matrix multiply are. No Cerebras, GPU or CSL experience is assumed; <a href="appendix-a-glossary.html">Appendix A</a> defines every term.</li>
-<li>Read in order the first time: each chapter builds on the previous one. Every chapter ends with "Check yourself" questions, and the lab chapters have exercises with expected answers.</li>
+<li>Read in order the first time: each chapter builds on the previous one. Every chapter ends with questions to check yourself (in Labs 1–2 these are the exercises; Ch 18 has a final check), and the lab chapters have exercises with expected answers.</li>
 <li><strong>Shorter routes</strong> if you have one goal:
 <ul>
 <li><em>Choosing hardware</em> (buyer, architect): <a href="01-memory-wall.html">1</a>, <a href="02-the-wafer.html">2</a>, <a href="08-systems.html">8</a>, <a href="09-model-to-tokens.html">9</a>, then <a href="16-tenstorrent.html">16</a>–<a href="18-comparison.html">18</a>.</li>
 <li><em>Programming the wafer</em>: <a href="03-processing-element.html">3</a>–<a href="07-host-io.html">7</a>, then the toolchain and labs <a href="10-csl-toolchain.html">10</a>–<a href="15-lab-cg.html">15</a>, with <a href="appendix-c-measuring.html">Appendix C</a> on timing and <a href="appendix-d-sdk-index.html">Appendix D</a> for the next SDK example.</li>
 <li><em>Coming from CUDA</em>: <a href="17-gpu.html">17</a> and <a href="appendix-b-cuda-to-csl.html">Appendix B</a> first, then the programming route.</li>
 </ul></li>
-<li>Every number carries a provenance tag: <span class="tag vendor">Vendor</span> <span class="tag indep">Indep</span> <span class="tag analyst">Analyst</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span>. Web figures were gathered largely from search extracts of primary sources; check them against the primary document before relying on them.</li>
-<li>To run the programs: set up the SDK with <code>.claude/skills/cerebras-sdk/scripts/setup.sh</code>, then <code>source /home/user/cerebras-sdk/env.sh</code> and <code>bash course/programs/run_all.sh</code>.</li>
+<li>Every number carries a <a href="appendix-e-sources.html#tags">provenance tag</a> (defined in Appendix E): <span class="tag vendor">Vendor</span> <span class="tag indep">Indep</span> <span class="tag analyst">Analyst</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span>. Figures in the lede and chapter summaries on this page are tagged in their chapters. Web figures were gathered largely from search extracts of primary sources; check them against the primary document before relying on them.</li>
+<li>To run the programs: set up the SDK with <code>.claude/skills/cerebras-sdk/scripts/setup.sh</code>, then <code>source /home/user/cerebras-sdk/env.sh</code> and <code>ARCH=wse3 bash course/programs/run_all.sh</code> and <code>ARCH=wse2 bash course/programs/run_all.sh</code>, all from the repository root (the script defaults to WSE-3, so run both to reproduce the 7 / 7 above).</li>
 <li>The research behind the course is in <code>reports/</code> and <code>research_notes/</code> in this repository.</li>
 </ul>
 </main>
@@ -62,7 +62,7 @@
     "Row reduction and multicast broadcast; measured hop costs, streaming vs store-and-forward, and the two composed into a distributed GEMV.",
     "1-D heat equation with halo exchange; 90 + 2.5·n cycles per step, explained piece by piece.",
     "SUMMA matrix multiply on a 2-D grid with &lt;collectives_2d&gt;, measured.",
-    "Composing modules: CG with allreduce, a multi-phase solver loop, and the scaling result: the library allreduce dominates at wafer scale.",
+    "Composing modules: CG with allreduce, a multi-phase solver loop, and the scaling result: the SDK allreduce is 60% of an iteration at 16 × 16 <span class=\"tag measured\">Measured</span>, and its measured fit predicts (an extrapolation, not a run) that it dominates at wafer scale.",
     "Tensix cores, five RISC-Vs, NoCs, reader/compute/writer kernels; scaling out over Ethernet and 70B on 32 chips.",
     "SMs, HBM, SIMT, occupancy; SAXPY in CUDA vs CSL.",
     "Architecture, programming, scaling, a Llama-70B decode case study, a cost model, the evidence, and when to choose which.",
@@ -78,7 +78,7 @@
   });
   const ax = document.getElementById("appx"); const ah = document.createElement("div"); ah.className = "part-title"; ah.textContent = "Appendices"; ax.appendChild(ah);
   const ag = document.createElement("div"); ag.className = "cards"; ax.appendChild(ag);
-  const ablurbs = ["Every term and number format used in the course.", "CUDA concepts mapped to CSL, resource budget card, measured cost constants.", "sim_stats vs on-tile timers vs instruction traces; profiling on all three machines.", "Every SDK tutorial, benchmark and library mapped to the chapter that explains it.", "Where each number comes from, and the live list of unverified figures."];
+  const ablurbs = ["Every term and number format used in the course.", "CUDA concepts mapped to CSL, resource budget card, measured cost constants.", "sim_stats vs on-tile timers vs instruction traces; profiling on all three machines.", "Every SDK tutorial, benchmark and library (59 items), with the chapter that covers it or a note that none does.", "Where each number comes from, and the live list of unverified figures."];
   APPENDICES.forEach(([href, title, L], i) => { const a = document.createElement("a"); a.className = "card"; a.href = href;
     a.innerHTML = `<div class="num">${L}</div><h3>${title}</h3><p>${ablurbs[i]}</p>`; ag.appendChild(a); });
   const map = $("#map");
