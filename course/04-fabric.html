@@ -367,14 +367,15 @@ cp -r $EX/tutorials/topic-08-filters ~/t8 &amp;&amp; cd ~/t8 &amp;&amp; bash com
 </figure>
 
 <h2 id="color-budget">Colors are the scarcest resource</h2>
-<p>Of the 24 routable colors, memcpy, the SDK's host-I/O runtime (Chapter 7), takes 20–23. That leaves 20 for your program <span class="tag sdk">SDK 2.10.1</span>. Tick the patterns one program needs and watch the budget fill.</p>
+<p>Of the 24 routable colors, <a href="appendix-a-glossary.html#g-memcpy">memcpy</a>, the SDK's host-I/O runtime (<a href="07-host-io.html#reserves">Chapter 7</a>), takes 20–23. That leaves 20 for your program <span class="tag sdk">SDK 2.10.1</span>. Tick the patterns one program needs and watch the budget fill.</p>
 <div class="widget" id="plan">
 <h4>Color-budget planner</h4>
+<p class="hint">The two "one PE sends to its 4 neighbours" items are a single sender with four pure receivers, not an all-PE exchange. Switches save colors over time at one sender; they do not remove the checkerboard, so the 2-D all-PE exchange stays at 8 (<a href="#chk2d-fig">figure above</a>).</p>
 <div class="plan-list" id="plan-list"></div>
 <svg id="plan-svg" viewBox="0 0 760 150" width="760" role="img" aria-label="Color budget bar"></svg>
 <div class="readout" id="plan-out" aria-live="polite"></div>
 </div>
-<p>The real programs: Lab 1 = 1 color (its H2D stream on color 0), Lab 2 = 2 (c0/c1; the broadcast reuses color 0), Lab 3 = 4 <span class="tag sdk">course programs</span>. memcpy reserves 21 (device→host data), 22 (command stream), 23 (host→device data) and 20 (used internally by the runtime for switching) <span class="tag sdk">SDK 2.10.1</span>. The SDK's 25-point stencil benchmark spends 21 colors and task IDs on its communication, and its README says SdkRuntime "reserves 6 colors, so only 4 colors are left" for streaming transfers. (The library source names 4 routable system colors; the README's count of 6 is not broken down.) Every new pattern spends colors, which is why switches, filters, teardown and the SdkLayout API exist. SdkLayout is a Python layout layer that allocates colors for you (Chapter 10).</p>
+<p>The real programs: Lab 1 = 1 color (its H2D stream on color 0), Lab 2 = 2 (c0/c1; the broadcast reuses color 0), Lab 3 = 4 <span class="tag sdk">course programs</span>. memcpy reserves 21 (device→host data), 22 (command stream), 23 (host→device data) and 20 (context-switch routing, named <code>SYS_RXCTX</code> in <code>memcpy/sys_params.csl</code>) <span class="tag sdk">SDK 2.10.1</span>. The SDK's 25-point stencil benchmark spends 21 colors and task IDs on its communication, and its README says SdkRuntime "reserves 6 colors, so only 4 colors are left" for streaming transfers. The README's numbers add up to 31, not 24: 21 + 6 + 4 = 31 is the 5-bit ID space that <code>.activate</code> accepts ("color 0~30", <code>memcpy/sys_params.csl</code>) <span class="tag sdk">SDK 2.10.1</span>. So its "6" counts IDs, memcpy's 4 routable colors plus IDs it uses as entrypoints, not 6 routable colors <span class="tag derived">Derived</span>. Every new pattern spends colors, which is why switches, filters, teardown and the SdkLayout API exist. <a href="appendix-a-glossary.html#g-sdklayout">SdkLayout</a> is a Python layout layer that allocates colors for you (<a href="10-csl-toolchain.html#sdklayout">Chapter 10</a>).</p>
 
 <h3 id="router-numbers">The router by the numbers</h3>
 <div class="table-wrap"><table>
@@ -386,12 +387,13 @@ cp -r $EX/tutorials/topic-08-filters ~/t8 &amp;&amp; cd ~/t8 &amp;&amp; bash com
 <tr><td>switch positions</td><td>4 (1 register)</td><td>4 (4 registers)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
 <tr><td>filters per PE</td><td>6 (4 + 2 banks)</td><td>6 (1 bank)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
 <tr><td>input / output queues</td><td>8 / 6</td><td>8 / 8</td><td><span class="tag sdk">SDK 2.10.1</span> (Ch. 5)</td></tr>
-<tr><td>fabric coordinate field</td><td>10 bits (0x03ff)</td><td>11 bits (0x07ff)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>PE coordinate register <small>(not a wavelet field)</small></td><td>10 bits (0x03ff)</td><td>11 bits (0x07ff)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
 <tr><td>SDK-visible fabric</td><td>750 × 994 (CS-2)</td><td>not published</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
 <tr><td>color swap</td><td>yes</td><td>no (in CSL)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
 <tr><td>simulator cycles per hop</td><td>1.0</td><td>2.0</td><td><span class="tag measured">Measured</span></td></tr>
-<tr><td>clock</td><td>1.1 GHz</td><td>not published</td><td><span class="tag vendor">Vendor, HC22</span>; SDK assumes 850 MHz</td></tr>
+<tr><td>clock</td><td>1.1 GHz</td><td>not published; ~1.4 GHz estimated</td><td><span class="tag vendor">Vendor, HC22</span>; SDK assumes 850 MHz <span class="tag sdk">SDK</span>; WSE-3 estimate <span class="tag analyst">Analyst</span> <span class="tag unv">Unverified</span></td></tr>
 </tbody></table></div>
+<p class="small" style="font-size:14px;color:var(--muted)">The coordinate row is the PE's own position register, which code reads with <code>tile_config.get_fabric_coord</code> (masked by <code>fabric_coord_mask</code>) <span class="tag sdk">SDK 2.10.1</span>. Wavelets carry no address. 11 bits allow a fabric dimension above 1,023, which a 10-bit field could not hold <span class="tag derived">Derived</span>. The WSE-3 clock estimate is The Next Platform's (2026-08-19), which also puts the same PE in the CS-4's WSE-3T at ~2.8 GHz; Cerebras gives no number (<a href="02-the-wafer.html#generations">Chapter 2</a>).</p>
 
 <p>The aggregate fabric numbers follow from this design: 32 bits × 4 ports × 2 (in + out) × ~850k routers × 1.1 GHz ≈ 2.4 × 10<sup>17</sup> bit/s, or ≈ 2.1 × 10<sup>17</sup> with the 745,500 SDK-visible positions. The vendor's 220 Pb/s for WSE-2 sits in that range <span class="tag derived">Derived</span>. The "× 2" counts each link once from each end, as vendors appear to. Each individual link, though, carries only 3.4–4.4 GB/s per direction <span class="tag derived">Derived</span>: the fabric is fast in aggregate, not between any two distant PEs.</p>
 
@@ -878,7 +880,7 @@ cp -r $EX/tutorials/topic-08-filters ~/t8 &amp;&amp; cd ~/t8 &amp;&amp; bash com
     const items = [
       ["Lab 1: one H2D stream", 1, true], ["Lab 2: reduce chain (checkerboard)", 2, false], ["Lab 2: column broadcast", 1, false],
       ["Lab 3: 1-D halo exchange", 4, false], ["2-D 4-neighbour exchange (game of life)", 8, false],
-      ["extra streaming H2D / D2H channel", 1, false], ["4-neighbour send WITHOUT switches", 4, false], ["4-neighbour send WITH switches (topic-06)", 1, false],
+      ["extra streaming H2D / D2H channel", 1, false], ["one PE sends to its 4 neighbours, no switches", 4, false], ["one PE sends to its 4 neighbours, with switches (topic-06)", 1, false],
       ["collectives_2d on both axes", 4, false],
     ];
     const SWC = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 16, 17, 20, 21]);
