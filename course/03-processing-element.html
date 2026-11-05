@@ -391,6 +391,8 @@ cs_readelf --sym out/bin/out_0_0.elf    <span class="c"># every symbol with its 
 <p>Variations: <code>--arch wse2</code>; <code>tile_size:104</code> (fits) against <code>tile_size:106</code> (link error). Why the fabric is 7 columns wider and 2 rows taller than the 1 × 1 program, and what <code>--fabric-offsets=4,1</code>, <code>--memcpy</code> and <code>--channels=1</code> do, is explained in <a href="07-host-io.html#frame">Chapter 7</a> and <a href="10-csl-toolchain.html#fabric-size">Chapter 10</a>.</p>
 </details>
 
+<p class="note">Next in the SDK → <a href="appendix-d-sdk-index.html#after-ch03">Appendix D</a>: which SDK examples to read or run after this chapter (<code>single-tile-matvec</code>, the benchmark this chapter quotes).</p>
+
 <div class="quiz">
 <h3>Check yourself</h3>
 <details><summary>Your WSE-3 PE program needs two 64 × 64 f32 matrices. Does it fit?</summary><p>2 × 64 × 64 × 4 B = 32 KB. It fits in 48 KB, but leaves only 16 KB, of which about 4.5 KB (4,636 B, measured on the matvec benchmark) is the fixed overhead of code, runtime and task table; the smallest course program, SAXPY, needs 4,240 B. That leaves about 11 KB for every other array, and more if your code is bigger. Two 96 × 96 matrices (72 KB) would not fit.</p></details>

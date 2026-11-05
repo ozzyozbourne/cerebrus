@@ -400,6 +400,8 @@ cp -r $EX/tutorials/topic-08-filters ~/t8 &amp;&amp; cd ~/t8 &amp;&amp; bash com
 
 <p>The aggregate fabric numbers follow from this design: 32 bits × 4 ports × 2 (in + out) × ~850k routers × 1.1 GHz ≈ 2.4 × 10<sup>17</sup> bit/s, or ≈ 2.1 × 10<sup>17</sup> with the 745,500 SDK-visible positions. The vendor's 220 Pb/s for WSE-2 sits in that range <span class="tag derived">Derived</span>. The "× 2" counts each link once from each end, as vendors appear to. Each individual link, though, carries only 3.4–4.4 GB/s per direction <span class="tag derived">Derived</span>: the fabric is fast in aggregate, not between any two distant PEs.</p>
 
+<p class="note">Next in the SDK → <a href="appendix-d-sdk-index.html#after-ch04">Appendix D</a>: which SDK examples to read or run after this chapter (the switch, filter and color-swap tutorials).</p>
+
 <div class="quiz">
 <h3>Check yourself</h3>
 <details><summary>Write the route for a PE that should forward color 5 from the north to the south without its CE seeing it.</summary><p><code>@set_color_config(x, y, c5, .{ .routes = .{ .rx = .{NORTH}, .tx = .{SOUTH} } });</code></p></details>

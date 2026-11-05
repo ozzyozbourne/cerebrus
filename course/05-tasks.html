@@ -153,7 +153,7 @@ The CE can launch a vector instruction, such as "copy 64 words from memory out o
 
 <div class="callout cuda">
 <strong>If you know CUDA</strong>
-<p>A task is not a thread and not a kernel: it is an entry point that the picker runs when its bit is set and unblocked, and it runs to completion. A warp that stalls on memory is set aside while other warps run; a task that waits holds the PE, and no other task runs until it returns. So code that would call <code>__syncthreads()</code> or spin on a flag in CUDA is split here into tasks that activate each other: the <a href="#join-rule">join</a> and the <a href="#state-machine">state machine</a> below. The full CUDA-to-CSL map is <a href="appendix-b-cuda-to-csl.html#rosetta">Appendix B</a>.</p>
+<p>A task is not a thread and not a kernel: it is an entry point that the picker runs when its bit is set and unblocked, and it runs to completion. A warp that stalls on memory is set aside while other warps run; a task that waits holds the PE, and no other task runs until it returns. So code that would call <code>__syncthreads()</code> or spin on a flag in CUDA is split here into tasks that activate each other: the <a href="#join-rule">join</a> and the <a href="#state-machine">state machine</a> below. The full CUDA-to-CSL map is <a href="appendix-b-cuda-to-csl.html#rosetta">Appendix B</a>; see its rows for <a href="appendix-b-cuda-to-csl.html#r-wait">waiting on data</a> and <a href="appendix-b-cuda-to-csl.html#r-syncthreads"><code>__syncthreads()</code></a>.</p>
 </div>
 
 <div class="widget" id="buf">
@@ -412,6 +412,8 @@ We rebuilt that version to check. It fails the same way on both chips: <code>sim
 </svg>
 <figcaption><b>No loops that wait, only tasks that hand off.</b> The <code>for</code> loop over timesteps in a CPU program becomes a cycle through the task graph. Only the four completion handlers are tasks. Edge PEs launch 2 ops per step, and a lone PE (P = 1) calls <code>update()</code> straight from <code>start_step()</code>. <code>unblock_cmd_stream()</code> tells the host runtime that this PE has finished the current host call (<a href="07-host-io.html#command-stream">Chapter 7</a>). Source: <code>programs/04-heat-stencil/pe_program.csl</code>.</figcaption>
 </figure>
+
+<p class="note">Next in the SDK → <a href="appendix-d-sdk-index.html#after-ch05">Appendix D</a>: which SDK examples to read or run after this chapter (the sentinel and switch-entry-point tutorials).</p>
 
 <div class="quiz">
 <h3>Check yourself</h3>

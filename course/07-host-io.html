@@ -272,7 +272,7 @@ xs = rt.get_id(<span class="s">'x'</span>)</code></pre>
 
 <div class="callout cuda">
 <strong>If you know CUDA</strong>
-<p><code>memcpy_h2d</code> is <code>cudaMemcpy</code> with the decomposition made explicit: you name a rectangle of PEs and the elements per PE. <code>rt.launch()</code> stands where <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> does, but no threads start: it is an RPC queued in every PE's command stream, and the resident program's exported function runs once per PE. "Launch returned" only means the command was sent. As with an asynchronous CUDA launch, a kernel that never finishes shows up at the next copy, but where a CUDA <code>cudaMemcpy</code> would block forever, here, in the simulator, the copy errors after about 4 s with "could be a kernel stall" (<a href="10-csl-toolchain.html#errors">Chapter 10</a>). How hardware reports it we have not measured.</p>
+<p><code>memcpy_h2d</code> is <code>cudaMemcpy</code> with the decomposition made explicit: you name a rectangle of PEs and the elements per PE. <code>rt.launch()</code> stands where <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> does, but no threads start: it is an RPC queued in every PE's command stream, and the resident program's exported function runs once per PE. "Launch returned" only means the command was sent. As with an asynchronous CUDA launch, a kernel that never finishes shows up at the next copy, but where a CUDA <code>cudaMemcpy</code> would block forever, here, in the simulator, the copy errors after about 4 s with "could be a kernel stall" (<a href="10-csl-toolchain.html#errors">Chapter 10</a>). How hardware reports it we have not measured. Appendix B rows: <a href="appendix-b-cuda-to-csl.html#r-launch">kernel launch</a>, <a href="appendix-b-cuda-to-csl.html#r-memcpy"><code>cudaMemcpy</code></a>, <a href="appendix-b-cuda-to-csl.html#r-streams">streams</a>.</p>
 </div>
 
 <h2 id="command-stream">The command stream</h2>
@@ -400,6 +400,8 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
 </table></div>
 <p>Lessons. Small copies are dominated by fixed cost even in the simulator. More channels sped H2D up 2.5×. D2H was 8× slower per wavelet and did not scale with channels here. <a href="#d2h-path">The D2H path</a> accounts for the slowdown: every element costs a data wavelet, a switch-advance control wavelet and two task runs, and each row sends one PE at a time <span class="tag derived">Derived</span>. How the 8 cycles split between those we did not measure, and why four channels did not help D2H we did not establish. Compare with hardware: 7 Gb/s ÷ 32 bits ÷ 850 MHz (the clock the SDK benchmarks assume; there is no official WSE-3 clock) ≈ 0.26 wavelets per cycle per channel <span class="tag derived">Derived</span>, so the simulator's 1 wavelet per cycle is about 4× faster than a real channel, and it charges nothing for TCP. To reproduce: copy <code>benchmarks/bandwidth-test</code>, run <code>commands_wse3.sh</code>, then recompile with <code>pe_length:1000</code> and <code>--channels=4</code> and pass <code>-k=1000 --channels=4</code> (add <code>--d2h</code>) to <code>run.py</code>.</p>
 </div>
+
+<p class="note">Next in the SDK → <a href="appendix-d-sdk-index.html#after-ch07">Appendix D</a>: which SDK examples to read or run after this chapter (<code>gemv-03-memcpy</code>, <code>row-col-broadcast</code> and the bandwidth test).</p>
 
 <div class="quiz">
 <h3>Check yourself</h3>
