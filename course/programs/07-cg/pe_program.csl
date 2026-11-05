@@ -4,7 +4,8 @@
 // course: both loops in one program, a per-phase TSC profile, and a residual/time history.
 //
 // Each PE owns one z-column ("pencil") of MAX_ZDIM cells of every vector.
-// One CG iteration is five phases; two of them end in an allreduce that every PE waits for:
+// One CG iteration is four phases plus a stopping check; two phases end in an allreduce that
+// every PE waits for:
 //   update_p        p = r + beta p                       (axpy)
 //   spmv_Ap         w = A p                              (stencil library)
 //   eta             eta = <p, w>                         (local dot, then allreduce)
@@ -112,7 +113,7 @@ fn phase_done() void {
   if (device_loop) {
     @activate(STATE);                // the state machine starts the next phase
   } else {
-    sys_mod.unblock_cmd_stream();    // the host's launch() returns; it starts the next phase
+    sys_mod.unblock_cmd_stream();    // the host's next command (launch or copy) can now run
   }
 }
 
@@ -214,7 +215,7 @@ task next_phase() void {
       update_p();
     } else {
       device_loop = false;
-      sys_mod.unblock_cmd_stream();  // solve finished: the host's launch() returns
+      sys_mod.unblock_cmd_stream();  // solve finished: the host's next command (the copies) can run
     }
   } else if (phase == PH_UPDATE_P) {
     spmv_Ap();

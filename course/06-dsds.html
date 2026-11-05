@@ -27,7 +27,7 @@
 <main>
 <div class="kicker">Chapter 6 · Part II · The machine</div>
 <h1>DSDs: loops as hardware</h1>
-<p class="lede">With no caches and no DRAM, the WSE needs a different way to make memory access cheap. The answer is the <em>data structure descriptor</em> (DSD): a description of a whole walk over memory, or over a stream of wavelets, which the PE's address generator executes so that one instruction processes an entire vector.</p>
+<p class="lede">With no hardware caches and no DRAM (only a tiny software-managed cache, <a href="03-processing-element.html#no-caches">Chapter 3</a>), the WSE needs a different way to make memory access cheap. The answer is the <a href="appendix-a-glossary.html#g-dsd-data-structure-descriptor"><em>data structure descriptor</em></a> (DSD): a description of a whole walk over memory, or over a stream of wavelets, which the PE's address generator executes so that one instruction processes an entire vector.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
@@ -41,7 +41,7 @@
 </div>
 
 <h2 id="one-instruction">One instruction, a whole loop</h2>
-<p>In C you would write <code>for (i = 0; i &lt; N; i++) y[i] += x[i] * a;</code>. In CSL you describe <code>x</code> and <code>y</code> once and issue one instruction (Lab 1, program 01, run in Chapter 11):</p>
+<p>In C you would write <code>for (i = 0; i &lt; N; i++) y[i] += x[i] * a;</code>. In CSL you describe <code>x</code> and <code>y</code> once and issue one instruction (Lab 1, program 01, run in <a href="11-lab-first-programs.html#saxpy">Chapter 11</a>):</p>
 <div class="filename">course/programs/01-saxpy/pe_program.csl</div>
 <pre><code><span class="k">const</span> x_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> x[i] });
 <span class="k">const</span> y_dsd = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{N} -> y[i] });
@@ -50,8 +50,8 @@
   <span class="b">@fmacs</span>(y_dsd, y_dsd, x_dsd, a);   <span class="c">// y[i] = y[i] + x[i] * a   for all N</span>
   sys_mod.unblock_cmd_stream();     <span class="c">// tell the host this call is done (Chapter 7)</span>
 }</code></pre>
-<p class="note"><b>Reading CSL:</b> <code>@name</code> is a builtin, <code>.{ .a = 1 }</code> is an anonymous struct literal, and <code>|i|{N} -> x[i]</code> reads "for i in 0..N, element x[i]". Chapter 10 covers the language.</p>
-<p>The descriptor is loaded into a <em>data-structure register</em> (DSR); a WSE-3 core has 48 of them <span class="tag vendor">Vendor, WSE-3 (HC2024)</span> (no WSE-2 count has been published). The datapath walks the descriptor, generating addresses and streaming operands through the arithmetic unit, with no per-element instruction fetch, loop counter or branch <span class="tag derived">Derived from SDK and vendor descriptions</span>. The <code>tensor_access</code> form names an induction variable, a bound and an affine index: <code>|i|{M} -> A[i*N]</code> means "M elements starting at A[0], stride N", which is a column of a row-major matrix.</p>
+<p class="note"><b>Reading CSL:</b> <code>@name</code> is a builtin, <code>.{ .a = 1 }</code> is an anonymous struct literal, and <code>|i|{N} -> x[i]</code> reads "for i in 0..N, element x[i]". <a href="10-csl-toolchain.html#language">Chapter 10</a> covers the language.</p>
+<p>The descriptor is loaded into a <a href="appendix-a-glossary.html#g-dsr-data-structure-register"><em>data-structure register</em></a> (DSR); a WSE-3 core has 48 of them <span class="tag vendor">Vendor, WSE-3 (HC2024)</span> (no WSE-2 count has been published). The datapath walks the descriptor, generating addresses and streaming operands through the arithmetic unit, with no per-element instruction fetch, loop counter or branch <span class="tag derived">Derived from SDK and vendor descriptions</span>. The <code>tensor_access</code> form names an induction variable, a bound and an affine index: <code>|i|{M} -> A[i*N]</code> means "M elements starting at A[0], stride N", which is a column of a row-major matrix.</p>
 
 <div class="widget" id="sv">
 <h4>Scalar loop vs one DSD instruction</h4>
@@ -64,7 +64,7 @@
 </div>
 <svg id="sv-svg" viewBox="0 0 680 300" width="680" role="img" aria-label="Scalar loop instruction stream compared with a DSD address generator"></svg>
 <div class="readout" id="sv-out" aria-live="polite"></div>
-<p class="note">The scalar instruction mix is illustrative, not the CE's real ISA, which is not public <span class="tag derived">Derived</span>. The DSD cycle estimate uses the measured <code>@fmacs</code> rate below (about 17 + N cycles) <span class="tag measured">Measured, simulator</span>.</p>
+<p class="note">The scalar instruction mix is illustrative, not the CE's real ISA, which is not public <span class="tag derived">Derived</span>. The DSD cycle estimate uses the measured <code>@fmacs</code> rate below (about 17 + N cycles) <span class="tag measured">Measured, simulator</span>, which holds only when x and y start in different SRAM banks. As shipped, program 01 puts x and y back to back, the colliding layout: it runs at 2 cycles per element until one padding word is added (<a href="#banks">below</a>; <a href="11-lab-first-programs.html#kernel-time">Chapter 11</a>) <span class="tag measured">Measured, simulator</span>.</p>
 </div>
 
 <div class="callout cuda">
@@ -97,13 +97,14 @@
 <svg id="gv-svg" viewBox="0 0 680 270" width="680" role="img" aria-label="GEMV: a DSD sliding across the columns of A"></svg>
 <div class="readout" id="gv-out" aria-live="polite"></div>
 </div>
+<p>The same pattern, "a 1-D DSD times a scalar, move the DSD, repeat", is the inner loop of Lab 4's matrix multiply: program 06 runs <code>@fmacs(C_dsd, C_dsd, A_dsd, Bp.*[j * Kt + k])</code> and then <code>@increment_dsd_offset(A_dsd, Mt, f32)</code> to step to the next column of its A tile (<a href="14-lab-gemm.html#code">Chapter 14</a>) <span class="tag sdk">course program 06-summa</span>.</p>
 
 <p>Four builtins edit a DSD value. Each returns a new DSD; none touches memory <span class="tag sdk">SDK 2.10.1, examples below</span>.</p>
 <div class="table-wrap"><table class="small">
 <tr><th>Builtin</th><th>Changes</th><th>Real use in the SDK</th></tr>
 <tr><td><code>@increment_dsd_offset(d, k, T)</code></td><td>start address moves by k elements of type T</td><td>gemv-02 (next column), 25-pt-stencil</td></tr>
-<tr><td><code>@set_dsd_base_addr(d, &amp;arr)</code></td><td>points the DSD at a different array</td><td>fft-1d-2d</td></tr>
-<tr><td><code>@set_dsd_length(d, n)</code></td><td>extent</td><td>fft-1d-2d, conjugate-gradient blas.csl</td></tr>
+<tr><td><code>@set_dsd_base_addr(d, &amp;arr)</code></td><td>points the DSD at a different array</td><td>fft-1d-2d; course programs 06 (SUMMA) and 07 (CG)</td></tr>
+<tr><td><code>@set_dsd_length(d, n)</code></td><td>extent</td><td>fft-1d-2d, conjugate-gradient blas.csl; course program 07</td></tr>
 <tr><td><code>@set_dsd_stride(d, s)</code></td><td>stride</td><td>fft-1d-2d</td></tr>
 </table></div>
 <p>The FFT composes three of them in one line to reach the imaginary parts of interleaved complex numbers (every second word, starting at word 1) and negate them in place: <code>var fDSD = @set_dsd_length(@increment_dsd_offset(@set_dsd_base_addr(Xaux_dsd, f_twiddle), 1, T), N); fDSD = @set_dsd_stride(fDSD, 2); @fnegh(fDSD, fDSD);</code> <span class="tag sdk">SDK 2.10.1, benchmarks/fft-1d-2d/fft.csl</span>. Try "every second word" in the visualizer.</p>
@@ -147,15 +148,59 @@
 <span class="b">@fadds</span>(dstDsd, dstDsd, bufferDsd);   <span class="c">// accumulator[k] += buffer[i, j, k] for every i, j, k</span></code></pre>
 <p>The destination walks <code>accumulator[0..chunkSize)</code> once for every (i, j), so every direction and pattern slice is folded onto the same few words. The same shape (a 3-D buffer reduced onto <code>acc[k]</code>) compiled for WSE-3 in our test <span class="tag measured">Measured, cslc 2.10.1</span>.</p>
 
+<figure>
+<svg viewBox="0 0 680 236" width="680" role="img" aria-label="mem4d_dsd folding: four slices of buffer accumulate onto the same four accumulator words">
+  <defs><marker id="a4f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker></defs>
+  <text x="130" y="18" font-size="13" font-weight="600">buffer[i, j, k]: source walks every word</text>
+  <text x="500" y="18" font-size="13" font-weight="600">accumulator[k]</text>
+  <text x="14" y="54" font-size="12" class="mono">i=0, j=0</text>
+  <rect x="130" y="34" width="44" height="30" rx="4" class="blu"/><text x="152" y="53" text-anchor="middle" font-size="11">k=0</text>
+  <rect x="178" y="34" width="44" height="30" rx="4" class="grn"/><text x="200" y="53" text-anchor="middle" font-size="11">k=1</text>
+  <rect x="226" y="34" width="44" height="30" rx="4" class="pur"/><text x="248" y="53" text-anchor="middle" font-size="11">k=2</text>
+  <rect x="274" y="34" width="44" height="30" rx="4" class="amb"/><text x="296" y="53" text-anchor="middle" font-size="11">k=3</text>
+  <path d="M326 49 C 400 49, 410 104, 488 104" fill="none" class="s-acc" stroke-width="1.6" marker-end="url(#a4f)"/>
+  <text x="340" y="46" font-size="11" class="muted">step 0–3</text>
+  <text x="14" y="98" font-size="12" class="mono">i=0, j=1</text>
+  <rect x="130" y="78" width="44" height="30" rx="4" class="blu"/><text x="152" y="97" text-anchor="middle" font-size="11">k=0</text>
+  <rect x="178" y="78" width="44" height="30" rx="4" class="grn"/><text x="200" y="97" text-anchor="middle" font-size="11">k=1</text>
+  <rect x="226" y="78" width="44" height="30" rx="4" class="pur"/><text x="248" y="97" text-anchor="middle" font-size="11">k=2</text>
+  <rect x="274" y="78" width="44" height="30" rx="4" class="amb"/><text x="296" y="97" text-anchor="middle" font-size="11">k=3</text>
+  <path d="M326 93 C 400 93, 410 104, 488 104" fill="none" class="s-acc" stroke-width="1.6" marker-end="url(#a4f)"/>
+  <text x="340" y="90" font-size="11" class="muted">step 4–7</text>
+  <text x="14" y="142" font-size="12" class="mono">i=1, j=0</text>
+  <rect x="130" y="122" width="44" height="30" rx="4" class="blu"/><text x="152" y="141" text-anchor="middle" font-size="11">k=0</text>
+  <rect x="178" y="122" width="44" height="30" rx="4" class="grn"/><text x="200" y="141" text-anchor="middle" font-size="11">k=1</text>
+  <rect x="226" y="122" width="44" height="30" rx="4" class="pur"/><text x="248" y="141" text-anchor="middle" font-size="11">k=2</text>
+  <rect x="274" y="122" width="44" height="30" rx="4" class="amb"/><text x="296" y="141" text-anchor="middle" font-size="11">k=3</text>
+  <path d="M326 137 C 400 137, 410 104, 488 104" fill="none" class="s-acc" stroke-width="1.6" marker-end="url(#a4f)"/>
+  <text x="340" y="134" font-size="11" class="muted">step 8–11</text>
+  <text x="14" y="186" font-size="12" class="mono">i=1, j=1</text>
+  <rect x="130" y="166" width="44" height="30" rx="4" class="blu"/><text x="152" y="185" text-anchor="middle" font-size="11">k=0</text>
+  <rect x="178" y="166" width="44" height="30" rx="4" class="grn"/><text x="200" y="185" text-anchor="middle" font-size="11">k=1</text>
+  <rect x="226" y="166" width="44" height="30" rx="4" class="pur"/><text x="248" y="185" text-anchor="middle" font-size="11">k=2</text>
+  <rect x="274" y="166" width="44" height="30" rx="4" class="amb"/><text x="296" y="185" text-anchor="middle" font-size="11">k=3</text>
+  <path d="M326 181 C 400 181, 410 104, 488 104" fill="none" class="s-acc" stroke-width="1.6" marker-end="url(#a4f)"/>
+  <text x="340" y="178" font-size="11" class="muted">step 12–15</text>
+  <rect x="494" y="88" width="40" height="32" rx="4" class="blu" stroke-width="2"/><text x="514" y="108" text-anchor="middle" font-size="11">acc[0]</text>
+  <rect x="538" y="88" width="40" height="32" rx="4" class="grn" stroke-width="2"/><text x="558" y="108" text-anchor="middle" font-size="11">acc[1]</text>
+  <rect x="582" y="88" width="40" height="32" rx="4" class="pur" stroke-width="2"/><text x="602" y="108" text-anchor="middle" font-size="11">acc[2]</text>
+  <rect x="626" y="88" width="40" height="32" rx="4" class="amb" stroke-width="2"/><text x="646" y="108" text-anchor="middle" font-size="11">acc[3]</text>
+  <text x="494" y="140" font-size="11" class="muted">same 4 words, visited 4 times</text>
+  <text x="14" y="226" font-size="12" class="muted">Destination |i,j,k| -&gt; accumulator[k] ignores i and j: it restarts at acc[0] every 4 elements.</text>
+</svg>
+<figcaption><b>Leaving out an index folds a loop onto the destination.</b> Drawn with directionCount = pattern = 2 and chunkSize = 4 (the benchmark's sizes differ). One <code>@fadds</code> runs 16 elements; colour = k, the only index the destination uses, so each accumulator word receives the four same-coloured buffer words in turn <span class="tag derived">Derived from the access expressions</span>. Lab 4's second kernel uses the same trick in the other direction: <code>|j, i|{Nt, Mt} -&gt; A_tile[i]</code> ignores j to repeat a column of A as a source (<a href="14-lab-gemm.html#code">Chapter 14</a>).</figcaption>
+</figure>
+
 <h2 id="builtins">Builtins: the vector instruction set</h2>
-<p>The four builtins the course's programs use:</p>
+<p>The <a href="appendix-a-glossary.html#g-builtin">builtins</a> the course's programs compute with (programs 01–07):</p>
 <div class="table-wrap"><table class="small">
 <tr><th>Builtin</th><th>Meaning (f32)</th><th>Used in</th></tr>
-<tr><td><code>@fmovs(dst, src)</code></td><td>dst[i] = src[i]: copy, send or receive</td><td>programs 03, 04, 05</td></tr>
-<tr><td><code>@fadds(dst, a, b)</code></td><td>dst[i] = a[i] + b[i]</td><td>03 (reduction), 04 (stencil)</td></tr>
-<tr><td><code>@fmuls(dst, a, b)</code></td><td>dst[i] = a[i] × b[i]; b may be a DSD or a scalar</td><td>05 (broadcast + scale, scalar b)</td></tr>
-<tr><td><code>@fmacs(dst, a, b, s)</code></td><td>dst[i] = a[i] + b[i] × s, s a scalar</td><td>01 (SAXPY), 04 (stencil)</td></tr>
-<tr><td><code>@map(fn, in..., out)</code></td><td>apply a user function element-wise over DSDs</td><td>SDK tutorial topic-10-map-builtin; matvec below</td></tr>
+<tr><td><code>@fmovs(dst, src)</code></td><td>dst[i] = src[i]: copy, send or receive</td><td>programs 03, 04, 05, 07</td></tr>
+<tr><td><code>@fadds(dst, a, b)</code></td><td>dst[i] = a[i] + b[i]</td><td>03 (reduction), 04 (stencil), 06 (SUMMA, C += T)</td></tr>
+<tr><td><code>@fsubs(dst, a, b)</code></td><td>dst[i] = a[i] − b[i]</td><td>07 (CG residual r = b − A·x)</td></tr>
+<tr><td><code>@fmuls(dst, a, b)</code></td><td>dst[i] = a[i] × b[i]; b may be a DSD or a scalar</td><td>05 (broadcast + scale, scalar b), 06 (two DSDs: <code>@fmuls(T2, A2, B2)</code>)</td></tr>
+<tr><td><code>@fmacs(dst, a, b, s)</code></td><td>dst[i] = a[i] + b[i] × s, s a scalar</td><td>01 (SAXPY), 04 (stencil), 06 (SUMMA inner loop), 07 (CG axpys)</td></tr>
+<tr><td><code>@map(fn, in..., out)</code></td><td>apply a user function element-wise over DSDs</td><td>SDK tutorial topic-10-map-builtin; matvec <a href="#dsrs">below</a>; 07 (dot product, scalar body)</td></tr>
 </table></div>
 <p class="note">Operand orders from the SDK's own comments and from <code>csl-libs/dsd_ops.csl</code> <span class="tag sdk">SDK 2.10.1</span>. An element-wise <code>@fmuls(dA, dB, dC)</code> with two DSD sources compiles and runs at the same rate as the scalar form <span class="tag measured">Measured, simulator</span>.</p>
 
@@ -176,22 +221,22 @@
 <p>Depending on the builtin, a source operand can be a memory DSD, a fabric DSD, a FIFO or a scalar (for example the multiplier of <code>@fmacs</code>), and the destination a memory DSD, a fabric DSD or a FIFO. On WSE-3 at most one source may be a fabric DSD (see below). Each op's allowed operand types are listed in the SDK's builtin reference <span class="tag sdk">SDK 2.10.1, gemv-02 README</span>.</p>
 
 <h2 id="op-speed">How fast is one instruction?</h2>
-<p>We timed single DSD instructions in the simulator: one op over 1,024 elements, memory to memory, on a 1 × 1 rectangle, bracketed by the PE's timestamp counter (the SDK's <code>single-tile-matvec</code> harness and its <code>&lt;time&gt;</code> module), with the three operands 1,025 words apart. Each figure includes the two timestamp reads.</p>
+<p>We timed single DSD instructions in the simulator: one op over 1,024 elements, memory to memory, on a 1 × 1 rectangle, bracketed by the PE's <a href="appendix-a-glossary.html#g-timestamp-counter-tsc">timestamp counter</a> (TSC: a per-PE cycle counter that the <code>&lt;time&gt;</code> library module reads; <a href="11-lab-first-programs.html#kernel-time">Chapter 11</a> and <a href="appendix-c-measuring.html#tsc">Appendix C</a> show how), using the SDK's <code>single-tile-matvec</code> harness. The three operands are separate arrays 1,025 words apart (4,100 bytes, which is 4 bytes apart within the 16-byte bank cycle: a slow placement for WSE-2 adds and f16, see <a href="#banks">the placement table</a>). Each figure includes the two timestamp reads.</p>
 <div class="table-wrap"><table class="small">
-<tr><th>Op, 1,024 elements</th><th>WSE-2 cycles</th><th>WSE-3 cycles</th><th>Elements / cycle (W2 / W3)</th></tr>
+<tr><th>Op, 1,024 elements</th><th>WSE-2 cycles</th><th>WSE-3 cycles</th><th>Elements / cycle, W2 / W3 (after subtracting ~17 cycles of start-up)</th></tr>
 <tr><td><code>@fmovs(dA, dB)</code></td><td>526</td><td>271</td><td>2 / 4</td></tr>
-<tr><td><code>@fadds(dA, dB, dC)</code></td><td>1,039</td><td>528</td><td>1 / 2</td></tr>
+<tr><td><code>@fadds(dA, dB, dC)</code></td><td>1,039</td><td>528</td><td>1 / 2 (W2: 2 with sources 8 B apart, <a href="#banks">table</a>)</td></tr>
 <tr><td><code>@fmacs(dA, dB, dC, 2.0)</code></td><td>1,039</td><td>1,041</td><td>1 / 1</td></tr>
 <tr><td><code>@fmuls(dA, dB, 2.0)</code> or <code>(dA, dB, dC)</code></td><td>1,038</td><td>1,040</td><td>1 / 1</td></tr>
 <tr><td><code>@fmovh</code> (f16)</td><td>270</td><td>162</td><td>4 / ≈7</td></tr>
 <tr><td><code>@faddh</code> (f16)</td><td>527</td><td>310</td><td>2 / ≈3.5</td></tr>
-<tr><td><code>@fmach</code> (f16)</td><td>527</td><td>310 (271 in place)</td><td>2 / ≈3.5–4</td></tr>
+<tr><td><code>@fmach</code> (f16)</td><td>527</td><td>310 (271 in place)</td><td>2, or ≈4 with sources 8 B apart (<a href="appendix-e-sources.html#iss-clash">App E</a>) / ≈3.5 (≈4 in place)</td></tr>
 </table></div>
 <p class="note">All rows <span class="tag measured">Measured, simulator, SDK 2.10.1, TSC around one op</span>. The f16 runs used zeroed data. f32 timings were identical with real and zeroed data, so timing appears to be data-independent.</p>
 <div class="duo">
 <figure style="margin:8px 0">
 <svg id="rate-svg" viewBox="0 0 400 230" width="400" role="img" aria-label="Elements per cycle by op and chip"></svg>
-<figcaption><b>Elements per cycle, f32 and f16.</b> f32 multiply ops do not get faster on WSE-3; moves and adds do. <span class="tag measured">Measured</span></figcaption>
+<figcaption><b>Elements per cycle, f32 and f16, in this layout.</b> f32 multiply ops do not get faster on WSE-3; moves do. The WSE-2 add and f16 bars double when the sources start 8 B apart (<a href="#banks">placement table</a>). <span class="tag measured">Measured</span></figcaption>
 </figure>
 <figure style="margin:8px 0">
 <svg id="start-svg" viewBox="0 0 400 230" width="400" role="img" aria-label="Cycles versus extent"></svg>
@@ -200,18 +245,18 @@
 </div>
 <p>Three things follow.</p>
 <ul>
-<li><b>A fixed start-up of about 15–17 cycles per op</b>, then a fixed rate per element. <code>@fmacs</code> over 1 / 16 / 64 / 256 / 1,024 elements took 18 / 33 / 81 / 273 / 1,041 cycles on WSE-3 <span class="tag measured">Measured</span>. Vectors shorter than about 16 elements are dominated by start-up.</li>
-<li><b>f32 multiply-accumulate runs at one element per cycle on both chips</b>; WSE-3 doubled the rate of simple moves and adds but not of f32 FMAC <span class="tag measured">Measured</span>. That is why Lab 3 (f32) is a wash between the chips (Chapter 13). We know the rate, not the hardware reason; do not read an f32 lane count into it.</li>
-<li><b>Precision is where SIMD width pays off.</b> f16 FMAC runs at about 2 per cycle on WSE-2 and about 3.2–4 per cycle on WSE-3, depending on layout <span class="tag measured">Measured</span>, against vendor SIMD widths of 4 and 8 for FP16 <span class="tag vendor">Vendor</span>. In a full f16 matvec (the SDK benchmark, N = 64) we measured 2,165 cycles on WSE-2 and 1,335 on WSE-3, against 4,216 and 4,214 in f32 <span class="tag measured">Measured, simulator</span>. The SIMD width is a ceiling, not a rate: each FMAC element reads y, reads A and writes y, so memory traffic, not arithmetic, appears to set the f16 speed <span class="tag derived">Derived</span>.</li>
+<li><b>A fixed start-up of about 15–17 cycles for an isolated op</b> bracketed by timestamp reads, then a fixed rate per element. <code>@fmacs</code> over 1 / 16 / 64 / 256 / 1,024 elements took 18 / 33 / 81 / 273 / 1,041 cycles on WSE-3 <span class="tag measured">Measured</span>. Consecutive ops inside one task start faster, in about 6 cycles each on WSE-3 and 5 on WSE-2 (<a href="13-lab-stencil.html#fixed-cost">Chapter 13</a>) <span class="tag measured">Measured, Chapter 13</span>. Either way, vectors of a few dozen elements or fewer spend a large share of their time starting.</li>
+<li><b>f32 multiply-accumulate runs at one element per cycle on both chips</b> (when its sources do not share a bank); WSE-3 doubled the rate of simple moves, but not of f32 FMAC <span class="tag measured">Measured</span>. Adds reach 2 per cycle on both chips when placed well, and WSE-2 drops to 1 per cycle otherwise (<a href="#banks">table</a>). That is why Lab 3 (f32) is a wash between the chips (Chapter 13). We know the rate, not the hardware reason; do not read an f32 lane count into it.</li>
+<li><b>Precision is where SIMD width pays off, if the operands are placed for it.</b> In-place f16 FMAC runs at about 4 per cycle on WSE-3 in every placement tested (272 cycles for 1,024). On WSE-2 it runs at about 4 per cycle (270) when the two sources start 8 bytes apart in the 16-byte bank cycle, and about 2 (526) otherwise, including the layout of the table above <span class="tag measured">Measured, <a href="appendix-e-sources.html#iss-clash">Appendix E</a></span>. The vendor SIMD widths for FP16 are 4 (WSE-2) and 8 (WSE-3) <span class="tag vendor">Vendor</span>. In a full f16 matvec (the SDK benchmark, N = 64) we measured 2,165 cycles on WSE-2 and 1,335 on WSE-3, against 4,216 and 4,214 in f32 <span class="tag measured">Measured, simulator</span>. The SIMD width is a ceiling, not a rate. WSE-2 reaches its full 4-wide f16 rate only with the right placement; on WSE-3 we never saw more than about 4 f16 FMACs per cycle (about 7 for a plain move), half its 8-wide SIMD, and no source says why <span class="tag derived">Derived</span>.</li>
 </ul>
 <div class="callout key">
 <strong>Lab 3's 2.5 cycles per cell, explained</strong>
-Each stencil step runs one <code>@fadds</code> and two <code>@fmacs</code> over n cells. On WSE-3 that is 0.5 + 1 + 1 = 2.5 cycles per cell, which is the slope Chapter 13 measures (per-step cost ≈ 90 + 2.5·n cycles) <span class="tag derived">Derived from the measured rates</span>. The fixed ~90 cycles is the halo exchange, the completion tasks and the start-up of each instruction. One caveat: in Chapter 13's kernel, where both <code>@fadds</code> sources are offset views of the same array, WSE-2 also streams the add at 2 elements per cycle (0.5 cycles per cell) instead of the 1 per cycle measured here with three separate arrays <span class="tag measured">Measured, Chapter 13</span>. Operand placement changes the rate on WSE-2; the reason is not documented.
+Each stencil step runs one <code>@fadds</code> and two <code>@fmacs</code> over n cells. On WSE-3 that is 0.5 + 1 + 1 = 2.5 cycles per cell, which is the slope Chapter 13 measures (per-step cost ≈ 90 + 2.5·n cycles) <span class="tag derived">Derived from the measured rates</span>. The fixed ~90 cycles is the halo exchange, the completion tasks and the start-up of each instruction. On WSE-2 the add depends on placement. In <a href="13-lab-stencil.html#numbers-say">Chapter 13</a>'s kernel the two <code>@fadds</code> sources, <code>u[i]</code> and <code>u[i+2]</code>, start 8 bytes apart, the fast placement, so WSE-2 also streams the add at 2 elements per cycle (0.5 cycles per cell) <span class="tag measured">Measured, Chapter 13</span>. The table above, whose arrays start 4 bytes apart, gives 1 per cycle on WSE-2 (<a href="#banks">placement table</a>).
 </div>
 
 <div class="callout">
 <strong>Worked example: one PE's matvec in bytes and FLOPs</strong>
-The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE in 4,214 cycles on WSE-3 <span class="tag measured">Measured</span>. It counts 2N² − N = 8,128 FLOPs, and actual SRAM traffic of 4·(3N² + N) = 49,408 bytes, because each column's FMAC re-reads and re-writes all of y <span class="tag sdk">SDK 2.10.1, single-tile-matvec/run.py</span>. That is 12 bytes per FMAC (read y, read A, write y), or about 11.7 bytes, three 32-bit accesses, per cycle. At the 850 MHz the SDK benchmarks assume, 4,214 cycles is 4.96 µs: about 10 GB/s of SRAM traffic and 1.6 GFLOP/s per PE, or about 9 PB/s and 1.5 PFLOP/s f32 if all 900,000 WSE-3 PEs did the same <span class="tag derived">Derived</span>. (850 MHz is the SDK's assumption; no WSE-3 clock is published.)
+The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE in 4,214 cycles on WSE-3 <span class="tag measured">Measured</span>. It counts 2N² − N = 8,128 FLOPs, and actual SRAM traffic of 4·(3N² + N) = 49,408 bytes, because each column's FMAC re-reads and re-writes all of y <span class="tag sdk">SDK 2.10.1, single-tile-matvec/run.py</span>. That is 12 bytes per FMAC (read y, read A, write y), or about 11.7 bytes, three 32-bit accesses, per cycle. At the 850 MHz the SDK benchmarks assume, 4,214 cycles is 4.96 µs: about 10 GB/s of SRAM traffic and 1.6 GFLOP/s per PE, or about 9 PB/s and 1.5 PFLOP/s f32 if all 900,000 WSE-3 PEs did the same <span class="tag derived">Derived</span>. (850 MHz is the SDK's assumption; no WSE-3 clock is published. Press coverage of the CS-4 launch estimates about 1.4 GHz for WSE-3 <span class="tag analyst">Analyst, The Next Platform, 2026-08-19</span> <span class="tag unv">Unverified</span>; at that clock every per-second figure here is about 1.6× higher, and the per-cycle figures do not change.)
 </div>
 
 <h2 id="collisions">Layout matters: operand collisions in SRAM</h2>
@@ -457,7 +502,7 @@ function player(btn, stepFn, isDone, ms) {
     txt(svg, 360, 140, i < N ? `address generator: element ${i} → x[${i}], y[${i}]` : "done: the DSD ran out of extent", { "font-size": 12, class: "muted" });
     out.textContent = i < N
       ? `Step ${i + 1}: scalar core fetches 6 more instructions; the DSD datapath just generates 3 addresses (x[${i}], y[${i}] read, y[${i}] write).`
-      : `Finished N = ${N}: scalar loop fetched ${6 * N} instructions; the DSD version fetched 1 and took about ${17 + N} cycles.`;
+      : `Finished N = ${N}: scalar loop fetched ${6 * N} instructions; the DSD version fetched 1 and took about ${17 + N} cycles (≈ ${17 + 2 * N} for program 01 as shipped, where x and y collide in SRAM).`;
   }
   const step = () => { if (i < N) { i++; draw(); } };
   const stop = player($("#sv-play"), step, () => i >= N, 500);

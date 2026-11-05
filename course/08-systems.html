@@ -25,7 +25,7 @@
 <main>
 <div class="kicker">Chapter 8 · Part II · The machine</div>
 <h1>Systems: CS-3, MemoryX, SwarmX, CS-4</h1>
-<p class="lede">A WSE-3 wafer has 44 GB of on-chip SRAM <span class="tag vendor">Vendor</span>. Frontier models need hundreds of gigabytes to terabytes. Cerebras crosses that gap in two opposite ways. For training it streams the weights <em>through</em> the wafer, one layer at a time. For inference it pins the weights <em>onto</em> several wafers and passes each token through them. (Neither has anything to do with the SDK's "streaming mode" from Chapter 7.)</p>
+<p class="lede">A WSE-3 wafer has 44 GB of on-chip SRAM <span class="tag vendor">Vendor</span>. Frontier models need hundreds of gigabytes to terabytes. Cerebras crosses that gap in two opposite ways. For training it streams the weights <em>through</em> the wafer, one layer at a time. For inference it pins the weights <em>onto</em> several wafers and passes each token through them. (Neither has anything to do with the SDK's "streaming mode" from <a href="07-host-io.html#modes">Chapter 7</a>.)</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
@@ -37,7 +37,7 @@
 </div>
 
 <h2 id="system">The system around the wafer</h2>
-<p>A <strong>CS-<i>n</i></strong> is the system (power, cooling, I/O) built around one <strong>WSE-<i>n</i></strong> wafer. CS-4 breaks the pattern: it is a rack holding three WSE-3T wafers, the higher-clocked WSE-3 variant from Chapter 2. Three execution modes run on these systems. Each one is a different answer to the 44 GB limit.</p>
+<p>A <strong>CS-<i>n</i></strong> is the system (power, cooling, I/O) built around one <strong>WSE-<i>n</i></strong> wafer. CS-4 breaks the pattern: it is a rack holding three <a href="appendix-a-glossary.html#g-wse-2-wse-3-wse-3t">WSE-3T</a> wafers, the higher-clocked WSE-3 variant from <a href="02-the-wafer.html#generations">Chapter 2</a>. Three execution modes run on these systems. Each one is a different answer to the 44 GB limit.</p>
 
 <figure>
 <svg id="tl" viewBox="0 0 760 300" width="760" role="img" aria-label="Timeline of Cerebras systems, execution modes and clusters, 2019 to 2027"></svg>
@@ -54,10 +54,14 @@
 <tr><td>Max cluster via SwarmX</td><td>192 CS-2</td><td>2,048 CS-3, "256 EF"</td><td>—</td></tr>
 <tr><td>Flagship cluster</td><td>Condor Galaxy 1 & 2: 64 CS-2 each, 4 EF</td><td>Condor Galaxy 3: 64 CS-3, 8 EF, 108 TB parameter memory; CG 3–5 (20 EF) and 6–9 (32 EF) planned in 2024</td><td>—</td></tr>
 </table></div>
-<p class="note">All figures <span class="tag vendor">Vendor</span>. "EF" and "PF" are exa- and petaflops, and these are <em>sparse</em> figures, the inflated vendor metric explained in Chapter 2. RoCE v2 is RDMA over ordinary Ethernet. The MemoryX ranges are configurations, not a regression: the 4 TB – 2.4 PB design range is from the weight-streaming white paper, and the shipped unit sizes are from the CS-3 launch blog. The current status of the Condor Galaxy clusters was not verified.</p>
+<p class="note">All figures <span class="tag vendor">Vendor</span>. "EF" and "PF" are exa- and petaflops, and these are <em>sparse</em> figures, the inflated vendor metric explained in <a href="02-the-wafer.html#generations">Chapter 2</a> (glossary: <a href="appendix-a-glossary.html#g-dense-sparse-flops">dense / sparse FLOPS</a>). RoCE v2 is RDMA over ordinary Ethernet. The MemoryX ranges are configurations, not a regression: the 4 TB – 2.4 PB design range is from the weight-streaming white paper, and the shipped unit sizes are from the CS-3 launch blog. The current status of the Condor Galaxy clusters was not verified.</p>
 
 <h2 id="weight-streaming">Training: weight streaming</h2>
-<p>From 2021, Cerebras trains large models by <strong>weight streaming</strong>. The activations stay on the wafer. The weights live off the wafer in <strong>MemoryX</strong>, a DRAM-plus-flash service that also performs the weight update. The whole wafer computes one layer at a time. <strong>SwarmX</strong> "handles the broadcast of weights from MemoryX to the entire cluster and effectively reduces (sums) gradients in the opposite direction" <span class="tag vendor">Vendor</span>. The training docs put it in one line: "The compiler maps one kernel (layer) at a time onto the entire WSE, first for the forward pass and then for the backward pass" <span class="tag vendor">Vendor</span>.</p>
+<div class="callout">
+<strong>A training step in one paragraph</strong> (for readers from HPC rather than ML)
+In the <em>forward pass</em> a batch of inputs goes through the layers in order; each layer multiplies its input activations by its weight matrix, and its output activations are the next layer's input. The last layer's output is compared with the right answer to give one number, the <em>loss</em>. The <em>backward pass</em> runs the layers in reverse and uses the chain rule to get the <em>gradient</em> of the loss with respect to every weight (and, on the way, with respect to every layer's input activations). Each backward layer needs the activations its forward pass produced, which is why they are stored. Finally an <em>optimizer step</em> nudges every weight against its gradient. Repeat for the next batch.
+</div>
+<p>From 2021, Cerebras trains large models by <strong><a href="appendix-a-glossary.html#g-weight-streaming">weight streaming</a></strong>. The activations stay on the wafer. The weights live off the wafer in <strong><a href="appendix-a-glossary.html#g-memoryx">MemoryX</a></strong>, a DRAM-plus-flash service that also performs the weight update. The whole wafer computes one layer at a time. <strong><a href="appendix-a-glossary.html#g-swarmx">SwarmX</a></strong> "handles the broadcast of weights from MemoryX to the entire cluster and effectively reduces (sums) gradients in the opposite direction" <span class="tag vendor">Vendor</span>. The training docs put it in one line: "The compiler maps one kernel (layer) at a time onto the entire WSE, first for the forward pass and then for the backward pass" <span class="tag vendor">Vendor</span>.</p>
 
 <div class="widget" id="ws">
 <h4>One training step, layer by layer</h4>
@@ -81,22 +85,27 @@
 <ol class="steps">
 <li>The batch is cut into equal <em>shards</em>, one per system. "This technique is known as data parallelism." The shard is layer 1's input.</li>
 <li><strong>Forward pass.</strong> MemoryX streams layer 1's weights, and SwarmX broadcasts one copy to every wafer. Each wafer computes layer 1's activations and <em>keeps them in SRAM</em>. Then layer 2's weights arrive, and so on. MemoryX starts sending layer <i>k</i>+1 before layer <i>k</i> has finished, so the latency of the off-wafer trip is hidden.</li>
-<li>At the loss layer each wafer computes the loss delta. SwarmX also sums the loss values and sends them to the user node.</li>
-<li><strong>Backward pass, last layer first.</strong> Each layer's weights are streamed <em>again</em>, now in transposed order (MemoryX keeps both views of one copy). The wafer uses its stored activations to compute activation gradients and weight gradients. The weight gradients stream out in FP32, SwarmX sums them across wafers, and MemoryX applies the optimizer update as they arrive. The last layer's weights "can be retained to save time".</li>
+<li>At the loss layer each wafer computes the loss delta, the gradient of the loss with respect to the last layer's output, which seeds the backward pass. SwarmX also sums the loss values and sends them to the <em>user node</em>, the host CPU server that runs the training script.</li>
+<li><strong>Backward pass, last layer first.</strong> Each layer's weights are streamed <em>again</em>, now in transposed order (MemoryX keeps both views of one copy). Transposed because the forward pass computed Y = X·W, and the backward pass computes the input gradient dX = dY·Wᵀ; the weight gradient is dW = Xᵀ·dY, which needs the stored X. The wafer uses its stored activations to compute activation gradients and weight gradients. The weight gradients stream out in FP32, SwarmX sums them across wafers, and MemoryX applies the optimizer update as they arrive. The last layer's weights "can be retained to save time": the last layer of the forward pass is the first layer of the backward pass, so its weights are already on the wafer when the backward pass starts.</li>
 <li><strong>The critical path</strong> is layer 1: its weights get their gradients last and are needed first in the next step. The wafer emits each layer's gradients in the same order the weights were sent, so updated weights can start streaming before layer 1's gradients are complete. The round trip "can be completely hidden when the compute time of the first layer is greater than the round-trip latency".</li>
 <li>At intervals, all weights are pulled from MemoryX to the user node as a checkpoint.</li>
 </ol>
 <p>Per step, each parameter crosses the link twice inward as FP16 (forward and backward) and once outward as an FP32 gradient: "32 bits of data are sent in each direction per parameter" <span class="tag vendor">Vendor</span>. The activations of every layer must stay on the wafer until the backward pass uses them, so wafer SRAM still limits the batch per wafer. It no longer limits the size of the model.</p>
+<div class="callout warn">
+<strong>Do the stored activations fit? The sources do not say how.</strong>
+Take GPT-3 XL (hidden size H = 2,048, 24 layers; the Andromeda workload below) and a shard of 250,000 tokens, the "hundreds of thousands" the white paper describes in the next section. One layer's output alone is 2,048 × 2 B × 250,000 ≈ <b>1 GB</b>, so 24 layer outputs are ≈ <b>25 GB</b> of the 44 GB <span class="tag derived">Derived</span>. A transformer layer also produces wider intermediates (the feed-forward block is 4H wide, and attention adds Q, K, V and scores), so keeping <em>every</em> intermediate would need several times that and could not fit <span class="tag derived">Derived</span>. The usual ML answers are to store only layer-boundary tensors and recompute the rest in the backward pass, or to use smaller shards for wider models. The weight-streaming white paper and Hot Chips decks the course draws on do not say which Cerebras uses <span class="tag unv">Unverified</span>. Treat "hundreds of thousands of tokens per shard" and "every layer's activations stay on the wafer" as two vendor statements whose reconciliation is not published.
+</div>
 
 <h3>Why streaming does not starve the wafer</h3>
-<p>Chapter 7 left a puzzle: off-wafer data is slow, so "data that matters must stay on the wafer, or arrive through dedicated hardware (MemoryX in training)". Here is the dedicated hardware. The white paper says "The WSE-2's 1.2Tb/s of I/O bandwidth is used for receiving weights from and transmitting gradients back to the MemoryX service" <span class="tag vendor">Vendor</span>, and HC2024 gives the same 1.2 Tb/s for CS-3 <span class="tag vendor">Vendor</span>. That is 150 GB/s, about 10× the SDK host path of Chapter 7, but still about 140,000× less than the wafer's 21 PB/s of SRAM bandwidth <span class="tag derived">Derived</span>. It works because of Chapter 1's arithmetic intensity: in training, every weight that arrives is used once for every token in the wafer's shard.</p>
+<p><a href="07-host-io.html#copy-path">Chapter 7</a> left a puzzle: off-wafer data is slow, so keep the data that matters on the wafer (inference), or bring it in through dedicated hardware (MemoryX in training). Here is the dedicated hardware. The white paper says "The WSE-2's 1.2Tb/s of I/O bandwidth is used for receiving weights from and transmitting gradients back to the MemoryX service" <span class="tag vendor">Vendor</span>, and HC2024 gives the same 1.2 Tb/s for CS-3 <span class="tag vendor">Vendor</span>. That is 150 GB/s, about 10× the SDK host path of Chapter 7, but still about 140,000× less than the wafer's 21 PB/s of SRAM bandwidth <span class="tag derived">Derived</span>. It works because of <a href="01-memory-wall.html#two-numbers">Chapter 1</a>'s <a href="appendix-a-glossary.html#g-arithmetic-intensity">arithmetic intensity</a>: in training, every weight that arrives is used once for every token in the wafer's shard. That reuse is physical, not a caching trick: as <a href="#layer">the next section</a> shows, each weight packet is multicast down a column of cores that together hold every token's activations, so one arrival does one multiply-add per token.</p>
 
 <div class="callout key">
 <strong>Worked example: tokens per weight</strong>
 <ul>
 <li>Link: 1.2 Tb/s = 150 GB/s. At 2 bytes per FP16 weight, that is <b>75 billion weights per second</b> into the wafer <span class="tag derived">Derived</span>.</li>
 <li>Each arriving weight does one multiply-add (2 FLOP) per token in the shard. With <i>T</i> tokens per shard, that is 2<i>T</i> FLOP per weight, or about <i>T</i> FLOP per byte.</li>
-<li>To keep a WSE-2 busy at its 7.5 PF FP16 dense peak (Hot Chips 2022 <span class="tag vendor">Vendor</span>): 7.5×10¹⁵ ÷ (2 × 75×10⁹) ≈ <b>50,000 tokens per shard</b> <span class="tag derived">Derived</span>. Below that the link is the bottleneck; above it, compute is.</li>
+<li>To keep a WSE-2 busy at its 7.5 PF FP16 dense peak (Hot Chips 2022 <span class="tag vendor">Vendor</span>): 7.5×10¹⁵ ÷ (2 × 75×10⁹) ≈ <b>50,000 tokens per shard</b> <span class="tag derived">Derived</span>, about 25 sequences of 2,048 tokens per wafer <span class="tag derived">Derived</span>. Below that the link is the bottleneck; above it, compute is.</li>
+<li>This knee is <a href="01-memory-wall.html#two-numbers">Chapter 1</a>'s <a href="appendix-a-glossary.html#g-ridge-point-roofline">ridge point</a> for the off-wafer link, in new units. Because a weight does about <i>T</i> FLOP per byte, "tokens per shard" <em>is</em> the arithmetic intensity, and the knee sits where it equals peak ÷ link bandwidth. Chapter 1's table gives the CS-3 off-wafer ridge as ≈ 100,000 FLOP/B; the widget below puts the WSE-3 knee at ≈ 104,000 tokens, the same number <span class="tag derived">Derived</span>.</li>
 <li>The white paper says "batch shards typically contain hundreds of thousands of tokens" <span class="tag vendor">Vendor</span>, comfortably past that knee.</li>
 <li>Decode has <i>T</i> = 1 per sequence. The same link would then feed only 150 GFLOP/s, about 0.002% of the wafer <span class="tag derived">Derived</span>. That is why inference does the opposite.</li>
 </ul>
@@ -114,13 +123,31 @@
 </div>
 
 <h3 id="layer">A layer on the wafer</h3>
-<p>What does "the whole wafer computes one layer" mean at the level of the PEs from Chapters 3–6? Hot Chips 2022 and the white paper describe it <span class="tag vendor">Vendor</span>. The activation tensor [B][S][H] is spread over the whole wafer, each core holding a tile: features H across the x axis, batch and sequence positions down y. Weights never get a home on the wafer: "No memory used for weights, not even stored temporarily." Instead each weight travels as a 32-bit fabric packet, "weight (16b) + index (16b)". It is multicast down the column of cores that holds the matching features, and its arrival triggers an FMAC against each core's local activations. That is one AXPY per weight, and exactly the data-triggered task of Chapter 5 and the DSD FMAC of Chapter 6. Then a PSUM command makes each row of cores ring-reduce its partial sums, and an FSUM command sends the final sum to the column that owns that output feature. Reductions overlap with the next weights. Zero weights are simply never sent, which is where Cerebras's "native unstructured sparsity" comes from.</p>
+<p>What does "the whole wafer computes one layer" mean at the level of the PEs from <a href="03-processing-element.html">Chapters 3</a>–<a href="06-dsds.html">6</a>? Hot Chips 2022 and the white paper describe it <span class="tag vendor">Vendor</span>. The activation tensor [B][S][H] is spread over the whole wafer, each core holding a tile: features H across the x axis, batch and sequence positions down y. Weights never get a home on the wafer: "No memory used for weights, not even stored temporarily." Instead each weight travels as a 32-bit fabric packet, "weight (16b) + index (16b)". It is <a href="appendix-a-glossary.html#g-multicast">multicast</a> down the column of cores that holds the matching features, and its arrival triggers an FMAC against each core's local activations. That is one AXPY per weight, and exactly the <a href="appendix-a-glossary.html#g-data-task">data-triggered task</a> of <a href="05-tasks.html#activates">Chapter 5</a> and the DSD FMAC of <a href="06-dsds.html#fabric-dsds">Chapter 6</a>. Then a PSUM command (a <a href="04-fabric.html#control-wavelets">control wavelet</a>) makes each row of cores ring-reduce its partial sums, and an FSUM command sends the final sum to the column that owns that output feature. Reductions overlap with the next weights. Zero weights are simply never sent, which is where Cerebras's "native unstructured sparsity" comes from (<a href="appendix-a-glossary.html#g-dataflow-sparsity">glossary</a>).</p>
 <figure>
 <svg id="lw" viewBox="0 0 760 300" width="760" role="img" aria-label="One weight-streamed layer on the PE grid: weights multicast down columns, partial sums reduced along rows"></svg>
 <figcaption><b>Weights are messages, not data at rest.</b> A row of non-zero weights enters at the wafer edge; each packet is multicast down one column (blue) and triggers an FMAC on every core it passes. Partial sums then ring-reduce along each row (orange) and land in the owning column (green). An 8 × 6 patch stands in for ~900,000 cores. Mechanism from Hot Chips 2022 <span class="tag vendor">Vendor</span>; the drawing is schematic.</figcaption>
 </figure>
 
+<p><strong>Why a row reduction?</strong> Write the layer as Y = X·W, with X[<i>j</i>][<i>k</i>] the activation of token <i>j</i>, input feature <i>k</i>, and W[<i>k</i>][<i>i</i>] the weight from input feature <i>k</i> to output feature <i>i</i>. Weight W[<i>k</i>][<i>i</i>] goes to the column that holds input feature <i>k</i>; every core there adds W[<i>k</i>][<i>i</i>]·X[<i>j</i>][<i>k</i>] for each of its tokens <i>j</i> into a partial sum for output <i>i</i>. Output <i>i</i> needs the sum over <em>all k</em>, and the k's live in different columns, so its partial sums are spread across the whole row. That is why each row must ring-reduce (PSUM), and why FSUM must then deposit the total in output <i>i</i>'s column: Y ends up laid out exactly like X, ready to be the next layer's input. Step through a 2 × 2 case:</p>
+
+<div class="widget" id="mm">
+<h4>Y = X·W on four cores</h4>
+<p class="hint">Two tokens (rows) × two features (columns), one core each. X = [[1, 2], [3, 4]], W = [[5, 6], [7, 8]]. Each step is one phase of the mechanism above; the numbers are a toy example, the mechanism is from Hot Chips 2022 <span class="tag vendor">Vendor</span>.</p>
+<div class="controls">
+<button class="btn" id="mm-step" type="button">Step</button>
+<button class="btn secondary" id="mm-reset" type="button">Reset</button>
+</div>
+<svg id="mm-svg" viewBox="0 0 760 250" width="760" role="img" aria-label="Step-through of a 2 by 2 matrix product: weights multicast down columns, partial sums reduced along rows"></svg>
+<div class="readout" id="mm-out" aria-live="polite"></div>
+</div>
+
+<p><strong>In CSL terms</strong>, each piece is something Part II already showed, although Cerebras's own training kernels are not written by course readers and their code is not public: the column multicast is a color whose route has several outputs (<a href="04-fabric.html#routes">Chapter 4</a>); the FMAC on arrival is a data task, or an <code>@fmach</code> with a fabric-input DSD (<a href="05-tasks.html#activates">Chapter 5</a>, <a href="06-dsds.html#fabric-dsds">Chapter 6</a>); PSUM and FSUM are control wavelets that change what the cores do next (<a href="04-fabric.html#control-wavelets">Chapter 4</a>). <a href="14-lab-gemm.html">Lab 4</a> builds a 2-D GEMM from the same parts.</p>
+
+<p><strong>Which bytes cross the link?</strong> Three formats appear on this page. The vendor's "32 bits in each direction per parameter" counts <b>2 B per weight per crossing</b>, twice: the dense case <span class="tag vendor">Vendor</span>. On the wafer each weight travels as a 32-bit packet, 16-bit value plus 16-bit index; the index is the weight's position in its matrix row (MemoryX's table below calls it a "column index"), which tells the receiving cores which partial sum it feeds. For a sparse model, MemoryX keeps exactly that pair (FP16 value + 2-byte index) for each non-zero, which suggests each non-zero crosses the link as 4 B. If so, sparsity cuts link bytes only when more than half the weights are zero <span class="tag derived">Derived</span>. The sources do not say where the index is attached for dense weights, at MemoryX or at the wafer edge <span class="tag unv">Unverified</span>.</p>
+
 <h3 id="memoryx">MemoryX: what it stores, and what it computes</h3>
+<p>The table needs one piece of ML vocabulary: <strong>mixed-precision training</strong>. The math on the wafer uses 16-bit copies of the weights, which halves traffic and doubles speed, but tiny updates would round away in 16 bits, so an FP32 <em>master</em> copy of every weight is kept and updated instead. The <strong>Adam</strong> optimizer, the common default, also keeps two running averages per weight (the "moments": a running mean of the gradient and of its square) and uses them to scale each update. Each of these is one more FP32 number per parameter.</p>
 <div class="table-wrap"><table>
 <tr><th>Stored per parameter (white paper)</th><th>Bytes</th></tr>
 <tr><td>FP32 master weight</td><td>4</td></tr>
@@ -133,13 +160,17 @@
 <p>MemoryX uses "DRAM and flash storage in a hybrid fashion", and its storage and I/O "match or exceed the I/O bandwidth of a CS-2". It runs any optimizer, with a FLOP/s rate "three orders of magnitude greater than its I/O bandwidth" <span class="tag vendor">Vendor</span>. Its compute never becomes the bottleneck, because the update costs O(P) work for P parameters, while the wafer's work grows as O(B·S·P) with batch and sequence. For the same reason one MemoryX can serve a cluster of any size <span class="tag vendor">Vendor</span>.</p>
 
 <h3 id="swarmx">SwarmX: a broadcast–reduce tree</h3>
-<p>SwarmX is built from <strong>broadcast–reduce nodes</strong>, each "containing a set of 100Gb/s network interfaces" and able to do one 1:4 or two 1:2 broadcast–reduce operations, with "enough compute to perform the floating-point gradient reductions at line-rate" <span class="tag vendor">Vendor</span>. The nodes form a bidirectional tree. Node count grows linearly with the number of systems N, and latency grows as log N. Because gradients are summed on the way up, one copy of the gradient tensor crosses each link, the same as the weights going down. The white paper's summary: "From the perspective of the MemoryX service, the SwarmX fabric looks just like a single CS-2 and from the perspective of the CS-2, the SwarmX looks just like the MemoryX service" <span class="tag vendor">Vendor</span>. So "the same mapping is used for every layer across all systems", and adding systems is pure data parallelism. No system ever holds <em>part</em> of the model, because only one layer has to fit at a time and any layer fits on any wafer. Cerebras chose this deliberately: mixing streaming with tensor or pipeline parallelism adds activation traffic, so it sets both to 1. It calls the result "linear scaling". The published evidence is Andromeda: 16 CS-2s gave 15.87× one CS-2's throughput on a GPT-3 XL genomics workload <span class="tag vendor">Vendor</span>. That is one vendor workload at 16 systems, not a general proof.</p>
+<figure>
+<svg id="sx" viewBox="0 0 760 250" width="760" role="img" aria-label="SwarmX tree: MemoryX at the root, five 1:4 broadcast-reduce nodes in two levels, sixteen CS-3 systems as leaves"></svg>
+<figcaption><b>Sixteen systems, two levels.</b> Built from 1:4 nodes, one root node fans out to four, and each of those to four CS-3s: 5 nodes for 16 systems, and 2 levels because log₄ 16 = 2 <span class="tag derived">Derived</span>. Doubling to 32 systems adds nodes in proportion (linear) but only half a level (log). Weights flow down (amber), and gradients are summed at every node on the way up (purple), so each link carries one copy. Node roles and the 1:4 / 1:2 options are <span class="tag vendor">Vendor</span>; the 16-leaf layout is illustrative.</figcaption>
+</figure>
+<p>SwarmX is built from <strong>broadcast–reduce nodes</strong>, each "containing a set of 100Gb/s network interfaces" and able to do one 1:4 or two 1:2 broadcast–reduce operations, with "enough compute to perform the floating-point gradient reductions at line-rate" <span class="tag vendor">Vendor</span>. The nodes form a bidirectional tree. Node count grows linearly with the number of systems N, and latency grows as log N. Because gradients are summed on the way up, one copy of the gradient tensor crosses each link, the same as the weights going down. The white paper's summary: "From the perspective of the MemoryX service, the SwarmX fabric looks just like a single CS-2 and from the perspective of the CS-2, the SwarmX looks just like the MemoryX service" <span class="tag vendor">Vendor</span>. So "the same mapping is used for every layer across all systems", and adding systems is pure data parallelism. No system ever holds <em>part</em> of the model, because only one layer has to fit at a time and any layer fits on any wafer. Cerebras chose this deliberately: mixing streaming with tensor parallelism (splitting one layer's matrices across devices) or pipeline parallelism (splitting the layers across devices) adds activation traffic, so it sets both to 1 (glossary: <a href="appendix-a-glossary.html#g-tp-pp-dp">TP / PP / DP</a>; GPUs need both, <a href="17-gpu.html#scaling">Chapter 17</a>). It calls the result "linear scaling". The published evidence is Andromeda: 16 CS-2s gave 15.87× one CS-2's throughput on a GPT-3 XL genomics workload <span class="tag vendor">Vendor</span>. That is one vendor workload at 16 systems, not a general proof.</p>
 
 <h3 id="layer-pipelined">Before weight streaming: layer-pipelined mode</h3>
-<p>CS-1 and the original CS-2 installation used <strong>layer-pipelined</strong> execution, for models "below 1 billion parameters, which can fit entirely in the on-chip memory" <span class="tag vendor">Vendor</span>. All the layers are loaded onto the wafer at once. The compiler "maps each kernel/layer of the network onto a region (a rectangle)", connects the regions with on-wafer data paths, and sizes and places them "to optimize the throughput". Activations flow forward from region to region, and activation gradients flow back. Weights stay in their region and are updated on the wafer at the end of each backward step. After an initial fill latency, "all the layers of the network enter a steady state of active execution" <span class="tag vendor">Vendor</span>. Keep this picture in mind: 2024 inference brings back the same spatial idea.</p>
+<p>CS-1 and the original CS-2 installation used <strong><a href="appendix-a-glossary.html#g-layer-pipelined-mode">layer-pipelined</a></strong> execution, for models "below 1 billion parameters, which can fit entirely in the on-chip memory" <span class="tag vendor">Vendor</span>. All the layers are loaded onto the wafer at once. The compiler "maps each kernel/layer of the network onto a region (a rectangle)", connects the regions with on-wafer data paths, and sizes and places them "to optimize the throughput". Activations flow forward from region to region, and activation gradients flow back. Weights stay in their region and are updated on the wafer at the end of each backward step. After an initial fill latency, "all the layers of the network enter a steady state of active execution" <span class="tag vendor">Vendor</span>. Keep this picture in mind: 2024 inference brings back the same spatial idea.</p>
 
 <h2 id="inference">Inference: pin the weights, pass the tokens</h2>
-<p>Inference flips the trade. Decode uses each weight once per token per sequence (the <i>T</i> = 1 end of the widget above), so streaming weights in would leave the wafer idle. Instead the weights stay <em>on</em> the wafers. Llama 3.1-70B (~140 GB at 16-bit <span class="tag derived">Derived</span>) went onto <strong>four CS-3s</strong> in August 2024, 20 layers each. Each layer gets a region of PEs holding its weights and its share of the KV cache, and only one 16 KB activation vector per token crosses each wafer boundary <span class="tag vendor">Vendor</span> (Hot Chips 2024). This is the layer-pipelined idea of the previous section, brought back for decode.</p>
+<p>Inference flips the trade. Decode uses each weight once per token per sequence (the <i>T</i> = 1 end of the widget above), so streaming weights in would leave the wafer idle. Instead the weights stay <em>on</em> the wafers (<a href="appendix-a-glossary.html#g-pinned-weight-inference">pinned-weight inference</a>). Llama 3.1-70B (~140 GB at 16-bit <span class="tag derived">Derived</span>) went onto <strong>four CS-3s</strong> in August 2024, 20 layers each. Each layer gets a region of PEs holding its weights and its share of the KV cache, and only one 16 KB activation vector per token crosses each wafer boundary <span class="tag vendor">Vendor</span> (Hot Chips 2024). This is the layer-pipelined idea of the previous section, brought back for decode.</p>
 <div class="table-wrap"><table>
 <tr><th></th><th>Training (weight streaming)</th><th>Inference (pinned weights)</th></tr>
 <tr><td>Weights live</td><td>off the wafer, in MemoryX</td><td>in SRAM, spread over several wafers</td></tr>
@@ -147,30 +178,30 @@
 <tr><td>Parallelism across systems</td><td>data parallel (SwarmX)</td><td>pipeline: each wafer holds a block of layers</td></tr>
 <tr><td>Limited by</td><td>activation memory per wafer</td><td>weights + KV cache must fit in 44 GB per wafer</td></tr>
 </table></div>
-<p class="note">Rows <span class="tag vendor">Vendor</span> (white paper, HC2024). <a href="09-model-to-tokens.html">Chapter 9</a> takes this apart. It covers how the compiler places layers as rectangles, the decode pipeline and its KV-cache arithmetic, the wafer-count widget, a per-token latency budget built from measured constants, speculative decoding, MoE and precision, and the speed history from 450 to 2,100 tok/s and beyond.</p>
+<p class="note">Rows <span class="tag vendor">Vendor</span> (white paper, HC2024). <a href="09-model-to-tokens.html#pipeline">Chapter 9</a> takes this apart. It covers how the compiler places layers as rectangles, the decode pipeline and its KV-cache arithmetic, the wafer-count widget, a per-token latency budget built from measured constants, speculative decoding, MoE and precision, and the speed history from 450 to 2,100 tok/s and beyond.</p>
 
 <h2 id="cs4">CS-4 and the roadmap</h2>
-<p>CS-4 keeps the WSE-3 silicon but rebuilds everything around it. The mechanism behind its "2× faster" claim is mostly power: conversion moved next to the wafer allows "twice as much power to the WSE-3 Turbo, enabling higher operating frequencies and faster token generation" <span class="tag vendor">Vendor</span>.</p>
+<p>CS-4 keeps the WSE-3 silicon but rebuilds everything around it. The mechanism behind its "2× faster" claim is mostly power: conversion moved next to the wafer allows "twice as much power to the WSE-3 Turbo, enabling higher operating frequencies and faster token generation" <span class="tag vendor">Vendor</span>. "WSE-3 Turbo" is the vendor's name for the WSE-3T of <a href="02-the-wafer.html#generations">Chapter 2</a>, so Cerebras itself attributes the speed-up to clock. It publishes no clock figure; press estimates are ~1.4 GHz for WSE-3 and ~2.8 GHz for WSE-3T <span class="tag analyst">Analyst</span> <span class="tag unv">Unverified</span> (The Next Platform), against the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK</span>.</p>
 <div class="table-wrap"><table>
 <tr><th>CS-4 / Nexus</th><th>Detail <span class="tag vendor">Vendor</span></th></tr>
 <tr><td>Rack</td><td>Nexus platform: shared power at the front, three rear "compute backpacks", each holding one WSE-3T with its own power conversion, direct liquid cooling, I/O and control. 50% fewer components and 60% more automated manufacturing than the prior generation.</td></tr>
 <tr><td>Power and cooling</td><td>Up to 30 air-cooled AC/DC modules per backpack, up to 277 V AC in, 54.5 V DC out; 5+1, 4+1, 3+1 and 4+2 redundancy; up to six AC feeds. Conversion ~0.5 mm from the wafer, "100x less than GPUs". Each backpack has its own water conditioning, energy meter, dry quick-disconnects and leak sensors.</td></tr>
 <tr><td>I/O</td><td>New wafer I/O module; 2.4 Tb/s per wafer (double CS-3's 1.2 Tb/s). RoCE v2 RDMA for heterogeneous systems, and Direct Wafer Links for switch-free links "within and across racks", wafer to wafer "as low as 2 microseconds" (CS-3: &lt;5 µs).</td></tr>
-<tr><td>Fabric</td><td>53.5 PB/s of on-wafer fabric bandwidth per WSE-3T, which Cerebras compares with the NVLink spine of an NVL72 Rubin rack (~5,000 cables).</td></tr>
-<tr><td>Use</td><td>"Native support for disaggregated inference": prefill on another platform (AMD Helios or AWS Trainium are named), then the model state moves to CS-4 for decode. Across systems, "execution is pipelined to keep high-volume tensor and expert communication within each wafer".</td></tr>
-<tr><td>Claims</td><td>Up to 2× CS-3 speed, up to 10× throughput per watt, up to 30× faster than GPU systems, and "more than 1,000 tokens per second on models exceeding 10 trillion parameters". Source: "internal benchmarking and projections". Unverified.</td></tr>
+<tr><td>Fabric</td><td>53.5 PB/s of on-wafer fabric bandwidth per WSE-3T, which Cerebras compares with the NVLink spine of an NVL72 Rubin rack (~5,000 cables): NVIDIA's 72-GPU rack in which one NVLink switch network joins every GPU (<a href="appendix-a-glossary.html#g-hgx-nvl72">glossary</a>, <a href="17-gpu.html#scaling">Chapter 17</a>).</td></tr>
+<tr><td>Use</td><td>"Native support for disaggregated inference": prefill on another platform (AMD Helios, AMD's GPU rack, or AWS Trainium are named), then the model state moves to CS-4 for decode (<a href="appendix-a-glossary.html#g-disaggregation">disaggregation</a>, <a href="appendix-a-glossary.html#g-decode-prefill">prefill / decode</a>). Across systems, "execution is pipelined to keep high-volume tensor and expert communication within each wafer". "Expert" refers to mixture-of-experts models, whose layers route each token to a few of many expert sub-networks (<a href="09-model-to-tokens.html#moe">Chapter 9</a>).</td></tr>
+<tr><td>Claims</td><td>Up to 2× CS-3 speed, up to 10× throughput per watt, up to 30× faster than GPU systems, and "more than 1,000 tokens per second on models exceeding 10 trillion parameters". Source: "internal benchmarking and projections". Press reports also give &gt;4,400 tok/s per user on gpt-oss-120B (AI Weekly); this is the CS-4 figure <a href="09-model-to-tokens.html#budget">Chapter 9</a> and <a href="18-comparison.html">Chapter 18</a> use <span class="tag vendor">Vendor</span> <span class="tag unv">Unverified</span>. None of these has been measured independently.</td></tr>
 </table></div>
-<p>The drop from &lt;5 µs to 2 µs per hop matters more as tok/s rises (Chapter 9's inter-wafer budget). One check with Chapter 9's wafer-count widget: a CS-4 rack holds 3 × 44 = 132 GB, so even a whole rack cannot pin Llama-70B at 16-bit <span class="tag derived">Derived</span>.</p>
+<p>The drop from &lt;5 µs to 2 µs per hop matters more as tok/s rises (<a href="09-model-to-tokens.html#budget">Chapter 9</a>'s inter-wafer budget). One check with <a href="09-model-to-tokens.html#cap">Chapter 9</a>'s wafer-count widget: a CS-4 rack holds 3 × 44 = 132 GB, so even a whole rack cannot pin Llama-70B at 16-bit <span class="tag derived">Derived</span>.</p>
 <p><strong>CS-5</strong>, targeted for 2027, pairs Nexus with a next-generation WSE. Cerebras targets up to 10,000 output tok/s per user on gpt-oss-120b and Gemma 4 31B, up to 5,000 tok/s per user and 3 million tok/s per megawatt on multi-trillion-parameter models, and support for "models with more than 50 trillion parameters" <span class="tag vendor">Vendor</span>. <strong>CS-6</strong> integrates "wafer-scale SRAM and compute with 3D-stacked DRAM through ultra-high-bandwidth connections" <span class="tag vendor">Vendor</span>. As ServeTheHome puts it, "Cerebras will be employing DRAM for the first time" <span class="tag indep">Press</span>. That is a direct attack on the capacity limit this whole chapter works around.</p>
 
 <div class="callout">
 <strong>Where this sits for a CSL programmer</strong>
-Weight streaming and multi-wafer inference are run by Cerebras's machine-learning stack, not by programs you write with the SDK. That stack extracts a PyTorch graph, matches it to a library of hand-written kernels, sizes and places each kernel as a rectangle of PEs, routes them and links an executable (ISPD 2020 slides <span class="tag vendor">Vendor</span>). For weight streaming it maps one layer at a time onto the whole wafer and runs the same mapping on every system. <a href="09-model-to-tokens.html">Chapter 9</a> walks through that compile path and the inference side. The CSL SDK that Part III teaches is a separate, lower-level path for custom kernels on one wafer (or the simulator), where you place the rectangles yourself, and its host path is the memcpy runtime of Chapter 7. The labs in Chapters 11–15 build the pieces such a mapping needs: data-triggered FMACs, broadcast along rows and columns, reductions and a 2-D GEMM.
+Weight streaming and multi-wafer inference are run by Cerebras's machine-learning stack, not by programs you write with the SDK. That stack extracts the model graph (TensorFlow via XLA in the 2020 slides, PyTorch today), lowers it to <a href="appendix-a-glossary.html#g-lair">LAIR</a>, matches it to a library of hand-written kernels, sizes and places each kernel as a rectangle of PEs, routes them and links an executable (ISPD 2020 slides <span class="tag vendor">Vendor</span>). For weight streaming it maps one layer at a time onto the whole wafer and runs the same mapping on every system. <a href="09-model-to-tokens.html#compile">Chapter 9</a> walks through that compile path and the inference side. The CSL SDK that Part III teaches is a separate, lower-level path for custom kernels on one wafer (or the simulator), where you place the rectangles yourself, and its host path is the memcpy runtime of <a href="07-host-io.html">Chapter 7</a>. The labs in <a href="11-lab-first-programs.html">Chapters 11</a>–<a href="15-lab-cg.html">15</a> build the pieces such a mapping needs: data-triggered FMACs, broadcast along rows and columns, reductions and a 2-D GEMM.
 </div>
 
 <div class="quiz">
 <h3>Check yourself</h3>
-<details><summary>Why does weight streaming suit training but not low-latency inference?</summary><p>In training, each weight arriving over the 1.2 Tb/s link is reused for every token in the shard; past about 50,000 tokens per shard a WSE-2 is compute-bound <span class="tag derived">Derived</span>. Decode uses each weight for only one token per sequence, so every token would wait on weights arriving over the off-wafer links (a few hundred GB/s per wafer, less than one GPU's HBM) <span class="tag derived">Derived</span>. Pinning weights in 21 PB/s SRAM avoids that.</p></details>
+<details><summary>Why does weight streaming suit training but not low-latency inference?</summary><p>In training, each weight arriving over the 1.2 Tb/s link is reused for every token in the shard; past about 50,000 tokens per shard a WSE-2 is compute-bound <span class="tag derived">Derived</span>. Decode uses each weight for only one token per sequence, so every token would wait on weights arriving over the off-wafer links (~150 GB/s per CS-3 wafer, about 1/20 of one H100's 3.35 TB/s HBM) <span class="tag derived">Derived</span>. Pinning weights in 21 PB/s SRAM avoids that.</p></details>
 <details><summary>How many times does each weight cross the MemoryX link in one training step, and in what format?</summary><p>Twice inward as FP16 (forward pass, then backward pass in transposed order) and once outward as an FP32 gradient, which SwarmX sums across systems before MemoryX applies the update. That is 32 bits in each direction per parameter <span class="tag vendor">Vendor</span>.</p></details>
 <details><summary>Inference keeps weights pinned, and training streams them. Which one is limited by how many wafers you own, and why?</summary><p>Inference: all weights (plus KV cache) must fit in the SRAM of the wafers serving the model, so Llama 70B at 16-bit needs four CS-3s. Training only needs one layer to fit at a time; MemoryX holds the rest, so adding systems adds data parallelism, not capacity.</p></details>
 <details><summary>A CS-4 rack has three 44 GB wafers. Can it hold Llama 70B at 16-bit with weights pinned?</summary><p>No: 3 × 44 = 132 GB &lt; 140 GB before any KV cache. At 8-bit (70 GB) it fits, with about 62 GB to spare <span class="tag derived">Derived</span>.</p></details>
@@ -408,6 +439,91 @@ Weight streaming and multi-wafer inference are run by Cerebras's machine-learnin
     txt(svg, 14, gy + 46, "resident in SRAM", { "font-size": 12, class: "muted" });
     txt(svg, 14, gy + 74, "weights: no home", { "font-size": 12.5, "font-weight": 600 });
     txt(svg, 14, gy + 90, "on the wafer at all", { "font-size": 12, class: "muted" });
+  })();
+
+  /* ---------- 2 x 2 step-through: Y = X·W ---------- */
+  (function () {
+    const svg = $("#mm-svg"), X = [[1, 2], [3, 4]], W = [[5, 6], [7, 8]];
+    const s = 96, gx = 190, gy = 54;
+    const notes = [
+      "Start: core (row j, column k) holds X[j][k], token j's input feature k. No weights are on the wafer.",
+      "Output 1, weights in: W[1][1] = 5 is multicast down column 1 and W[2][1] = 7 down column 2. Each core multiplies its own X by the weight that arrived: partials for output 1 are 1·5 = 5 and 2·7 = 14 in row 1, 3·5 = 15 and 4·7 = 28 in row 2. They sit in BOTH columns.",
+      "Output 1, PSUM + FSUM: each row ring-reduces its partials (5 + 14 = 19, 15 + 28 = 43), and FSUM deposits the totals in column 1, the column that owns output feature 1.",
+      "Output 2, weights in (in the hardware this overlaps the reduction above): W[1][2] = 6 down column 1, W[2][2] = 8 down column 2. Partials: 6 and 16 in row 1, 18 and 32 in row 2.",
+      "Output 2, PSUM + FSUM: 6 + 16 = 22 and 18 + 32 = 50 land in column 2. Y = [[19, 22], [43, 50]] = X·W, laid out exactly like X: tokens down, features across, ready to be the next layer's input."
+    ];
+    let st = 0;
+    function draw() {
+      svg.innerHTML = "";
+      el("defs", {}, svg).innerHTML = '<marker id="mmb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker><marker id="mmo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-acc"/></marker>';
+      const out = st >= 1 ? (st >= 3 ? 1 : 0) : -1;            // which output is in flight
+      const reduced = st === 2 || st === 4;
+      txt(svg, gx + s, 16, "column k = input feature k", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+      txt(svg, gx - 16, gy + s, "row j = token j", { "text-anchor": "end", "font-size": 12, class: "muted" });
+      for (let j = 0; j < 2; j++) for (let k = 0; k < 2; k++) {
+        const x = gx + k * s, y = gy + j * s;
+        const cls = out >= 0 && !reduced ? "blu" : reduced && k === out ? "grn" : reduced ? "acc" : "box";
+        el("rect", { x, y, width: s - 10, height: s - 10, rx: 6, class: cls, "stroke-width": 1.4 }, svg);
+        txt(svg, x + 8, y + 18, `X[${j + 1}][${k + 1}] = ${X[j][k]}`, { "font-size": 12.5, "font-weight": 600 });
+        if (out >= 0 && !reduced) txt(svg, x + 8, y + 44, `${X[j][k]}·${W[k][out]} = ${X[j][k] * W[k][out]}`, { "font-size": 13 });
+        if (reduced && k === out) txt(svg, x + 8, y + 44, `Y[${j + 1}][${out + 1}] = ${X[j][0] * W[0][out] + X[j][1] * W[1][out]}`, { "font-size": 13, "font-weight": 700 });
+        if (reduced && k !== out) txt(svg, x + 8, y + 44, "partial sent →", { "font-size": 12, class: "muted" });
+        // finished outputs from earlier steps
+        if (st >= 3 && k === 0) txt(svg, x + 8, y + 70, `Y[${j + 1}][1] = ${X[j][0] * 5 + X[j][1] * 7}`, { "font-size": 12, class: "muted" });
+      }
+      if (out >= 0 && !reduced) for (let k = 0; k < 2; k++) {
+        const cx = gx + k * s + (s - 10) / 2;
+        el("rect", { x: cx - 34, y: 22, width: 68, height: 22, rx: 11, class: "amb", "stroke-width": 1.2 }, svg);
+        txt(svg, cx, 37, `W[${k + 1}][${out + 1}] = ${W[k][out]}`, { "text-anchor": "middle", "font-size": 11.5, "font-weight": 600 });
+        el("path", { d: `M${cx + 40} 40 V${gy + 2 * s - 14}`, class: "s-blu", "stroke-width": 2.2, "marker-end": "url(#mmb)" }, svg);
+      }
+      if (reduced) for (let j = 0; j < 2; j++) {
+        const y = gy + j * s + 30, from = out === 0 ? gx + s + 10 : gx + 80, to = out === 0 ? gx + 80 : gx + s + 6;
+        el("path", { d: `M${from} ${y} H${to}`, class: "s-acc", "stroke-width": 2.5, "marker-end": "url(#mmo)" }, svg);
+      }
+      const lx = gx + 2 * s + 30;
+      txt(svg, lx, gy + 14, `Step ${st} of 4`, { "font-size": 13, "font-weight": 700 });
+      txt(svg, lx, gy + 40, "blue: weight multicast + FMAC", { "font-size": 12.5, class: "f-blu" });
+      txt(svg, lx, gy + 60, "orange: PSUM, row ring-reduce", { "font-size": 12.5, class: "f-acc" });
+      txt(svg, lx, gy + 80, "green: FSUM, owner column", { "font-size": 12.5, class: "f-grn" });
+      txt(svg, lx, gy + 112, "Y = X·W, Y[j][i] = Σk X[j][k]·W[k][i]", { "font-size": 12.5 });
+      txt(svg, lx, gy + 132, "one weight → one multiply-add", { "font-size": 12, class: "muted" });
+      txt(svg, lx, gy + 148, "per token in its column", { "font-size": 12, class: "muted" });
+      $("#mm-out").textContent = notes[st];
+      $("#mm-step").textContent = st === 4 ? "Start over" : "Step";
+    }
+    $("#mm-step").onclick = () => { st = (st + 1) % 5; draw(); };
+    $("#mm-reset").onclick = () => { st = 0; draw(); };
+    draw();
+  })();
+
+  /* ---------- SwarmX tree ---------- */
+  (function () {
+    const svg = $("#sx");
+    el("defs", {}, svg).innerHTML = '<marker id="sxa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="f-amb"/></marker>';
+    const mx = 380;
+    el("rect", { x: mx - 70, y: 6, width: 140, height: 30, rx: 8, class: "amb", "stroke-width": 1.6 }, svg);
+    txt(svg, mx, 26, "MemoryX", { "text-anchor": "middle", "font-weight": 700, "font-size": 13 });
+    const node = (x, y, label) => { el("rect", { x: x - 42, y, width: 84, height: 28, rx: 7, class: "pur", "stroke-width": 1.4 }, svg); txt(svg, x, y + 18, label, { "text-anchor": "middle", "font-size": 11.5, "font-weight": 600 }); };
+    const link = (x1, y1, x2, y2) => el("line", { x1, y1, x2, y2, class: "s-muted", "stroke-width": 1.4 }, svg);
+    link(mx, 36, mx, 66); node(mx, 66, "B–R node 1:4");
+    const l1 = [0, 1, 2, 3].map(i => 95 + i * 190);
+    l1.forEach((x, i) => {
+      link(mx, 94, x, 124); node(x, 124, "B–R node 1:4");
+      for (let c = 0; c < 4; c++) {
+        const lx = x - 66 + c * 44;
+        link(x, 152, lx + 0, 186);
+        el("rect", { x: lx - 18, y: 186, width: 36, height: 26, rx: 5, class: "acc", "stroke-width": 1.2 }, svg);
+        txt(svg, lx, 203, String(i * 4 + c + 1), { "text-anchor": "middle", "font-size": 11.5, "font-weight": 600 });
+      }
+    });
+    txt(svg, 8, 84, "level 1", { "font-size": 12, class: "muted" });
+    txt(svg, 8, 142, "level 2", { "font-size": 12, class: "muted" });
+    txt(svg, 8, 232, "16 × CS-3", { "font-size": 12, class: "muted" });
+    txt(svg, mx, 238, "↓ one copy of W per link · ↑ ∇W summed at each node, one copy per link", { "text-anchor": "middle", "font-size": 12, class: "muted" });
+    el("path", { d: `M${mx + 90} 30 C ${mx + 150} 60, ${mx + 150} 90, ${mx + 60} 122`, class: "s-amb", "stroke-width": 1.8, fill: "none", "marker-end": "url(#sxa)" }, svg);
+    txt(svg, mx + 150, 70, "weights ↓", { "font-size": 11.5, class: "f-amb" });
+    txt(svg, mx - 210, 70, "gradients ↑ (Σ)", { "font-size": 11.5, class: "f-pur" });
   })();
 
 })();

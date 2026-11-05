@@ -46,7 +46,7 @@
 
 <h2 id="anatomy">The anatomy</h2>
 <figure>
-<svg id="anat" viewBox="0 0 760 456" width="760" role="img" aria-label="Exploded view of a processing element: compute engine with SRAM banks, cache, registers, SIMD datapath, task picker and microthreads, plus a router with five bidirectional ports">
+<svg id="anat" viewBox="0 0 790 456" width="790" role="img" aria-label="Exploded view of a processing element: compute engine with SRAM banks, cache, registers, SIMD datapath, task picker and microthreads, input and output queues between the RAMP and the CE, plus a router with five bidirectional ports">
   <defs>
     <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="f-blu"/></marker>
   </defs>
@@ -96,40 +96,53 @@
 
   <!-- Router -->
   <g><title>Router: five bidirectional ports (N, E, S, W and the RAMP to its own CE); 24 colors select routes (Chapter 4)</title>
-  <rect id="j-router" x="440" y="150" width="100" height="100" rx="10" class="blu" stroke-width="2"/>
-  <text x="490" y="196" text-anchor="middle" font-weight="700">Router</text>
-  <text x="490" y="212" text-anchor="middle" font-size="10.5" class="muted">24 colors</text>
-  <text x="490" y="226" text-anchor="middle" font-size="10.5" class="muted">(route tags, Ch. 4)</text></g>
-  <path id="j-n" d="M490 150 V98" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="498" y="112" font-size="12" font-weight="600">N</text>
-  <path id="j-s" d="M490 250 V302" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="498" y="296" font-size="12" font-weight="600">S</text>
-  <path id="j-e" d="M540 200 H606" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="590" y="192" font-size="12" font-weight="600">E</text>
-  <path id="j-w" d="M440 168 H408 V-14 H10" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/>
+  <rect id="j-router" x="470" y="150" width="100" height="100" rx="10" class="blu" stroke-width="2"/>
+  <text x="520" y="196" text-anchor="middle" font-weight="700">Router</text>
+  <text x="520" y="212" text-anchor="middle" font-size="10.5" class="muted">24 colors</text>
+  <text x="520" y="226" text-anchor="middle" font-size="10.5" class="muted">(route tags, Ch. 4)</text></g>
+  <path id="j-n" d="M520 150 V98" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="528" y="112" font-size="12" font-weight="600">N</text>
+  <path id="j-s" d="M520 250 V302" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="528" y="296" font-size="12" font-weight="600">S</text>
+  <path id="j-e" d="M570 200 H636" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/><text x="620" y="192" font-size="12" font-weight="600">E</text>
+  <path id="j-w" d="M470 168 H438 V-14 H10" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/>
   <text id="j-wl" x="40" y="-20" font-size="11.5" font-weight="600">W ← to the west neighbour (drawn over the CE for room)</text>
-  <path id="j-ramp" d="M440 222 H386" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/>
-  <text x="413" y="242" font-size="11.5" font-weight="600" text-anchor="middle">RAMP</text>
+  <path id="j-ramp" d="M470 222 H421 V258" class="s-blu" fill="none" stroke-width="2" marker-start="url(#a4)" marker-end="url(#a4)"/>
+  <text x="446" y="214" font-size="11.5" font-weight="600" text-anchor="middle">RAMP</text>
+  <!-- input / output queues: the CE's side of the RAMP -->
+  <g id="j-q"><title>Input and output queues: small hardware FIFOs between the RAMP and the CE, each bound to a color. 8 in / 6 out (WSE-2), 8 in / 8 out (WSE-3); depths 2 to 6 wavelets. On WSE-3 an input queue also names the data task and the default microthread.</title>
+  <rect x="384" y="262" width="76" height="76" rx="6" class="pur" stroke-width="1.3"/>
+  <text x="422" y="280" text-anchor="middle" font-size="12" font-weight="600">queues</text>
+  <text x="422" y="296" text-anchor="middle" font-size="10.5" class="muted">8 in</text>
+  <text x="422" y="310" text-anchor="middle" font-size="10.5" class="muted">6 / 8 out</text>
+  <text x="422" y="324" text-anchor="middle" font-size="9.5" class="muted">(WSE-2 / 3)</text></g>
 
   <!-- notes -->
-  <text x="580" y="70" font-size="13" font-weight="700">Not here:</text>
-  <text x="580" y="92" font-size="12.5" class="muted">✕ DRAM</text>
-  <text x="580" y="111" font-size="12.5" class="muted">✕ hardware cache</text>
-  <text x="580" y="130" font-size="12.5" class="muted">✕ instruction cache</text>
-  <text x="594" y="146" font-size="11" class="muted">(none documented)</text>
-  <text x="580" y="166" font-size="12.5" class="muted">✕ OS / software threads</text>
-  <text x="580" y="320" font-size="13" font-weight="700">Size</text>
-  <text x="580" y="339" font-size="12" class="muted">WSE-2: 0.039 mm² (HC22)</text>
-  <text x="580" y="356" font-size="12" class="muted">WSE-3: ~0.05 mm² (blog)</text>
-  <text x="580" y="373" font-size="12" class="muted">≈ ½ logic, ½ SRAM (WSE-2)</text>
+  <text x="610" y="70" font-size="13" font-weight="700">Not here:</text>
+  <text x="610" y="92" font-size="12.5" class="muted">✕ DRAM</text>
+  <text x="610" y="111" font-size="12.5" class="muted">✕ hardware cache</text>
+  <text x="610" y="130" font-size="12.5" class="muted">✕ instruction cache</text>
+  <text x="624" y="146" font-size="11" class="muted">(none documented)</text>
+  <text x="610" y="166" font-size="12.5" class="muted">✕ OS / software threads</text>
+  <text x="610" y="320" font-size="13" font-weight="700">Size</text>
+  <text x="610" y="339" font-size="12" class="muted">WSE-2: 0.039 mm² (HC22)</text>
+  <text x="610" y="356" font-size="12" class="muted">WSE-3: ~0.05 mm² (blog)</text>
+  <text x="610" y="373" font-size="12" class="muted">≈ ½ logic, ½ SRAM (WSE-2)</text>
   </g>
 </svg>
-<figcaption><b>A 48 KB computer with a router attached.</b> 48 KB, the 512 B cache, 16 GPRs, 48 DSRs and the SIMD widths are WSE-3 figures <span class="tag vendor">Vendor, Hot Chips 2024</span>. The 8 single-ported banks, single-cycle access, the 256 B WSE-2 cache, the WSE-2 core size and the ½ : ½ logic/SRAM split come from the WSE-2 talk <span class="tag vendor">Vendor, Hot Chips 2022</span>; the WSE-3 size from a Cerebras blog <span class="tag vendor">Vendor</span>, and the sources differ (Chapter 2). The 6 KB bank size comes from academic papers <span class="tag indep">Independent</span>. The 24 colors, the task picker rule and the microthread rules come from the SDK <span class="tag sdk">SDK 2.10.1</span>; "eight microthreads" is a WSE-2 vendor statement <span class="tag vendor">Vendor</span>. The f32 rate is measured in this chapter <span class="tag measured">Measured</span>. All five router links, the RAMP included, carry traffic in both directions. WSE-2 register counts were not found. Hover a block for a one-line description.</figcaption>
+<figcaption><b>A 48 KB computer with a router attached.</b> 48 KB, the 512 B cache, 16 GPRs, 48 DSRs and the SIMD widths are WSE-3 figures <span class="tag vendor">Vendor, Hot Chips 2024</span>. The 8 single-ported banks, single-cycle access, the 256 B WSE-2 cache, the WSE-2 core size and the ½ : ½ logic/SRAM split come from the WSE-2 talk <span class="tag vendor">Vendor, Hot Chips 2022</span>; the WSE-3 size from a Cerebras blog <span class="tag vendor">Vendor</span>, and the sources differ (<a href="02-the-wafer.html#small-machines">Chapter 2</a>). The 6 KB bank size comes from academic papers <span class="tag indep">Independent</span>. The 24 colors, the task picker rule, the microthread rules and the queue counts (8 in; 6 out on WSE-2, 8 on WSE-3) come from the SDK <span class="tag sdk">SDK 2.10.1, csl-libs/target</span>, and the queue depths (2 to 6 wavelets) from its memcpy library <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>; "eight microthreads" is a WSE-2 vendor statement <span class="tag vendor">Vendor</span>. The f32 rate is measured in this chapter <span class="tag measured">Measured</span>. All five router links, the RAMP included, carry traffic in both directions. WSE-2 register counts were not found. Hover a block for a one-line description.</figcaption>
 </figure>
 
 <h3 id="wavelets">Wavelets, colors and the router, in one paragraph</h3>
-<p>PEs share no memory. They exchange <strong>wavelets</strong>: 32-bit messages that hop one router per cycle <span class="tag indep">Indep</span>. Each wavelet carries a <strong>color</strong>, one of 24 tags <span class="tag sdk">SDK 2.10.1</span>; at every router the color selects a pre-configured route, and at the receiver it selects what to do with the data. The router has five ports: N, E, S, W to the neighbours, and the <strong>RAMP</strong> down to its own CE. Chapter 4 covers routing in full. For now the key fact is that a wavelet coming down the RAMP is what wakes the CE.</p>
+<p>PEs share no memory. They exchange <strong><a href="appendix-a-glossary.html#g-wavelet">wavelets</a></strong>: 32-bit messages that move about one router per cycle on hardware, according to the papers <span class="tag indep">Indep</span>; the WSE-3 simulator models 2 cycles per hop and the WSE-2 simulator 1 <span class="tag measured">Measured, <a href="04-fabric.html#latency">Chapter 4</a></span>. Each wavelet carries a <strong><a href="appendix-a-glossary.html#g-color">color</a></strong>, one of 24 tags <span class="tag sdk">SDK 2.10.1</span>; at every <a href="appendix-a-glossary.html#g-router">router</a> the color selects a pre-configured route, and at the receiver it selects what to do with the data. The router has five ports: N, E, S, W to the neighbours, and the <strong><a href="appendix-a-glossary.html#g-ramp">RAMP</a></strong> down to its own CE. <a href="04-fabric.html#mesh">Chapter 4</a> covers routing in full. For now the key fact is that a wavelet coming down the RAMP is what wakes the CE.</p>
+<p>At the bottom of the RAMP sit the CE's <strong><a href="appendix-a-glossary.html#g-input-queue-output-queue">input and output queues</a></strong>: small hardware FIFOs, each bound to one color by the program. There are 8 input queues on both chips and 6 output queues on WSE-2, 8 on WSE-3 <span class="tag sdk">SDK 2.10.1, csl-libs/target</span>, and each holds only a few wavelets (memcpy configures depths of 6, 4 and 2 for queues 0–1, 2–3 and 4–7) <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. A queue is where an arriving wavelet waits until the CE takes it; on WSE-3 the input queue also names the data task it activates and the default microthread that consumes it (<a href="05-tasks.html#path">Chapter 5</a> follows that path in detail).</p>
 
 <div class="widget" id="journey">
 <h4>One wavelet's journey through a PE</h4>
-<p class="hint">Lab 2 (Chapter 12) sums a vector along a row of PEs from west to east. A middle PE runs one instruction, <code>@fadds(out_dsd, in_dsd, v_dsd, .{ .async = true, .activate = exit_id })</code>: "add what arrives from the west to my <code>v</code>, and send the sum east". Step through it; the parts involved light up in the diagram above.</p>
+<p class="hint">Lab 2 (<a href="12-lab-neighbours.html#row-reduce">Chapter 12</a>) sums a vector along a row of PEs from west to east. A middle PE runs one instruction, <code>@fadds(out_dsd, in_dsd, v_dsd, .{ .async = true, .activate = exit_id })</code>: "add what arrives from the west to my <code>v</code>, and send the sum east". Step through it; the parts involved light up in the diagram above.</p>
+<p class="hint">Four terms the steps use before this chapter defines them:
+<b><a href="appendix-a-glossary.html#g-dsr-data-structure-register">DSR</a></b>, a register holding one array descriptor (address, length, stride; <a href="#simd">below</a>) ·
+<b><a href="appendix-a-glossary.html#g-microthread">microthread</a></b>, a hardware slot that keeps one vector operation running in the background (<a href="#microthreads">below</a>) ·
+<b><a href="appendix-a-glossary.html#g-input-queue-output-queue">queue</a></b>, a few-wavelet FIFO between the RAMP and the CE (<a href="#wavelets">above</a>) ·
+<b><a href="appendix-a-glossary.html#g-task">task</a></b>, a short handler the hardware runs when it is activated (<a href="#control">below</a>, <a href="05-tasks.html#activates">Chapter 5</a>). The CSL spelling <code>.async</code> / <code>.activate</code> is taught in <a href="06-dsds.html#async">Chapter 6</a>.</p>
 <div class="controls">
 <button class="btn secondary" type="button" id="j-prev">◀ Back</button>
 <button class="btn" type="button" id="j-next">Next step ▶</button>
@@ -138,20 +151,25 @@
 <ol class="journey" id="j-list">
 <li>Earlier, a task issued the <code>@fadds</code>. Its three operands (fabric-in, memory <code>v</code>, fabric-out) were loaded into <b>DSRs</b> and the operation was handed to a <b>microthread</b>. The task then ended; nothing waits in a loop.</li>
 <li>A wavelet arrives at the <b>router's W port</b>. The router looks up its color: "deliver to my own CE".</li>
-<li>It goes down the <b>RAMP</b> into one of the CE's input queues (on WSE-3 the program bound queue 2 to that color).</li>
+<li>It goes down the <b>RAMP</b> into one of the CE's <b>input queues</b>, drawn next to the RAMP (in Lab 2 the program bound queue 2 to that color).</li>
 <li>The microthread now has its fabric operand. The <b>datapath</b> adds it to <code>v[i]</code>, read from the <b>SRAM banks</b> in one cycle.</li>
-<li>The sum goes back up the <b>RAMP</b> through an output queue; the router sends it out of the <b>E port</b> on the next color.</li>
+<li>The sum goes into an <b>output queue</b> and back up the <b>RAMP</b>; the router sends it out of the <b>E port</b> on the next color.</li>
 <li>After the last element the microthread finishes and activates <code>exit_id</code>. The <b>task picker</b> runs that task once it is activated and not blocked.</li>
 </ol>
-<p class="hint" style="margin:0">Every later chapter zooms into one of these steps: routing (Chapter 4), tasks (Chapter 5), DSDs (Chapter 6).</p>
+<p class="hint" style="margin:0">Every later chapter zooms into one of these steps: routing (<a href="04-fabric.html">Chapter 4</a>), tasks (<a href="05-tasks.html">Chapter 5</a>), DSDs (<a href="06-dsds.html">Chapter 6</a>).</p>
 </div>
 
 <h2 id="memory">Memory: 48 KB, one cycle, nothing else</h2>
 <p>The SRAM is 8 single-ported banks with single-cycle access <span class="tag vendor">Vendor, HC22</span>, each 6 KB <span class="tag indep">Academic papers</span>. This 48 KB holds <em>everything</em> the PE knows: its code, its stack, its data, its task table and the buffers the runtime needs. Internally the PE addresses memory in 16-bit units: the CSL target library defines <code>word_size = 2</code> and its registers as <code>u16</code> <span class="tag sdk">SDK 2.10.1, csl-libs/target</span>, so 48 KB is 24,576 words and an f32 is two of them.</p>
 
-<h3 id="bank-model">Which bank does an address land in? Two sources disagree</h3>
-<p>The research behind this course gives the bank layout as "successive 32-bit words in successive banks", from academic papers (arXiv:2605.07954, read through a search extract) <span class="tag indep">Independent</span>. The SDK says something different. The manual page of its <code>cs_readelf</code> tool states: "The bank a memory access lies in is determined by bits [3:1] of the address. So, for example, a 16-bit read of 0x1234 lies in bank 2. A 32-bit read of the same address is broken into two 16-bit reads, one from bank 2 and one from bank 3. Bank conflicts where concurrent reads and writes target the same bank or the same bank modulo 4 may result in cycle delays." <span class="tag sdk">SDK 2.10.1, cs_readelf(1)</span>. Its <code>--sym</code> output prints a "Banks" column for every variable, and in our builds it follows that rule: 2-byte variables at 0xe64, 0xe68, 0xe6c, 0xe70 sit in banks 2, 4, 6, 0 <span class="tag measured">Measured, cslc 2.10.1 ELFs, WSE-2 and WSE-3</span>.</p>
-<p><strong>What you can observe in the SDK is the second model</strong>: bank = (byte address ÷ 2) mod 8, a 16-byte stripe, so one f32 spans two banks and four consecutive f32s cover all eight. The SDK's matvec benchmark pads rows to 16 bytes "to avoid bank conflicts", and the WSE-3 library sets <code>FIFO_MIN_ALIGNMENT = 16</code> (WSE-2: 8) <span class="tag sdk">SDK 2.10.1</span>, both consistent with a 16-byte stripe. The two descriptions could be views of different things (address numbering versus physical bank width), but no source says so. One hint that 16-bit numbering is not the whole story: a contiguous f32 add moves at least 19 bytes per cycle (below), more than 8 banks × 16 bits per cycle could supply <span class="tag derived">Derived</span>. The physical bank width is not published.</p>
+<h3 id="bank-model">Which bank does an address land in, and why it matters</h3>
+<p>Start with the effect. An f32 <code>@fmacs</code> over 1,024 elements takes about 1,040 cycles when its two source arrays start in different <a href="appendix-a-glossary.html#g-bank-sram-bank">banks</a>, and about 2,060 when they start in the same bank: half speed, on both chips <span class="tag measured">Measured, simulator, SDK 2.10.1</span>. That is a <a href="appendix-a-glossary.html#g-bank-clash-operand-collision">bank clash</a>, and it is easy to hit by accident: Lab 1's SAXPY runs at 2 cycles per element until one pad word is added between its arrays (<a href="11-lab-first-programs.html#kernel-time">Chapter 11</a>). So you need to know which bank an address lands in.</p>
+<p>The SDK states the rule. The manual page of its <code>cs_readelf</code> tool says: "The bank a memory access lies in is determined by bits [3:1] of the address. So, for example, a 16-bit read of 0x1234 lies in bank 2. A 32-bit read of the same address is broken into two 16-bit reads, one from bank 2 and one from bank 3. Bank conflicts where concurrent reads and writes target the same bank or the same bank modulo 4 may result in cycle delays." <span class="tag sdk">SDK 2.10.1, cs_readelf(1)</span>. Its <code>--sym</code> output prints a "Banks" column for every variable, and in our builds it follows that rule: 2-byte variables at 0xe64, 0xe68, 0xe6c, 0xe70 sit in banks 2, 4, 6, 0 <span class="tag measured">Measured, cslc 2.10.1 ELFs, WSE-2 and WSE-3</span>.</p>
+<p>In words: <strong>bank = (byte address ÷ 2) mod 8</strong>, a 16-byte cycle, so one f32 spans two banks and four consecutive f32s cover all eight. Two arrays whose start addresses are equal mod 16 bytes start in the same bank. The SDK's matvec benchmark pads rows to 16 bytes "to avoid bank conflicts", and the WSE-3 library sets <code>FIFO_MIN_ALIGNMENT = 16</code> (WSE-2: 8) <span class="tag sdk">SDK 2.10.1</span>, both consistent with a 16-byte cycle.</p>
+<div class="callout">
+<strong>Sources differ on the physical layout</strong>
+<p>The research behind this course gives the bank layout as "successive 32-bit words in successive banks", from academic papers (arXiv:2605.07954, read through a search extract) <span class="tag indep">Independent</span>. That is not what <code>cs_readelf</code> reports. The two descriptions could be views of different things (address numbering versus physical bank width), but no source says so. One hint that 16-bit numbering is not the whole story: a contiguous f32 add moves at least 19 bytes per cycle (<a href="#feed">below</a>), more than 8 banks × 16 bits per cycle could supply <span class="tag derived">Derived</span>. The physical bank width is not published. The explorer below lets you switch between the two models; the measurements in this chapter are explained by the SDK one.</p>
+</div>
 
 <div class="widget" id="bankw">
 <h4>Address → bank explorer</h4>
@@ -165,6 +183,19 @@
 <svg id="bk-svg" viewBox="0 0 680 240" width="680" role="img" aria-label="Elements walked by a strided access, coloured by bank, with per-bank hit counts"></svg>
 <div class="readout" id="bk-out" aria-live="polite"></div>
 </div>
+<div class="callout key" id="stream-start">
+<strong>Where two operand streams start matters</strong>
+<p>One operation over 1,024 elements, memory to memory, with the second source array starting 0, 4 or 8 bytes (mod 16) after the first. Cycles from the PE's timestamp counter <span class="tag measured">Measured, simulator, SDK 2.10.1</span>:</p>
+<div class="table-wrap"><table>
+<tr><th>second source starts</th><th>f32 <code>@fmacs</code> WSE-2</th><th>WSE-3</th><th>f32 <code>@fadds</code> WSE-2</th><th>WSE-3</th><th>f16 <code>@fmach</code> WSE-2</th><th>WSE-3</th></tr>
+<tr><td>same bank (0 B)</td><td class="bad-t">2,062</td><td class="bad-t">2,063</td><td class="bad-t">1,038</td><td>–</td><td class="bad-t">526</td><td>272</td></tr>
+<tr><td>2 banks on (4 B)</td><td>1,038</td><td>1,039</td><td class="bad-t">1,038</td><td>528</td><td class="bad-t">526</td><td>272</td></tr>
+<tr><td>4 banks on (8 B)</td><td class="ok-t">1,038</td><td class="ok-t">1,039</td><td class="ok-t">526</td><td class="ok-t">527</td><td class="ok-t">270</td><td class="ok-t">272</td></tr>
+<tr><td>elements per cycle, best</td><td>1</td><td>1</td><td>2</td><td>2</td><td>≈ 4</td><td>≈ 4</td></tr>
+</table></div>
+<p>The one rule: <strong>op rates depend on layout. Peak needs the two source streams in opposite halves of the 16-byte bank cycle (8 bytes apart); starting them in the same bank halves the rate.</strong> WSE-3 is less sensitive than WSE-2, but its f32 multiply-add still halves. "–" was not timed. The 4-byte f32 <code>@fadds</code> on WSE-3 is <a href="06-dsds.html#op-speed">Chapter 6</a>'s run; the rest are this course's placement tests (<a href="appendix-e-sources.html#iss-clash">Appendix E</a>), and <a href="06-dsds.html#collisions">Chapter 6</a> has an explorer for them. The matvec timings later in this chapter were taken with the SDK's layout, which pads columns to 16 bytes and shifts A by one f32 (<code>A_array[i+1]</code>) so that A and y do not start in the same bank; without that shift the 64 × 64 matvec takes 8,310 cycles instead of 4,214 <span class="tag measured">Measured, WSE-3, Chapter 6</span>. Lab 1 (<a href="11-lab-first-programs.html#kernel-time">Chapter 11</a>) shows what happens without it.</p>
+</div>
+
 <p>The measured cost of a stride, for one synchronous operation over 256 f32 elements with both operands strided alike <span class="tag measured">Measured, simulator, SDK 2.10.1, cycles from the PE's timestamp counter</span>:</p>
 <div class="table-wrap"><table>
 <tr><th>256 × f32</th><th>stride 1</th><th>stride 2</th><th>stride 4</th><th>stride 8</th></tr>
@@ -172,17 +203,17 @@
 <tr><td><code>@fadds</code> a = a + b, WSE-2</td><td>294</td><td>–</td><td>550</td><td>804</td></tr>
 <tr><td><code>@fmovs</code> a = b, WSE-3</td><td>92</td><td>–</td><td>284</td><td>–</td></tr>
 </table></div>
-<p>Contiguous access is where WSE-3 gains: its stride-1 add is 1.8× faster than WSE-2's. At stride 4 or more the two generations are equal at roughly 2–3 cycles per element <span class="tag derived">Derived</span>. The bank rule explains the direction (stride 4 in f32 puts every element in banks 0 and 1) but not the exact numbers, since strides 4 and 8 touch the same banks and still differ. So lay arrays out to be walked contiguously, and pad rows to 16 bytes as the SDK does. (The WSE-3 stride 1 and 2 to 8 rows were rerun for this chapter; the others come from the depth review's runs.)</p>
+<p>At stride 1 WSE-3's add is 1.8× faster than WSE-2's here, but that is partly placement: WSE-2's rate of about 1 per cycle is the slow case in the box above, so these two arrays were evidently not 8 bytes apart, and with that offset WSE-2 also adds at 2 elements per cycle. At stride 4 or more the two generations are equal at roughly 2–3 cycles per element <span class="tag derived">Derived</span>. The bank rule explains the direction (stride 4 in f32 puts every element in banks 0 and 1) but not the exact numbers, since strides 4 and 8 touch the same banks and still differ; where each stream starts may account for it, but that was not tested. So lay arrays out to be walked contiguously, pad rows to 16 bytes as the SDK does, and when an op runs at half the rate you expect, move one source array by 8 bytes and measure again. (The WSE-3 stride 1 and 2 to 8 rows were rerun for this chapter; the others come from the depth review's runs.)</p>
 
 <h3 id="feed">Is memory fast enough to feed the math?</h3>
-<p>This is the per-PE version of Chapter 1's roofline. Start from the vendor total and divide:</p>
+<p>This is the per-PE version of <a href="01-memory-wall.html#two-numbers">Chapter 1</a>'s <a href="appendix-a-glossary.html#g-ridge-point-roofline">roofline</a>. Start from the vendor total and divide:</p>
 <div class="chain">
 <div><b>21 PB/s</b>WSE-3 memory bandwidth <span class="tag vendor">Vendor</span></div>
 <div><b>÷ 900,000 PEs</b><span class="tag vendor">Vendor</span></div>
 <div><b>≈ 23 GB/s per PE</b><span class="tag derived">Derived</span></div>
-<div><b>≈ 21–27 B/cycle</b>about 5–7 f32 accesses per cycle at 1.1 GHz (WSE-2's published clock <span class="tag vendor">Vendor, HC22</span>) to 850 MHz (the SDK's assumption <span class="tag sdk">SDK 2.10.1</span>); no WSE-3 clock is published <span class="tag derived">Derived</span></div>
+<div><b>≈ 21–27 B/cycle</b>about 5–7 f32 accesses per cycle at 1.1 GHz (WSE-2's published clock <span class="tag vendor">Vendor, HC22</span>) to 850 MHz (the SDK's assumption <span class="tag sdk">SDK 2.10.1</span>); no WSE-3 clock is published <span class="tag derived">Derived</span>. At the ~1.4 GHz that press estimates suggest for WSE-3 <span class="tag analyst">Analyst</span> <span class="tag unv">Unverified</span> it would be ≈ 17 B/cycle, below what the simulator's contiguous add moves, so treat this figure as rough</div>
 </div>
-<p>Now compare what a kernel needs. An f32 matrix-vector multiply-add reads an element of A, reads y, and writes y: 12 bytes for 2 FLOPs, about 0.17 FLOP/byte. On an H100 that intensity would leave the chip ~1,800× below its HBM ridge of ~295 FLOP/byte (Chapter 1). On a PE it runs at full rate: the SDK matvec benchmark measured 4,214 cycles for a 64 × 64 f32 matvec, about one multiply-add per cycle, while the SRAM served 49,408 bytes, 11.7 bytes every cycle <span class="tag measured">Measured, simulator, WSE-3</span>. That is about three f32 accesses per cycle, roughly half of the derived 5–7. The contiguous <code>@fadds</code> in the table moves 3,072 bytes in 162 cycles, at least 19 bytes per cycle with its start-up included <span class="tag derived">Derived</span>. Memory is matched to the core, which is the WSE's answer to the memory wall.</p>
+<p>Now compare what a kernel needs. An f32 matrix-vector multiply-add reads an element of A, reads y, and writes y: 12 bytes for 2 FLOPs, about 0.17 FLOP/byte. On an H100 that intensity would leave the chip ~1,800× below its HBM ridge of ~295 FLOP/byte (<a href="01-memory-wall.html#two-numbers">Chapter 1</a>). On a PE it runs at full rate: the SDK matvec benchmark measured 4,214 cycles for a 64 × 64 f32 matvec, about one multiply-add per cycle, while the SRAM served 49,408 bytes, 11.7 bytes every cycle <span class="tag measured">Measured, simulator, WSE-3</span>. That is about three f32 accesses per cycle, roughly half of the derived 5–7. The contiguous <code>@fadds</code> in the table moves 3,072 bytes in 162 cycles, at least 19 bytes per cycle with its start-up included <span class="tag derived">Derived</span>. So memory is not what holds f32 multiply-add to one per cycle: on the same SRAM, adds and copies run 2–4× faster (<a href="#op-rates">op table below</a>). The limit is in the datapath, or an FMA issue rate that is not documented <span class="tag derived">Derived</span>; what memory <em>can</em> do is slow an op down when two streams share a bank (<a href="#stream-start">box above</a>). Memory is matched to the core, which is the WSE's answer to the memory wall.</p>
 
 <p>There is also a tiny <strong>software-managed cache</strong>, 256 B on WSE-2 <span class="tag vendor">Vendor, HC22</span> and 512 B on WSE-3 <span class="tag vendor">Vendor, HC2024</span>, for hot values such as accumulators. "Software-managed" means nothing is cached automatically by hardware. The public sources do not say how CSL exposes it, and the CSL standard library never mentions it; nothing in this course controls it.</p>
 
@@ -362,7 +393,7 @@ cs_readelf --sym out/bin/out_0_0.elf    <span class="c"># every symbol with its 
   for (let i = 0; i < 8; i++) el("circle", { cx: 230 + i * 17, cy: 345, r: 6, class: "f-amb", opacity: .8 }, u);
 
   /* ---------- wavelet journey ---------- */
-  const JSTEPS = [["j-dsr", "j-ut", "j-pick"], ["j-w", "j-wl", "j-router"], ["j-ramp"], ["j-ut", "j-simd", "banks"], ["j-ramp", "j-router", "j-e"], ["j-ut", "j-pick"]];
+  const JSTEPS = [["j-dsr", "j-ut", "j-pick"], ["j-w", "j-wl", "j-router"], ["j-ramp", "j-q"], ["j-ut", "j-simd", "banks"], ["j-q", "j-ramp", "j-router", "j-e"], ["j-ut", "j-pick"]];
   let js = -1;
   function journey() {
     document.querySelectorAll("#anat .hl").forEach(e => e.classList.remove("hl"));

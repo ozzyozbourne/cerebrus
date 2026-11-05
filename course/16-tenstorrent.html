@@ -25,7 +25,7 @@
 <main>
 <div class="kicker">Chapter 16 · Part IV · Comparison</div>
 <h1>Tenstorrent, the middle path</h1>
-<p class="lede">Tenstorrent builds conventional-size chips out of a grid of "Tensix" cores. Each core has about 1.5 MiB of SRAM (1,464 KiB on Wormhole, 1,536 KiB on Blackhole) and five small RISC-V processors that steer a matrix engine. Cheap GDDR6 sits beside the chip. Ethernet ports built into the die (on Wormhole and most Blackhole products) link chips into meshes. Tenstorrent shares the wafer's idea of spatial, explicitly scheduled data movement, but at a very different scale and price.</p>
+<p class="lede">Tenstorrent builds conventional-size chips out of a grid of "<a href="appendix-a-glossary.html#g-tensix">Tensix</a>" cores. Each core has about 1.5 MiB of SRAM (1,464 KiB on Wormhole, 1,536 KiB on Blackhole) and five small RISC-V processors that steer a matrix engine. Cheap GDDR6 sits beside the chip. Ethernet ports built into the die (on Wormhole and most Blackhole products) link chips into meshes. Tenstorrent shares the wafer's idea of spatial, explicitly scheduled data movement, but at a very different scale and price.</p>
 
 <div class="objectives">
 <h4>After this chapter you can</h4>
@@ -42,39 +42,39 @@
 <h2 id="product-line">The product line</h2>
 <div class="table-wrap"><table>
 <tr><th></th><th>Grayskull e150</th><th>Wormhole n300</th><th class="p150">Blackhole p150</th><th>Galaxy Blackhole</th></tr>
-<tr><td>Status</td><td>legacy</td><td>older</td><td class="p150">current · <b>used in the rest of this chapter</b></td><td>current</td></tr>
+<tr><td>Status</td><td>legacy</td><td>older</td><td class="p150">current · <b>used in the rest of this chapter</b></td><td>current; generally available since 28 Apr 2026 <span class="tag vendor">Vendor</span></td></tr>
 <tr><td>Process</td><td>12nm</td><td>12nm</td><td class="p150">TSMC 6nm</td><td>32 × Blackhole</td></tr>
 <tr><td>Tensix cores</td><td>120</td><td>128 (2 dies × 64)</td><td class="p150">120 (140 before Feb 2026)</td><td>~3,840–4,480 <span class="tag derived">32 × 120–140</span></td></tr>
 <tr><td>L1 per core</td><td>~1 MB <span class="tag derived">120 MB / 120</span></td><td>1,464 KiB <span class="tag vendor">ISA docs</span></td><td class="p150">1,536 KiB <span class="tag vendor">ISA docs</span></td><td>1,536 KiB</td></tr>
-<tr><td>On-chip SRAM (total)</td><td>120 MB</td><td>~192 MB <span class="tag derived">128 × 1,464 KiB</span></td><td class="p150">180 MB (210 before)</td><td>6.2 GB</td></tr>
+<tr><td>On-chip SRAM (total)</td><td>120 MB</td><td>~192 MB <span class="tag derived">128 × 1,464 KiB</span></td><td class="p150">180 MB (210 before)</td><td>5.76 GB <span class="tag derived">32 × 180 MB</span> (6.72 GB before the cut)</td></tr>
 <tr><td>Off-chip memory</td><td>8 GB LPDDR4, 118 GB/s</td><td>24 GB GDDR6, 576 GB/s</td><td class="p150">32 GB GDDR6, 512 GB/s <span class="tag vendor">8 ch × 64 GB/s, tt-metal CCL report</span></td><td>1 TB GDDR6, 16 TB/s</td></tr>
 <tr><td>Peak (vendor)</td><td>332 TF FP8</td><td>466 TF FP8</td><td class="p150">664 TF BlockFP8 (774 before)</td><td>23 PF BlockFP8 (TT-Fabric report: 24 PF)</td></tr>
 <tr><td>Ethernet ports</td><td>—</td><td>16 × 100 GbE tiles per die; 2 × QSFP-DD on the card <span class="tag vendor">ISA docs</span></td><td class="p150">4 × 800 GbE QSFP-DD (8 of the die's 14 × 400 GbE tiles wired) <span class="tag vendor">ISA docs</span></td><td>chips linked inside the box</td></tr>
 <tr><td>Topology</td><td>single card</td><td>2 chips; the second is reached over Ethernet</td><td class="p150">card, or 4 in a QuietBox</td><td>32 chips in a 2-D Ethernet mesh/torus (Wormhole Galaxy: 8 × 4 mesh <span class="tag vendor">tt-metal</span>)</td></tr>
-<tr><td>Power / price</td><td>200 W, $799</td><td>300 W</td><td class="p150">300 W</td><td>~12 kW <span class="tag analyst">Flopper</span>, from $110k</td></tr>
+<tr><td>Power / price</td><td>200 W, $799</td><td>300 W</td><td class="p150">300 W</td><td>~12 kW <span class="tag analyst">Flopper</span>, from $110k <span class="tag vendor">Vendor</span></td></tr>
 </table></div>
-<p style="font-size:14px;color:var(--muted)">Figures are <span class="tag vendor">Vendor</span> unless tagged otherwise, mostly from search extracts of spec pages and tt-metal / tt-isa-documentation on GitHub. A February 2026 firmware update cut the published p150 from 140 to 120 cores, 210 to 180 MB SRAM and 774 to 664 TFLOPS. Tenstorrent says this costs 1–2% performance. The ISA documentation still lists 140 Tensix tiles on a p150 board. "BlockFP8" is a block-floating-point format (see the glossary). It is not the FP8 E4M3 format used on GPUs.</p>
+<p style="font-size:14px;color:var(--muted)">Figures are <span class="tag vendor">Vendor</span> unless tagged otherwise, mostly from search extracts of spec pages and tt-metal / tt-isa-documentation on GitHub. A February 2026 firmware update cut the published p150 from 140 to 120 cores, 210 to 180 MB SRAM and 774 to 664 TFLOPS. Tenstorrent says this costs 1–2% performance. The ISA documentation still lists 140 Tensix tiles on a p150 board. "BlockFP8" is a block-floating-point format, defined below in <a href="#tensix">Inside a Tensix core</a> (glossary: <a href="appendix-a-glossary.html#g-blockfp8">BlockFP8</a>). It is not the FP8 E4M3 format used on GPUs.</p>
 
 <div class="callout key">
-<p><strong>The peaks follow one formula.</strong> A Tensix matrix engine computes an 8×16 · 16×16 product every cycle: 2 × 8 × 16 × 16 = 4,096 FLOP per cycle per core at the lowest fidelity (LoFi) <span class="tag vendor">tt-metal matrix_engine / GEMM_FLOPS reports</span>. Blackhole runs at 1.35 GHz <span class="tag vendor">GEMM_FLOPS</span>.</p>
+<p><strong>The peaks follow one formula.</strong> A Tensix matrix engine computes an 8×16 · 16×16 product every cycle: 2 × 8 × 16 × 16 = 4,096 FLOP per cycle per core at the lowest <a href="appendix-a-glossary.html#g-fidelity-lofi-hifi2-4">fidelity</a> (LoFi; fidelity and the BlockFP8/BFP4 formats are explained in <a href="#tensix">Inside a Tensix core</a>) <span class="tag vendor">tt-metal matrix_engine / GEMM_FLOPS reports</span>. Blackhole runs at 1.35 GHz <span class="tag vendor">GEMM_FLOPS</span>.</p>
 <ul>
 <li>140 cores × 4,096 × 1.35 GHz = <b>774 TF</b>, the launch p150 figure <span class="tag derived">Derived</span>.</li>
 <li>120 cores × 4,096 × 1.35 GHz = <b>664 TF</b>, the figure after the firmware update <span class="tag derived">Derived</span>.</li>
 <li>The Hot Chips 2024 figure of 745 TF equals 140 cores at 1.30 GHz. That is consistent with an earlier clock target, but this is our inference <span class="tag derived">Derived</span>.</li>
 <li>HiFi2 halves the rate and HiFi4 quarters it: 332 TF and 166 TF on 120 cores <span class="tag derived">Derived</span>.</li>
-<li>A tuned BFP4 / LoFi matmul measured 581 TF on a 13 × 10 grid. That is 81% of the 130-core peak <span class="tag vendor">vendor-measured, GEMM_FLOPS</span>.</li>
+<li>A tuned BFP4 / LoFi matmul (5120 × 6656 × 6656) measured about <b>640 TF</b> on a 13 × 10 grid, run before the 2026 core cut. That is about 89% of the 130-core LoFi peak, 130 × 4,096 × 1.35 GHz = 719 TF <span class="tag vendor">vendor-measured, GEMM_FLOPS table</span>. (The report's prose quotes an earlier 581 TF, 81%.)</li>
 <li>Galaxy: 32 × 745–774 TF = 23.8–24.8 PF, so the 23–24 PF figures predate the core cut <span class="tag derived">Derived</span>.</li>
 </ul>
 <p>The Wormhole and Grayskull marketing peaks do not fit this formula cleanly. For example, 128 × 4,096 × 1 GHz = 524 TF, not 466 TF. We leave them as published.</p>
 </div>
 
 <h2 id="noc-grid">The chip: a grid on two tori</h2>
-<p>A Blackhole die is a 17 × 12 grid of <em>tiles</em> (grid locations). There are 140 Tensix tiles, 24 DRAM tiles (each group of three shares one 4 GiB GDDR6 channel), 14 Ethernet tiles, 2 PCIe tiles, 4 L2CPU tiles (each a cluster of four 64-bit SiFive x280 cores that can run Linux), and one ARC and one security tile <span class="tag vendor">ISA docs, BlackholeA0</span> <span class="tag vendor">tt-metal SoC descriptor</span>. Every tile has a router on each of two <strong>networks-on-chip (NoCs)</strong>. Each NoC is a 2-D <em>torus</em>: the left and right edges, and the top and bottom edges, are wired together. NoC 0 only flows right and down. NoC 1 connects the same tiles but only flows left and up <span class="tag vendor">ISA docs, RoutingPaths</span>.</p>
+<p>A Blackhole die is a 17 × 12 grid of <em>tiles</em> (grid locations). There are 140 Tensix tiles, 24 DRAM tiles (each group of three shares one 4 GiB GDDR6 channel), 14 Ethernet tiles, 2 PCIe tiles, 4 L2CPU tiles (each a cluster of four 64-bit SiFive x280 cores that can run Linux), and one ARC and one security tile <span class="tag vendor">ISA docs, BlackholeA0</span> <span class="tag vendor">tt-metal SoC descriptor</span>. Every tile has a router on each of two <strong>networks-on-chip (<a href="appendix-a-glossary.html#g-noc-tenstorrent">NoCs</a>)</strong>. Each NoC is a 2-D <em>torus</em>: the left and right edges, and the top and bottom edges, are wired together. NoC 0 only flows right and down. NoC 1 connects the same tiles but only flows left and up <span class="tag vendor">ISA docs, RoutingPaths</span>.</p>
 <ul>
 <li><strong>Routing is fixed by the addresses.</strong> On NoC 0 a packet travels right, turns at most once, then travels down. On NoC 1 it travels up first, then left. Routers are cut-through ("wormhole switching"). Two packets only contend if they need the same link; crossing inside a router is free <span class="tag vendor">ISA docs</span>.</li>
 <li><strong>Packets and flits.</strong> A packet is one header flit plus up to 256 data flits. A Blackhole flit is 64 B, so a packet carries up to 16 KiB; Wormhole flits are 32 B, so its packets carry up to 8 KiB. The NoC clock went from 1 GHz to 1.35 GHz <span class="tag vendor">ISA docs, BlackholeA0 NoC</span>.</li>
-<li><strong>Cost per hop.</strong> A router-to-router hop takes 9 cycles, and the NIU (network interface unit) to router step about 5 cycles at each end. Each link carries one flit per cycle <span class="tag vendor">ISA docs</span>. That is 64 B × 1.35 GHz ≈ <b>86 GB/s</b> per link per NoC on Blackhole, against 32 GB/s on Wormhole <span class="tag derived">Derived</span>.</li>
-<li><strong>Multicast.</strong> A write or an atomic can target a <em>rectangle</em> of Tensix tiles; other tile types opt out. The packet follows a tree: along the major axis, then the minor axis, then along the major axis again. Broadcast packets have their own virtual-channel class, so they cannot deadlock against unicasts <span class="tag vendor">ISA docs</span>.</li>
+<li><strong>Cost per hop.</strong> A router-to-router hop takes 9 cycles, and the <a href="appendix-a-glossary.html#g-niu">NIU</a> (network interface unit) to router step about 5 cycles at each end. Each link carries one flit per cycle <span class="tag vendor">ISA docs</span>. That is 64 B × 1.35 GHz ≈ <b>86 GB/s</b> per link per NoC on Blackhole, against 32 GB/s on Wormhole <span class="tag derived">Derived</span>.</li>
+<li><strong>Multicast.</strong> A write or an atomic can target a <em>rectangle</em> of Tensix tiles; other tile types opt out. The packet follows a tree: along the major axis, then the minor axis, then along the major axis again. Broadcast packets have their own <a href="appendix-a-glossary.html#g-virtual-channel">virtual-channel</a> class, so they cannot deadlock against unicasts <span class="tag vendor">ISA docs</span>. A virtual channel is a separate set of buffers on the same physical link, so traffic in one channel cannot block another; it is roughly what a Cerebras <a href="04-fabric.html#route-register">color</a> gives you on the wafer (<a href="04-fabric.html">Chapter 4</a>).</li>
 </ul>
 
 <div class="widget" id="chip">
@@ -90,7 +90,7 @@
 <svg id="chip-svg" viewBox="0 0 760 470" width="760" role="img" aria-label="Blackhole NoC grid with routes"></svg>
 <div class="readout" id="chip-out"></div>
 </div>
-<p>Since 2026 the firmware enables 120 of the 140 Tensix tiles <span class="tag vendor">Vendor</span>. The diagram does not show which 20 are switched off, because that is not documented. Chips with defective cores are "harvested" in the same way: the bad rows or columns are fused off and software sees a smaller grid. The tt-metal GEMM benchmark ran on a 13 × 10 compute grid <span class="tag vendor">GEMM_FLOPS</span>.</p>
+<p>Since 2026 the firmware enables 120 of the 140 Tensix tiles <span class="tag vendor">Vendor</span>. The diagram does not show which 20 are switched off, because that is not documented. Chips with defective cores are "<a href="appendix-a-glossary.html#g-grid-tile-harvesting">harvested</a>" in the same way: the bad rows or columns are fused off and software sees a smaller grid. The tt-metal GEMM benchmark ran on a 13 × 10 compute grid (130 cores, run before the 2026 core cut) <span class="tag vendor">GEMM_FLOPS</span>.</p>
 
 <div class="callout">
 <p><strong>"Tile" means two things.</strong> Tenstorrent documents use it both for a 32 × 32 block of data and for a grid location on the chip (Tensix tile, DRAM tile). From here on, this chapter says <em>core</em> or <em>grid tile</em> for the location and <em>tile</em> for the data block.</p>
@@ -142,16 +142,17 @@
 <li><strong>Everything is a 32 × 32 tile.</strong> A BF16 tile is 2,048 bytes. In memory it is stored as four 16 × 16 <em>faces</em>, face 0 to face 3, each in row-major order, because the engine works on 16 × 16 faces <span class="tag vendor">tensor_layouts report</span>. Tensors are padded up to tile boundaries, so a 48 × 1024 matrix is stored as 64 × 1024 <span class="tag vendor">METALIUM_GUIDE</span>. Tilize and untilize run on the device.</li>
 <li><strong>Registers.</strong> SrcA and SrcB each hold 2 banks × 64 rows × 16 columns of 19-bit data. The unpackers fill one bank while the FPU reads the other. Dst holds 1,024 rows × 16 columns of 16-bit data, or 512 rows of 32-bit data <span class="tag vendor">ISA docs</span>. That is 16 BF16 tiles. In the default half-sync mode, Math fills one half (8 BF16 tiles, or 4 FP32 tiles) while Pack drains the other <span class="tag vendor">matrix_engine; LLM report (Wormhole)</span>. The Dst size therefore caps how many output tiles a kernel can accumulate before it packs them.</li>
 <li><strong>Two engines.</strong> The matrix FPU does matmul, reduction and element-wise ops directly on SrcA/SrcB. The 32-lane FP32 SFPU does transcendental and other element-wise functions, and it works on data in Dst <span class="tag vendor">METALIUM_GUIDE</span>. An operand smaller than 8 rows wastes the FPU: a 1 × 16 input still costs a full 8 × 16 cycle, so it runs at 1/8 of the rate <span class="tag vendor">matrix_engine</span>.</li>
-<li><strong>Fidelity.</strong> The multipliers are 5-bit × 7-bit. LoFi uses the hidden bit plus the top 4 mantissa bits of SrcA and the top 6 of SrcB. HiFi2, HiFi3 and HiFi4 make 2, 3 or 4 passes over different mantissa slices, at 16, 32, 48 or 64 cycles per tile <span class="tag vendor">matrix_engine, GEMM_FLOPS</span>.</li>
-<li><strong>Block floating point.</strong> bfloat8_b, bfloat4_b and bfloat2_b store one shared 8-bit exponent per 16 values, rounding to nearest-even after normalising to the shared exponent <span class="tag vendor">data_formats report</span>. A bfloat8_b tile is therefore 1,024 B of sign+mantissa plus 64 B of exponents = <b>1,088 B</b>, about half a BF16 tile <span class="tag derived">Derived</span>. Decode is limited by reading weights, so this halving matters directly.</li>
+<li><strong><a href="appendix-a-glossary.html#g-fidelity-lofi-hifi2-4">Fidelity</a>.</strong> The multipliers are 5-bit × 7-bit. LoFi uses the hidden bit plus the top 4 mantissa bits of SrcA and the top 6 of SrcB. HiFi2, HiFi3 and HiFi4 make 2, 3 or 4 passes over different mantissa slices, at 16, 32, 48 or 64 cycles per tile <span class="tag vendor">matrix_engine, GEMM_FLOPS</span>. <em>Worked example.</em> A BF16 value has 8 significant bits: the hidden bit plus 7 stored. LoFi multiplies 5 of SrcA's 8 bits by 7 of SrcB's, so it drops SrcA's low 3 bits and SrcB's lowest bit. Split SrcA into a 5-bit and a 3-bit slice and SrcB into a 7-bit and a 1-bit slice, and the full product is 2 × 2 = 4 partial products. Each pass computes one of them and adds it in, so the exact BF16 × BF16 product needs 4 passes, and HiFi4 costs 4 × LoFi's 16 cycles <span class="tag derived">Derived</span>.</li>
+<li><strong>Block floating point (<a href="appendix-a-glossary.html#g-blockfp8">BlockFP8</a>, BFP).</strong> bfloat8_b, bfloat4_b and bfloat2_b store one shared 8-bit exponent per 16 values, rounding to nearest-even after normalising to the shared exponent <span class="tag vendor">data_formats report</span>. A bfloat8_b tile is therefore 1,024 B of sign+mantissa plus 64 B of exponents = <b>1,088 B</b>, about half a BF16 tile <span class="tag derived">Derived</span>. Decode is limited by reading weights, so this halving matters directly.</li>
 </ul>
 
 <div class="callout">
 <p><strong>Glossary for reading Tenstorrent material</strong></p>
 <dl class="gl">
 <dt>NoC, NIU, flit</dt><dd>On-chip network; the network interface unit in each grid tile that turns reads and writes into packets; a flit is the 32 B (WH) or 64 B (BH) unit that crosses one link per cycle.</dd>
-<dt>CB (circular buffer)</dt><dd>A FIFO of fixed-size pages in L1 with producer and consumer counters. There are up to 32 per core on Wormhole and 64 on Blackhole <span class="tag vendor">tt-metal circular_buffer_constants.h</span>. Index c_0 is usually the first input and c_16 the output. tt-metal plans to replace CBs with "dataflow buffers".</dd>
+<dt><a href="appendix-a-glossary.html#g-circular-buffer-cb">CB (circular buffer)</a></dt><dd>A FIFO of fixed-size pages in L1 with producer and consumer counters. There are up to 32 per core on Wormhole and 64 on Blackhole <span class="tag vendor">tt-metal circular_buffer_constants.h</span>. Index c_0 is usually the first input and c_16 the output. tt-metal plans to replace CBs with "dataflow buffers".</dd>
 <dt>Unpack / pack</dt><dd>Unpackers copy tiles from L1 into SrcA/SrcB, converting the format on the way. Packers write Dst back to L1 and convert to the output format.</dd>
+<dt>BFP8 / BFP4 (bfloat8_b, bfloat4_b)</dt><dd>Block floating point: 16 values share one 8-bit exponent, so a BFP8 tile is 1,088 B instead of 2,048 B. "BlockFP8" in spec sheets means this format, not GPU FP8 (App A, <a href="appendix-a-glossary.html#g-blockfp8">BlockFP8</a>).</dd>
 <dt>Interleaved / sharded</dt><dd>Interleaved: a tensor's pages are spread round-robin across all banks. Sharded: each core or bank owns one contiguous piece. See the layout section below.</dd>
 <dt>Software stack</dt><dd>TT-Metalium is the low-level C++ kernel and host API. TT-NN is a Python/C++ op library on top of it. TT-Forge and other compilers sit above TT-NN <span class="tag vendor">tt-metal README</span>. Most users never write kernels.</dd>
 </dl>
@@ -175,7 +176,7 @@
 <h2 id="programming">Programming: reader, compute, writer</h2>
 <p>TT-Metalium is an open-source C++ host API in the style of OpenCL. A typical operation runs three kernels per core:</p>
 <ul>
-<li>a <strong>reader</strong> on BRISC that pulls tiles from DRAM or from other cores into circular buffers;</li>
+<li>a <strong>reader</strong> on <a href="appendix-a-glossary.html#g-brisc-ncrisc-trisc">BRISC</a> that pulls tiles from DRAM or from other cores into circular buffers;</li>
 <li>a <strong>compute</strong> kernel, compiled into the three TRISC binaries, that consumes input CBs and fills output CBs;</li>
 <li>a <strong>writer</strong> on NCRISC that pushes results out.</li>
 </ul>
@@ -268,7 +269,7 @@ CreateKernel(program, <span class="s">"writer.cpp"</span>,  all_cores, DataMovem
   }
 <span class="c">// A core that has a kernel but no runtime args is undefined behaviour (the guide's warning).</span></code></pre></div>
 
-<p>The handshake is the same in every kernel. The producer calls <code>cb_reserve_back</code>, writes, then <code>cb_push_back</code>; the consumer calls <code>cb_wait_front</code>, reads, then <code>cb_pop_front</code>. A slot becomes free only when the consumer <em>pops</em> it, which is after the consumer has finished with the tile. With one slot, the reader therefore cannot fetch tile k+1 while compute is still working on tile k. With two slots it can. That is double buffering, and it is why CBs are usually sized for two tiles <span class="tag vendor">METALIUM_GUIDE</span>.</p>
+<p>The handshake is the same in every kernel. The producer calls <code>cb_reserve_back</code>, writes, then <code>cb_push_back</code>; the consumer calls <code>cb_wait_front</code>, reads, then <code>cb_pop_front</code>. A slot becomes free only when the consumer <em>pops</em> it, which is after the consumer has finished with the tile. With one slot, the reader therefore cannot fetch tile k+1 while compute is still working on tile k. With two slots it can. That is double buffering, and it is why CBs are usually sized for two tiles <span class="tag vendor">METALIUM_GUIDE</span>. On the wafer you never count slots: a CSL program gets the same overlap from the router's hardware input queues and <a href="04-fabric.html#back-pressure">back-pressure</a> (<a href="appendix-a-glossary.html#g-back-pressure">glossary</a>), with depths fixed by the SDK (memcpy.csl gives queues 0–1 / 2–3 / 4–7 depths of 6 / 4 / 2 <span class="tag sdk">SDK</span>), and from a <a href="06-dsds.html#fifos">CSL FIFO</a> when it needs a deeper buffer in memory.</p>
 
 <div class="widget" id="cb">
 <h4>Circular buffers and double buffering</h4>
@@ -282,10 +283,11 @@ CreateKernel(program, <span class="s">"writer.cpp"</span>,  all_cores, DataMovem
 </div>
 <svg id="cb-svg" viewBox="0 0 680 250" width="680" role="img" aria-label="Pipeline timeline"></svg>
 <div class="readout" id="cb-out"></div>
+<p class="hint" style="margin:8px 0 0">The compute bar hides a second pipeline of the same kind. Inside it, TRISC0 (unpack), TRISC1 (math) and TRISC2 (pack) overlap on consecutive tiles, handing off through the two halves of Dst (half-sync) rather than through a CB. That inner overlap is why the stepper above ends with all five cores busy at once.</p>
 </div>
 
 <h2 id="multicast">Moving tiles between cores: multicast and semaphores</h2>
-<p>A NoC transfer is asynchronous. A receiving core cannot tell that data has arrived unless it is told, and Tenstorrent has no data-triggered tasks to do that. Kernels synchronise through <strong>semaphores</strong>, which are words in L1 updated by NoC atomics. The multicast matmul reader in tt-metal shows the full pattern, simplified here to one operand <span class="tag vendor">tt-metal reader_bmm_tile_layout_in0_sender/receiver</span>:</p>
+<p>A NoC transfer is asynchronous. A receiving core cannot tell that data has arrived unless it is told, and Tenstorrent has no data-triggered tasks to do that. Kernels synchronise through <strong><a href="appendix-a-glossary.html#g-semaphore-l1">semaphores</a></strong>, which are words in L1 updated by NoC atomics. The multicast matmul reader in tt-metal shows the full pattern, simplified here to one operand <span class="tag vendor">tt-metal reader_bmm_tile_layout_in0_sender/receiver</span>:</p>
 <div class="grid2">
 <div><div class="filename">sender (left-column core)</div>
 <pre><code>cb_reserve_back(cb_in0, block_tiles);
@@ -316,7 +318,7 @@ cb_push_back(cb_in0, block_tiles);
 <span class="c">// compute now sees the block in its CB,</span>
 <span class="c">// at the same L1 address on every core</span></code></pre></div>
 </div>
-<p>The Blackhole-only <code>noc_async_writes_flushed()</code> is there because Blackhole puts the two multicasts in separate command FIFOs, so they could otherwise leave out of order and the flag could arrive before the data <span class="tag vendor">tt-metal source comment</span>. Compare this with Cerebras: a wavelet's color decides its route at compile time, and its arrival <em>is</em> the signal that starts a task (Chapters 4 and 5). On Tenstorrent each packet carries its destination address, and "the data is here" is a separate flag that you write yourself.</p>
+<p>The Blackhole-only <code>noc_async_writes_flushed()</code> is there because Blackhole puts the two multicasts in separate command FIFOs, so they could otherwise leave out of order and the flag could arrive before the data <span class="tag vendor">tt-metal source comment</span>. Compare this with Cerebras: a wavelet's <a href="appendix-a-glossary.html#g-color">color</a> selects a route that is configured at compile time (and can be switched at runtime by <a href="04-fabric.html#runtime">control wavelets</a>), and its arrival <em>is</em> the signal that starts a task (<a href="04-fabric.html#routes">Chapter 4</a> and <a href="05-tasks.html#activates">Chapter 5</a>). On Tenstorrent each packet carries its destination address, and "the data is here" is a separate flag that you write yourself.</p>
 
 <h2 id="matmul">Anatomy of a matmul</h2>
 <p>The general-purpose TT-NN matmul ("matmul 2D", <code>MatmulMultiCoreReuseMultiCastProgramConfig</code>) maps the output C = A·B onto a <code>cores_x × cores_y</code> grid <span class="tag vendor">tt-metal LLM report §4.3.2</span>:</p>
@@ -324,13 +326,13 @@ cb_push_back(cb_in0, block_tiles);
 <li>M is split over <code>cores_y</code> and N over <code>cores_x</code>. Each core owns <code>per_core_M = ⌈M/32/cores_y⌉</code> × <code>per_core_N = ⌈N/32/cores_x⌉</code> output tiles.</li>
 <li>K is streamed in blocks of <code>in0_block_w</code> tiles.</li>
 <li>Outputs are accumulated in sub-blocks of <code>out_subblock_h × out_subblock_w</code> tiles. That product must fit in the Dst half: 8 tiles in BF16, 4 in FP32.</li>
-<li>The left-column core of each row reads that row's A block from DRAM and <strong>multicasts</strong> it across the row. The top-row core of each column reads the B block and multicasts it down the column. Each operand therefore leaves DRAM once per row or column, not once per core. The program uses four reader variants (sender or receiver for each operand) and four semaphores <span class="tag vendor">matmul_multicore_reuse_mcast</span>. In effect this is a systolic array built in software.</li>
+<li>The left-column core of each row reads that row's A block from DRAM and <strong><a href="appendix-a-glossary.html#g-multicast">multicasts</a></strong> it across the row. The top-row core of each column reads the B block and multicasts it down the column. Each operand therefore leaves DRAM once per row or column, not once per core. The program uses four reader variants (sender or receiver for each operand) and four semaphores <span class="tag vendor">matmul_multicore_reuse_mcast</span>. In effect this is a systolic array built in software, and it is the <a href="appendix-a-glossary.html#g-summa">SUMMA</a> dataflow: row broadcast of A, column broadcast of B, local multiply-accumulate. <a href="14-lab-gemm.html#summa">Lab 4</a> builds the same algorithm on the wafer with <code>&lt;collectives_2d&gt;</code> broadcasts, and measured the fabric at only about 1.5–3% of each step <span class="tag measured">Measured, Lab 4</span>, so there, as here, the inner multiply loop decides how close you get to peak.</li>
 </ul>
 <p>The other two LLM variants are matmul 1D, which parallelises over N only and multicasts the width-sharded activation, and the DRAM-sharded matmul used for decode, covered in the next section <span class="tag vendor">LLM report</span>.</p>
 
 <div class="widget" id="mm">
 <h4>Map a matmul onto the grid</h4>
-<p class="hint">Pick a problem and a grid. Click a core to see its output block. The K-step slider moves the block of K that is in flight: the left column multicasts A across rows (orange) and the top row multicasts B down columns (blue). The numbers use the GEMM_FLOPS ideal-cycle formula, BF16 tiles and <code>in0_block_w = 2</code>.</p>
+<p class="hint">Pick a problem and a grid. Click a core to see its output block. The K-step slider moves the block of K that is in flight: the left column multicasts A across rows (orange) and the top row multicasts B down columns (blue). The numbers use the GEMM_FLOPS ideal-cycle formula, BF16 tiles and <code>in0_block_w = 2</code>. Ideal cycles are divided over the cores that actually have work (for example M = 256 on 13 × 10 fills only 8 rows, 104 cores), not over the whole grid.</p>
 <div class="controls">
 <label>M <select id="mm-m"><option>256</option><option>1024</option><option selected>2048</option><option>4096</option><option>8192</option></select></label>
 <label>K <select id="mm-k"><option>1024</option><option selected>2048</option><option>4096</option><option>8192</option></select></label>
@@ -342,7 +344,8 @@ cb_push_back(cb_in0, block_tiles);
 <svg id="mm-svg" viewBox="0 0 760 420" width="760" role="img" aria-label="Matmul grid mapping"></svg>
 <div class="readout" id="mm-out"></div>
 </div>
-<p>On tuned matmuls Tenstorrent measured about 190 TFLOPS on Wormhole n150 and about 580 TFLOPS on Blackhole p150. Peak utilisation was 93% on Wormhole and 96% on Blackhole, and BFP8 at HiFi2 ran 1.5–1.8× faster than BF16 at HiFi4 <span class="tag vendor">vendor-measured, GEMM_FLOPS</span>.</p>
+<p>On tuned matmuls Tenstorrent measured about 190 TFLOPS on Wormhole n150 and about 580 TFLOPS on Blackhole p150 in the report's prose, with the current table reaching about 640 TF (BFP4, LoFi) on Blackhole. Peak utilisation was 93% on Wormhole and 96% on Blackhole, and BFP8 at HiFi2 ran 1.5–1.8× faster than BF16 at HiFi4 <span class="tag vendor">vendor-measured, GEMM_FLOPS</span>. Read the utilisation carefully: GEMM_FLOPS defines it as ideal cycles ÷ actual cycles <em>at the run's own fidelity</em>. The highest utilisations (about 95% in the current table) are HiFi4 runs at roughly 160 TF, close to the HiFi4 peak, not to the 719 TF LoFi peak; the fastest LoFi run is about 89% of the LoFi peak.</p>
+<p style="font-size:14px;color:var(--muted)">See also: <a href="14-lab-gemm.html">Lab 4</a> (SUMMA on the wafer, measured) and <a href="17-gpu.html#tiling">Chapter 17</a> (the same tiling on a GPU).</p>
 
 <h2 id="sharding">Where tensors live: interleaved and sharded</h2>
 <p>A TT-NN tensor is a 2-D buffer of <em>pages</em>. A page is one row (row-major layout) or one 32 × 32 tile (tiled layout). It lives in DRAM or in L1, and its pages are either <strong>interleaved</strong> or <strong>sharded</strong> <span class="tag vendor">tensor_layouts report</span>.</p>
@@ -368,18 +371,18 @@ cb_push_back(cb_in0, block_tiles);
 <p><strong>Why decode keeps its weights DRAM-sharded.</strong> In decode, a batch of up to 32 users each contributes one token, so the activations are a single 32-row tile height. The matmuls are bound by how fast they can read weights <span class="tag vendor">LLM report</span>. With interleaved weights, every core reads from every bank and the routes cross the whole NoC and collide. The DRAM-sharded matmul instead splits the weights by width across the banks. It places one reader core next to each bank, so each response travels one hop, and gives readers in the same row different virtual channels. On Wormhole this reached 267 of 288 GB/s (92%) in a microbenchmark and 239–260 GB/s (82–90%) in Llama-3-70B and Mixtral decode matmuls <span class="tag vendor">vendor-measured, Saturating_DRAM_bandwidth</span>. Try the two presets in the floorplan widget to see the same effect on Blackhole. The decode recipe is: activations width-sharded in L1, weights width-sharded in DRAM, weights in BFP8 or BFP4 <span class="tag vendor">LLM report</span>.</p>
 
 <h2 id="scale-out">Scaling out: from NoC to fabric</h2>
-<p>Off the chip, Tenstorrent uses standard Ethernet, and the chips themselves act as the switches. <strong>TT-Fabric</strong> is firmware running on the Ethernet grid tiles' RISC-V cores. It turns NoC reads and writes into packets that are carried to another chip and executed there, so a remote write looks like a NoC write with a longer address (mesh ID, device ID, NoC x/y, offset) <span class="tag vendor">TT-Fabric report</span>.</p>
+<p>Off the chip, Tenstorrent uses standard Ethernet, and the chips themselves act as the switches. <strong><a href="appendix-a-glossary.html#g-tt-fabric-ccl">TT-Fabric</a></strong> is firmware running on the Ethernet grid tiles' RISC-V cores. It turns NoC reads and writes into packets that are carried to another chip and executed there, so a remote write looks like a NoC write with a longer address (mesh ID, device ID, NoC x/y, offset) <span class="tag vendor">TT-Fabric report</span>.</p>
 <ul>
-<li><strong>Reliability.</strong> The link layer adds a header with sequence numbers and resends lost frames (Go-Back-N), so the layers above never see CRC errors.</li>
+<li><strong>Reliability.</strong> The link layer adds a header with sequence numbers and resends lost frames (Go-Back-N: after a lost frame the sender rewinds and resends that frame and every frame after it), so the layers above never see CRC errors.</li>
 <li><strong>Routing.</strong> Inside a mesh, packets are source-routed. At each mesh boundary, the entry router writes a new route for the next mesh.</li>
-<li><strong>Deadlock.</strong> Rings and tori use bubble flow control to avoid deadlock.</li>
+<li><strong>Deadlock.</strong> Rings and tori use bubble flow control to avoid deadlock: a packet may enter a ring only if at least one buffer slot (the "bubble") stays free afterwards, so the ring can never fill completely and lock up.</li>
 <li><strong>Routing planes.</strong> Wormhole has 4 Ethernet links per direction and Blackhole has 2. Each set forms its own routing plane.</li>
 <li><strong>Scale.</strong> The design targets up to 1,024 meshes of 256 devices <span class="tag vendor">TT-Fabric report</span>.</li>
 </ul>
-<p>Link line rate is 12.5 GB/s per direction on Wormhole (100 GbE) and 50 GB/s on Blackhole (400 GbE). The measured per-hop latency is 711 ns on Wormhole and 515 ns on Blackhole for the 1-D fabric <span class="tag vendor">vendor-measured, CCL bandwidth report</span>. These links are about 7× slower than one on-chip NoC link and about 10× slower than a chip's DRAM <span class="tag derived">Derived</span>, so how you split a model across chips matters a great deal.</p>
+<p>Link line rate is 12.5 GB/s per direction on Wormhole (100 GbE) and 50 GB/s on Blackhole (400 GbE). The measured per-hop latency is 711 ns on Wormhole and 515 ns on Blackhole for the 1-D fabric <span class="tag vendor">vendor-measured, CCL bandwidth report</span>. Chip by chip, a Blackhole Ethernet link carries about 1.7× less than one on-chip NoC link (86 GB/s) and about 10× less than the chip's DRAM (512 GB/s); on Wormhole the ratios are about 2.6× (NoC link 32 GB/s) and 23× (DRAM 288 GB/s) <span class="tag derived">Derived</span>. The much larger gap is latency: 515–711 ns per Ethernet hop against one 9-cycle NoC hop, about 7 ns on Blackhole at 1.35 GHz and 9 ns on Wormhole at 1 GHz, so roughly <b>80×</b> per hop <span class="tag derived">Derived</span>. Every collective between chips pays that latency at each step, which is why how you split a model across chips matters a great deal.</p>
 
 <h2 id="70b">70B on 32 chips</h2>
-<p>A Wormhole Galaxy ("TG") is an 8 × 4 mesh of 32 chips, with four Ethernet links between neighbouring chips <span class="tag vendor">Programming Mesh of Devices report</span>. Collectives can use 4 links along mesh axis 0 and 3 along axis 1 <span class="tag vendor">LLM report §3.3.1</span>. On TG, all five Llama matmuls (QKV, dense-out, FF1, FF2, FF3) use <strong>2-D weight fracturing</strong>. For FF1 and FF3, each chip holds a [K/4, N/8] block of the weight, and the partial sums are all-reduced across the 4 chips of axis 1. FF2 is the transpose: [K/8, N/4], all-reduced along axis 0 <span class="tag vendor">LLM report §2.5.5, §3.3.10</span>. The Llama 3.3 70B Galaxy demo runs in BFP8 <span class="tag vendor">llama3_70b_galaxy README</span>. On a torus-cabled Galaxy, its collectives use rings by default. On Blackhole Galaxy, the related demos select a 2-D torus fabric and address the box as the same "TG" mesh <span class="tag vendor">llama3_70b_galaxy README</span>.</p>
+<p>A Wormhole Galaxy ("TG") is an 8 × 4 mesh of 32 chips, with four Ethernet links between neighbouring chips <span class="tag vendor">Programming Mesh of Devices report</span>. Collectives can use 4 links along mesh axis 0 and 3 along axis 1 <span class="tag vendor">LLM report §3.3.1</span>. On TG, all five Llama matmuls (QKV, dense-out, FF1, FF2, FF3) use <strong>2-D weight fracturing</strong>. For FF1 and FF3, each chip holds a [K/4, N/8] block of the weight, and the partial sums are <a href="appendix-a-glossary.html#g-allreduce">all-reduced</a> across the 4 chips of axis 1. FF2 is the transpose: [K/8, N/4], all-reduced along axis 0 <span class="tag vendor">LLM report §2.5.5, §3.3.10</span>. The Llama 3.3 70B Galaxy demo runs in BFP8 <span class="tag vendor">llama3_70b_galaxy README</span>. On a torus-cabled Galaxy, its collectives use rings by default. On Blackhole Galaxy, the related demos select a 2-D torus fabric and address the box as the same "TG" mesh <span class="tag vendor">llama3_70b_galaxy README</span>.</p>
 <div class="widget" id="gal">
 <h4>Llama-3 70B weights on an 8 × 4 Galaxy</h4>
 <p class="hint">Click a chip to see which block of the weight it holds; the chips that join its all-reduce light up. Switch to four replicas to see the throughput layout.</p>
@@ -393,10 +396,11 @@ cb_push_back(cb_in0, block_tiles);
 </div>
 <div class="table-wrap"><table>
 <tr><th>Same box, two layouts</th><th>Batch</th><th>tok/s per user</th><th>tok/s total</th></tr>
-<tr><td>Llama 3.3 70B, one replica, TP = 32 (128-token input; target 80 t/s/u; TTFT 53 ms)</td><td>32</td><td>72.5</td><td>2,269</td></tr>
-<tr><td>Llama 3.1 70B, four replicas, TP = 8 on 2 × 4 submeshes</td><td>128</td><td>14.3</td><td>1,836</td></tr>
+<tr><td>Llama 3.3 70B, one replica, <a href="appendix-a-glossary.html#g-tp-pp-dp">TP</a> = 32 (128-token input; target 80 t/s/u; <a href="appendix-a-glossary.html#g-ttft">TTFT</a> 53 ms)</td><td>32</td><td>72.5</td><td>2,269*</td></tr>
+<tr><td>Llama 3.1 70B, four replicas (data-parallel copies, the DP of <a href="appendix-a-glossary.html#g-tp-pp-dp">TP/PP/DP</a>), TP = 8 on 2 × 4 submeshes</td><td>128</td><td>14.3</td><td>1,836</td></tr>
 </table></div>
-<p style="font-size:14px;color:var(--muted)">Both rows are Wormhole Galaxy, <span class="tag vendor">vendor-measured</span> (tt-metal README v0.65.0-rc7 table; Programming Mesh of Devices §8.2), from different software releases. Tensor parallelism buys speed per user; replicas over submeshes buy throughput.</p>
+<p style="font-size:14px;color:var(--muted)">Both rows are Wormhole Galaxy, <span class="tag vendor">vendor-measured</span> (tt-metal README v0.65.0-rc7 table; Programming Mesh of Devices §8.2), from different software releases. Tensor parallelism buys speed per user; replicas over submeshes buy throughput. *The README defines total = per-user × batch, but 72.5 × 32 = 2,320; its own 2,268.8 implies about 70.9 t/s/u, so treat the two cells as rounded vendor figures <span class="tag derived">Derived</span>.</p>
+<p>The all-reduce in the widget is where the chip boundary shows. For FF1 it moves about 170 KiB per chip over 3 links, about 5 µs, plus ~0.7 µs per Ethernet hop <span class="tag derived">Derived</span>. On the wafer there is no chip boundary: a router hop costs 2.0 cycles on WSE-3 <span class="tag measured">Measured, Ch 4</span>, about 2.4 ns at the SDK's 850 MHz, some 250× less than an Ethernet hop <span class="tag derived">Derived</span>. The wafer's collectives are not free, though. <a href="15-lab-cg.html#allreduce">Lab 5</a> measured its allreduce at about 958 + 100·W + 88·H cycles for two calls; on a 16 × 16 grid that is about 2,000 cycles per call, ≈ 2.3 µs at 850 MHz for 256 participants <span class="tag derived">Derived from Lab 5's fit</span>, because each contributing PE pays its own send and add. So the wafer reduces 64× more participants in about half the time, and its cost is software steps per PE rather than wire latency.</p>
 
 <div class="callout key">
 <p><strong>Back-of-envelope: the decode ceiling</strong> <span class="tag derived">Derived</span></p>
@@ -406,14 +410,23 @@ cb_push_back(cb_in0, block_tiles);
 <li>Blackhole Galaxy: 16 TB/s / 32 = 512 GB/s per chip, which gives a ceiling of about 220 tok/s per user.</li>
 <li>BFP4 for some MLP weights raises both ceilings.</li>
 </ul>
-<p>This is the memory wall from Chapter 1 again: "decode is bound by time to read model weights from DRAM" <span class="tag vendor">LLM report</span>.</p>
+<p>This is the memory wall from <a href="01-memory-wall.html#decode">Chapter 1</a> again: "decode is bound by time to read model weights from DRAM" <span class="tag vendor">LLM report</span>.</p>
 </div>
+<p><strong>Does SRAM remove the limit?</strong> Not entirely; it moves it. The same back-of-envelope for the wafer gives a different kind of ceiling (<a href="01-memory-wall.html#calc">Chapter 1's bound table</a>, <a href="09-model-to-tokens.html#budget">Chapter 9's latency budget</a>):</p>
+<div class="table-wrap"><table>
+<tr><th>One user, 70B model</th><th>Ceiling</th><th>Measured</th><th>What sets it</th></tr>
+<tr><td>Wormhole Galaxy, BFP8 in GDDR6</td><td>≈ 124 tok/s <span class="tag derived">Derived</span></td><td>72.5 <span class="tag vendor">vendor-measured</span></td><td>DRAM bandwidth: 58% of the ceiling, the rest is KV reads, collectives and op gaps</td></tr>
+<tr><td>4 × CS-3, FP16 in SRAM</td><td>≈ 2,000–4,000 tok/s <span class="tag derived">Derived, Ch 1 / Ch 9</span></td><td>2,100 <span class="tag vendor">Vendor</span>; 2,314 <span class="tag indep">Indep</span></td><td>per-region SRAM reads plus the latency of a chain of 80 layers over four wafers; the ~600,000 tok/s aggregate is shared by all users in the pipeline</td></tr>
+</table></div>
+<p>On Tenstorrent the bound is bandwidth; on the wafer the measured speed sits inside a range set by how fast one layer's region reads its weights and by the latency of passing a token from layer to layer.</p>
+<p style="font-size:14px;color:var(--muted)">See also: <a href="09-model-to-tokens.html">Chapter 9, From model to tokens</a> (how a model is laid out on wafers) and <a href="15-lab-cg.html#allreduce">Lab 5's allreduce</a>.</p>
 
 <h2 id="vs-pe">Tensix vs the Cerebras PE</h2>
-<p>Both designs reject the GPU recipe of caches and massive multithreading in favour of explicit, software-scheduled data movement. Tenstorrent's guide compares its design to IBM's CELL. The difference is grain. A Cerebras PE handles a few kilobytes and communicates word by word over routes fixed at compile time. A Tensix core handles about a megabyte and a half, communicates in 2 KiB tiles over addressed packets, and has DRAM behind it. The widget runs one decode-style GEMV, y = W·x with BF16 weights, on both machines.</p>
+<p>Both designs reject the GPU recipe of caches and massive multithreading in favour of explicit, software-scheduled data movement. Tenstorrent's guide compares its design to IBM's CELL. The difference is grain. A Cerebras PE handles a few kilobytes and communicates word by word over routes fixed at compile time. A Tensix core handles about a megabyte and a half, communicates in 2 KiB tiles over addressed packets, and has DRAM behind it.</p>
+<p><strong>Why the grains differ: what one message costs.</strong> A Tenstorrent packet carries an address, so every transfer pays a header flit and the NIU steps at both ends. Using the hop costs from <a href="#noc-grid">the NoC section</a>, one 4-byte value sent 5 hops on Blackhole takes 5 + 9 × 5 + 5 + 2 flits ≈ <b>57 cycles</b> for 4 B. A 2 KiB tile over the same path takes 5 + 45 + 5 + 33 = <b>88 cycles</b>, about 23 B per cycle <span class="tag derived">Derived</span>. Addressed packets only pay off when the fixed cost is spread over a big payload, so Tenstorrent computes on 2 KiB tiles. On the wafer a color's route is set up before the data moves, so a wavelet has no header: the same 4 B crosses 5 hops in about 10 cycles at 2.0 cycles per hop on WSE-3, and each further wavelet adds about one cycle <span class="tag measured">Measured, Ch 4</span>. The cycles are not the same length (1.35 GHz against the SDK's 850 MHz), but the shape is the point: a static route makes one 32-bit word cheap enough to be the unit of work. The widget runs one decode-style GEMV, y = W·x with BF16 weights, on both machines.</p>
 <div class="widget" id="vs">
 <h4>Same GEMV, two grains</h4>
-<p class="hint">Move the slider to change the n × n matrix. Left: Blackhole p150, W streamed from GDDR6 as tiles. Right: WSE-3, W resident in PE SRAM, x broadcast along rows as wavelets and partial sums reduced along columns (the pattern from Labs 2 and 3).</p>
+<p class="hint">Move the slider to change the n × n matrix. Left: Blackhole p150, W streamed from GDDR6 as tiles. Right: WSE-3, W resident in PE SRAM, x broadcast along rows as wavelets and partial sums reduced along columns (the pattern from <a href="12-lab-neighbours.html#composing">Lab 2's distributed GEMV</a> and <a href="14-lab-gemm.html#summa">Lab 4</a>). Both sides give a time per token for this one layer: Blackhole from its DRAM bandwidth, WSE-3 from the course's measured per-PE read rate and chain-reduce cost.</p>
 <div class="controls">
 <label>n <input type="range" id="vs-n" min="10" max="14" value="12"> <span id="vs-nv">4096</span></label>
 </div>
@@ -424,26 +437,30 @@ cb_push_back(cb_in0, block_tiles);
 <tr><th></th><th>Cerebras PE (WSE-3)</th><th>Tensix core (Blackhole p150)</th></tr>
 <tr><td>Count per device</td><td>~900,000 <span class="tag vendor">Vendor</span></td><td>120 <span class="tag vendor">Vendor</span></td></tr>
 <tr><td>Local memory</td><td>48 KB, code + data <span class="tag vendor">Vendor</span></td><td>1,536 KiB L1 (Wormhole: 1,464 KiB) <span class="tag vendor">ISA docs</span></td></tr>
-<tr><td>Total on-chip SRAM</td><td>44 GB <span class="tag vendor">Vendor</span></td><td>180 MB per card; 6.2 GB per Galaxy <span class="tag vendor">Vendor</span></td></tr>
-<tr><td>Off-chip memory</td><td>none on the wafer; MemoryX streams weights for training (Ch. 8)</td><td>32 GB GDDR6, 512 GB/s <span class="tag vendor">Vendor</span></td></tr>
+<tr><td>Peak math per unit per cycle</td><td>16 FLOP: 8-way FP16 FMA (<a href="03-processing-element.html#pe-speed">Ch 3</a>) <span class="tag vendor">Vendor</span>; ≈ 8 measured, f16 <code>@fmach</code> at ≈ 4 per cycle with well-placed operands (<a href="06-dsds.html#op-speed">Ch 6</a>) <span class="tag measured">Measured</span></td><td>4,096 FLOP at LoFi <span class="tag vendor">ISA docs, GEMM_FLOPS</span></td></tr>
+<tr><td>Total on-chip SRAM</td><td>44 GB <span class="tag vendor">Vendor</span></td><td>180 MB per card <span class="tag vendor">Vendor</span>; 5.76 GB per Galaxy <span class="tag derived">32 × 180 MB</span></td></tr>
+<tr><td>Off-chip memory</td><td>none on the wafer; <a href="08-systems.html#memoryx">MemoryX</a> streams weights for training (<a href="08-systems.html#weight-streaming">Ch. 8</a>)</td><td>32 GB GDDR6, 512 GB/s <span class="tag vendor">Vendor</span></td></tr>
 <tr><td>Data unit</td><td>32-bit wavelet <span class="tag sdk">SDK</span></td><td>32 × 32 tile; 64 B NoC flits, packets up to 16 KiB (Wormhole: 32 B / 8 KiB) <span class="tag vendor">ISA docs</span></td></tr>
-<tr><td>Network</td><td>2-D mesh, 24 static colors, ~1 cycle/hop <span class="tag sdk">SDK</span></td><td>two 2-D tori, dimension-order routing, each packet addressed; 9 cycles router-to-router <span class="tag vendor">ISA docs</span>; ~86 GB/s per link <span class="tag derived">Derived</span></td></tr>
+<tr><td>Network</td><td>2-D mesh, 24 colors (20 for user code) <span class="tag sdk">SDK</span>; 2.0 cycles per router hop on WSE-3, 1.0 on WSE-2, ≈ 9 per PE that receives, adds and forwards <span class="tag measured">Measured, Ch 4 / Ch 12</span></td><td>two 2-D tori, dimension-order routing, each packet addressed; 9 cycles router-to-router <span class="tag vendor">ISA docs</span>; ~86 GB/s per link <span class="tag derived">Derived</span></td></tr>
 <tr><td>Control</td><td>tasks triggered by arriving data</td><td>three kernels on five RISC-V cores, synchronised by CB counters and L1 semaphores</td></tr>
-<tr><td>Scale-out</td><td>off-wafer (MemoryX/SwarmX; pipelined placement over Ethernet for inference)</td><td>on-die Ethernet (not on p100), switchless meshes, TT-Fabric</td></tr>
+<tr><td>Scale-out</td><td>off-wafer (MemoryX/<a href="08-systems.html#swarmx">SwarmX</a>; pipelined placement over Ethernet for inference, <a href="08-systems.html#inference">Ch 8</a>)</td><td>on-die Ethernet (not on p100), switchless meshes, TT-Fabric</td></tr>
 <tr><td>Openness</td><td>public SDK, closed compiler</td><td>open-source stack, public ISA docs</td></tr>
 </table></div>
+<p><strong>How many PEs is one Tensix?</strong> In math per cycle, 4,096 ÷ 16 ≈ <b>256 PEs</b> at the vendor widths, or about 512 at the measured f16 rate. In memory, 1,536 KiB ÷ 48 KB ≈ <b>32 PEs</b> <span class="tag derived">Derived</span>. A Tensix packs roughly 8–16× more math per byte of local memory than a PE. That ratio is the grain argument in one number: a Tensix needs DRAM and big tiles to keep its matrix engine fed, while a PE has so little math per byte that its 48 KB can be refilled one wavelet at a time.</p>
 
 <h3 id="csl-metalium">CSL ↔ Metalium, concept by concept</h3>
 <div class="table-wrap"><table>
-<tr><th>In CSL (Chapters 4–13)</th><th>In TT-Metalium</th></tr>
+<tr><th>In CSL (<a href="04-fabric.html">Chapters 4</a>–<a href="15-lab-cg.html">15</a>)</th><th>In TT-Metalium</th></tr>
 <tr><td>color + route set in <code>layout.csl</code> (static path)</td><td>destination NoC x/y in each packet; the path follows from NoC 0/1 routing</td></tr>
 <tr><td>wavelet (32 bits)</td><td>flit (32/64 B) inside a packet carrying one or more 2 KiB tiles</td></tr>
 <tr><td>data task activated when a wavelet arrives</td><td>kernel loop that blocks in <code>cb_wait_front</code> or <code>noc_semaphore_wait</code></td></tr>
 <tr><td>fabric DSD + <code>@fmovs</code> / <code>@fadds</code></td><td><code>noc_async_read_page</code> / <code>write_page</code> + unpack, <code>add_tiles</code>, pack</td></tr>
 <tr><td>multicast route (<code>rx NORTH → tx {RAMP, SOUTH}</code>)</td><td><code>noc_async_write_multicast</code> to a core rectangle + semaphore flag</td></tr>
+<tr><td><code>&lt;collectives_2d&gt;</code> row/column broadcast in SUMMA (<a href="14-lab-gemm.html#collectives">Lab 4</a>)</td><td>matmul 2D sender/receiver readers: <code>noc_async_write_multicast</code> + semaphores (<a href="#matmul">above</a>)</td></tr>
+<tr><td>hardware input queue with router <a href="04-fabric.html#back-pressure">back-pressure</a>; <code>@allocate_fifo</code> for a deeper buffer (<a href="06-dsds.html#fifos">Ch 6</a>)</td><td>circular buffer: <code>cb_reserve_back</code> / <code>cb_push_back</code> and <code>cb_wait_front</code> / <code>cb_pop_front</code>, with an explicit slot count</td></tr>
 <tr><td><code>@set_rectangle</code>, per-PE params in layout</td><td><code>CoreRange</code> + <code>SetRuntimeArgs</code> per core</td></tr>
 <tr><td>host <code>memcpy</code> streams, <code>SdkRuntime</code></td><td><code>EnqueueWriteMeshBuffer</code> / <code>EnqueueReadMeshBuffer</code> on command queues</td></tr>
-<tr><td>cycle-level fabric simulator</td><td>ttsim ISA simulator</td></tr>
+<tr><td>cycle-level fabric simulator</td><td><a href="appendix-a-glossary.html#g-ttsim">ttsim</a> ISA simulator</td></tr>
 </table></div>
 
 <h2 id="performance">Performance and caveats</h2>
@@ -750,14 +767,14 @@ const SVGT = (p, x, y, s, a = {}) => { const t = el("text", Object.assign({ x, y
     SVGT(svg, GX + gx * S + 10, GY + 52, "red outline = selected", { "font-size": 11, class: "muted" });
     const cores = used_x * used_y, tile = 2048;
     const noMc = cores * (pM * Kt + pN * Kt) * tile, mc = (used_y * pM * Kt + used_x * pN * Kt) * tile;
-    const cyc = Mt * Kt * Nt * cpt / (gx * gy), f = gx * gy === 130 ? 1.35 : 1.0, us = cyc / f / 1e3;
+    const cyc = Mt * Kt * Nt * cpt / (used_x * used_y), f = gx * gy === 130 ? 1.35 : 1.0, us = cyc / f / 1e3;
     const l1 = (2 * pM * bw + 2 * pN * bw + pM * pN) * tile, L1 = gx * gy === 130 ? 1536 * 1024 : 1464 * 1024;
     const [sx, sy] = sel;
     $("#mm-out").textContent =
       `Mt × Kt × Nt = ${Mt} × ${Kt} × ${Nt} tiles. per_core_M = ${pM}, per_core_N = ${pN}; ${cores} of ${gx * gy} cores have work.\n` +
       `Core (${sx},${sy}) computes C tile rows ${sy * pM}–${Math.min(Mt, (sy + 1) * pM) - 1}, cols ${sx * pN}–${Math.min(Nt, (sx + 1) * pN) - 1}. K-step ${kb}: A tiles k=${kb * bw}–${kb * bw + bw - 1} arrive from core (0,${sy}), B from core (${sx},0).\n` +
       `DRAM reads: ${(mc / 2 ** 20).toFixed(0)} MiB with multicast vs ${(noMc / 2 ** 20).toFixed(0)} MiB if every core read its own operands (${(noMc / mc).toFixed(1)}×) [derived].\n` +
-      `Ideal: ${Math.round(cyc).toLocaleString()} cycles ≈ ${us.toFixed(0)} µs at ${f} GHz → ${(2 * M * K * N / (us * 1e-6) / 1e12).toFixed(0)} TFLOPS if 100% utilised [derived, GEMM_FLOPS formula].\n` +
+      `Ideal: ${Math.round(cyc).toLocaleString()} cycles ≈ ${us.toFixed(0)} µs at ${f} GHz → ${(2 * M * K * N / (us * 1e-6) / 1e12).toFixed(0)} TFLOPS if 100% utilised over the ${cores} busy cores [derived, GEMM_FLOPS formula].\n` +
       `L1 per core for double-buffered A, B blocks + output: ${(l1 / 1024).toFixed(0)} KiB of ${L1 / 1024} KiB` + (l1 > L1 * .85 ? " → too big: shrink in0_block_w or use more cores." : ".");
   }
   ["#mm-m", "#mm-k", "#mm-n", "#mm-g", "#mm-f"].forEach(s => $(s).onchange = draw);
