@@ -218,7 +218,11 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <li><code>@is_arch("wse3")</code> picks per-chip code in one source file.</li>
 <li><code>&lt;layout&gt;</code> gives a PE its own coordinates at run time: <code>@import_module("&lt;layout&gt;").get_x_coord()</code>, so you need not pass <code>.x = x</code> as a param <span class="tag sdk">SDK 2.10.1, gemv-07</span>.</li>
 </ul>
-<p style="margin:10px 0 4px"><b>What a task looks like.</b> A <code>task</code> is a function the hardware starts; a <code>comptime</code> binding gives it an ID. From program 02 (<a href="11-lab-first-programs.html#wavelet-tasks">Lab 1</a>), a data task that runs once per arriving wavelet:</p>
+</div>
+</div>
+
+<h3 id="task-syntax">What a task looks like</h3>
+<p> A <code>task</code> is a function the hardware starts; a <code>comptime</code> binding gives it an ID. From program 02 (<a href="11-lab-first-programs.html#wavelet-tasks">Lab 1</a>), a data task that runs once per arriving wavelet:</p>
 <div class="filename">course/programs/02-wavelet-tasks/pe_program.csl (lines 17–20, 23, 45, 47; body elided, comments on 23 and 45 ours)</div>
 <pre><code><span class="k">const</span> h2d_iq: <span class="n">input_queue</span> = <span class="b">@get_input_queue</span>(2);
 <span class="k">const</span> recv_task_id: <span class="n">data_task_id</span> =
@@ -234,8 +238,6 @@ A <em>mismatched</em> name or mutability flag (rules 1–2) and a missing param 
 <span class="b">@fmovs</span>(out_dsd, v_dsd, .{ .async = <span class="k">true</span>, .activate = exit_id });   <span class="c">// runs on a microthread</span>
   <span class="b">@bind_local_task</span>(exit_task, exit_id);                       <span class="c">// in comptime { }</span></code></pre>
 <p class="legend" style="margin-top:4px"><code>@activate(exit_id)</code> starts the same task from code. Task IDs, the WSE-2/WSE-3 binding rules and the microthread trap are <a href="05-tasks.html">Chapter 5</a>; <code>.async</code> is <a href="06-dsds.html#async">Chapter 6</a> <span class="tag sdk">SDK 2.10.1</span>.</p>
-</div>
-</div>
 
 <div class="table-wrap"><table>
 <tr><th>Type</th><th>What it names</th><th>First used</th></tr>
@@ -871,7 +873,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
       13: "A memory DSD: N elements of x, stride 1. The compiler turns it into a descriptor held in a <a href=\"appendix-a-glossary.html#g-dsr-data-structure-register\">data-structure register</a> (DSR).",
       14: "twin:13",
       16: "The RPC body. It runs on the PE when the host calls <code>launch('saxpy', a)</code>; memcpy's RPC control task calls it with the argument.",
-      18: "One vector instruction: y[i] = y[i] + x[i] · a for all N elements. Name: f(loat) + mac + s (32-bit single). Siblings: <code>@fadds</code>, <code>@fmuls</code>, <code>@fsubs</code>, and <code>…h</code> for f16 (Chapter 6). Each operand can be a DSD or a scalar. Here it ran from cycle 3,124 to 3,250 " + M + ": 2 cycles per element, not the 1 per element of <a href=\"06-dsds.html#collisions\">Chapter 6</a>, because x and y start in the same SRAM bank. Rates are layout-dependent: peak needs the two source streams in opposite halves of the 16-byte bank cycle, and same-bank halves the rate. Pad one word between x and y and it drops to 1 cycle per element (<a href=\"11-lab-first-programs.html#kernel-time\">Lab 1</a>) " + M + ".",
+      18: "One vector instruction: y[i] = y[i] + x[i] · a for all N elements. Name: f(loat) + mac + s (32-bit single). Siblings: <code>@fadds</code>, <code>@fmuls</code>, <code>@fsubs</code>, and <code>…h</code> for f16 (Chapter 6). Each operand can be a DSD or a scalar. Here it ran from cycle 3,124 to 3,250 " + M + ": 2 cycles per element, not the 1 per element of <a href=\"06-dsds.html#banks\">Chapter 6</a>, because x and y start in the same SRAM bank. Rates are layout-dependent: peak needs the two source streams in opposite halves of the 16-byte bank cycle, and same-bank halves the rate. Pad one word between x and y and it drops to 1 cycle per element (<a href=\"11-lab-first-programs.html#kernel-time\">Lab 1</a>) " + M + ".",
       20: "Mandatory: releases this PE's command stream so the next host command can run. Forget it and the program still compiles; the host's next memcpy aborts with \"could be a kernel stall\" " + M + ".",
       23: "Compile-time block for bindings and exports.",
       24: "Connects the device symbol <code>x_ptr</code> to the name \"x\" declared in the layout. Misspell the name and cslc stops (\"not declared during layout evaluation\"); delete the line and it compiles, then the first <code>memcpy_h2d</code> fails with a <code>TypeError</code> " + M + ".",
@@ -1030,7 +1032,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     el("rect", { x: X0, y: 20, width: W, height: 34, rx: 6, class: "box" }, svg);
     el("rect", { x: X0, y: 20, width: b * s, height: 34, rx: 6, class: "pur" }, svg);
     el("rect", { x: X0 + b * s, y: 20, width: Math.min(arr, CAP - b) * s, height: 34, class: over ? "red" : edge ? "amb" : "acc" }, svg);
-    el("text", { x: X0 + 6, y: 15, "font-size": 12, class: "muted" }, svg).textContent = `code + memcpy ≈ ${(b / 1024).toFixed(1)} KB`;
+    el("text", { x: X0 + 6, y: 15, "font-size": 12, class: "muted" }, svg).textContent = `code + memcpy runtime + task table ≈ ${(b / 1024).toFixed(1)} KB`;
     el("text", { x: X0 + W, y: 15, "text-anchor": "end", "font-size": 12, class: "muted" }, svg).textContent = "48 KB = 49,152 B";
     el("text", { x: X0 + b * s + 8, y: 42, "font-size": 12.5, "font-weight": 600 }, svg).textContent = `x, y: 2 × ${N} × 4 B = ${arr.toLocaleString()} B`;
     el("text", { x: X0, y: 76, "font-size": 12.5, "font-weight": 700, class: over ? "f-red" : edge ? "f-amb" : "f-grn" }, svg).textContent =

@@ -165,6 +165,45 @@ The cycle-level simulator has no Ethernet or TCP, so none of the labs can measur
 
 <p>Two consequences. First, <strong>the whole row takes part</strong>. If any PE in a row is in the copy region, every PE in that row sets its filter and forwards the data, so even a 1-PE copy occupies its row. Rows with no active PE skip the command at once <span class="tag sdk">SDK 2.10.1</span> (<code>memcpy/wse3/memcpy.csl</code>). So at any moment different PEs can be at different commands. What the host-level "one at a time" guarantees is per PE: each PE decodes commands in the order sent, and a later command reaches a PE only after that PE has finished every earlier one. Second, <strong>a copy completes on each PE only when its data is in memory</strong>. An active PE frees the command stream only after its write into your array finishes; a forwarding PE waits for the teardown wavelet that marks the end of the data <span class="tag sdk">SDK 2.10.1</span>. That is why copy mode cannot race, as we will see.</p>
 
+<h3 id="d2h-path">The way back: how a D2H copy leaves the PEs</h3>
+<p>Copy-mode <code>memcpy_d2h</code> is not the H2D path run backwards, and the difference explains the experiment at the end of this chapter <span class="tag sdk">SDK 2.10.1, memcpy/wse3/memcpyd2h.csl, memcpy.csl:391–399, sys_params.csl</span>:</p>
+<ol>
+<li><strong>One sender per row at a time.</strong> All PEs of a row share memcpy's D2H color 21, which runs east to the mux. At each PE that color has a <a href="04-fabric.html#switches">switch</a> with two positions: <code>{rx = RAMP, tx = EAST}</code> (this PE may send) and <code>{rx = WEST, tx = EAST}</code> (forward only). Only one PE of the row is in the "send" position.</li>
+<li><strong>Round-robin by element.</strong> That PE's memcpy task sends its element j (one data wavelet), then a <a href="04-fabric.html#control-wavelets">control wavelet</a> that advances its own switch to "forward" and the next PE's to "send". The next PE then sends its element j, and so on along the row. The output therefore carries element j of every PE before element j + 1 of any PE, which is the same interleaving the H2D wire used. This is why color 21 is used: the library notes that only colors 0–9, 12, 13, 16, 17, 20 and 21 are switch-capable, and "D2H channel requires a switch, so we use color 21".</li>
+<li><strong>Merge and leave.</strong> The mux column takes each row's output south to the mux adaptor, which sends it to the host. When the region's PEs have sent their last element, the first PE of the region sends a teardown, and each PE frees its command stream.</li>
+<li><strong>Streaming D2H</strong> differs only at the start. Your output queue sends on your D2H color, which memcpy routes RAMP → RAMP back into input queue 0. memcpy's microthread then forwards each wavelet onto color 21 with the same {data, control} pairing.</li>
+</ol>
+<figure>
+<svg viewBox="0 0 680 228" width="680" role="img" aria-label="D2H copy: in each row one PE at a time sends an element on color 21, then a switch-advance control wavelet passes the turn east; rows merge in the mux column and leave through the mux adaptor">
+  <defs><marker id="d2h-ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" style="fill:var(--muted)"/></marker></defs>
+  <text x="10" y="18" font-size="12" font-weight="700">On color 21, row 0:</text>
+  <text x="140" y="18" font-size="11.5" class="mono">x0·P0  adv  x0·P1  adv  x0·P2  adv  x0·P3  adv  x1·P0  adv …</text>
+  <g font-size="11">
+    <rect x="20" y="40" width="104" height="56" rx="5" class="box"/><text x="28" y="57" font-weight="600">P0</text><text x="28" y="74">sent x0, then adv</text><text x="28" y="89" class="muted">rx WEST → EAST</text>
+    <rect x="140" y="40" width="104" height="56" rx="5" class="acc" stroke-width="2.5"/><text x="148" y="57" font-weight="600">P1 · its turn</text><text x="148" y="74">sends x0 now</text><text x="148" y="89" class="f-acc">rx RAMP → EAST</text>
+    <rect x="260" y="40" width="104" height="56" rx="5" class="box"/><text x="268" y="57" font-weight="600">P2</text><text x="268" y="74">waits, forwards</text><text x="268" y="89" class="muted">rx WEST → EAST</text>
+    <rect x="380" y="40" width="104" height="56" rx="5" class="box"/><text x="388" y="57" font-weight="600">P3</text><text x="388" y="74">waits, forwards</text><text x="388" y="89" class="muted">rx WEST → EAST</text>
+    <line x1="124" y1="68" x2="139" y2="68" class="s-muted" stroke-width="1.5" marker-end="url(#d2h-ar)"/>
+    <line x1="244" y1="68" x2="259" y2="68" class="s-muted" stroke-width="1.5" marker-end="url(#d2h-ar)"/>
+    <line x1="364" y1="68" x2="379" y2="68" class="s-muted" stroke-width="1.5" marker-end="url(#d2h-ar)"/>
+    <line x1="484" y1="68" x2="517" y2="68" class="s-muted" stroke-width="1.5" marker-end="url(#d2h-ar)"/>
+    <path d="M192,100 q60,22 120,0" fill="none" class="s-pur" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#d2h-ar)"/>
+    <text x="192" y="132" class="f-pur">after x0, P1's "adv" makes P1 forward, P2 send</text>
+    <g opacity="0.55">
+      <rect x="20" y="146" width="104" height="40" rx="5" class="box"/><rect x="140" y="146" width="104" height="40" rx="5" class="box"/><rect x="260" y="146" width="104" height="40" rx="5" class="acc"/><rect x="380" y="146" width="104" height="40" rx="5" class="box"/>
+      <text x="28" y="170">row 1: its own turn order, in parallel</text>
+      <line x1="484" y1="166" x2="517" y2="166" class="s-muted" stroke-width="1.5" marker-end="url(#d2h-ar)"/>
+    </g>
+    <rect x="520" y="40" width="62" height="146" rx="5" class="grn"/><text x="551" y="60" text-anchor="middle" font-weight="600">mux</text><text x="551" y="76" text-anchor="middle">merges</text><text x="551" y="90" text-anchor="middle">rows,</text><text x="551" y="104" text-anchor="middle">south</text>
+    <line x1="551" y1="112" x2="551" y2="196" class="s-grn" stroke-width="1.5" marker-end="url(#d2h-ar)"/>
+    <rect x="520" y="198" width="104" height="24" rx="5" class="grn"/><text x="572" y="214" text-anchor="middle">mux adaptor</text>
+    <line x1="624" y1="210" x2="672" y2="210" class="s-grn" stroke-width="2" marker-end="url(#d2h-ar)"/><text x="672" y="196" text-anchor="end" class="f-grn">to host</text>
+  </g>
+</svg>
+<figcaption><b>D2H copy mode, one row of four PEs.</b> "adv" is the switch-advance control wavelet. Mechanism from the library comments <span class="tag sdk">SDK 2.10.1, memcpyd2h.csl</span>; the mux column drawn as one block is schematic. Compare the <a href="#cf">counter-filter step-through</a> for H2D: there every PE listens to one broadcast stream, here the PEs take turns speaking.</figcaption>
+</figure>
+<p>The cost follows. Every element costs two wavelets on color 21 (data plus switch advance) and two task runs on the sending PE (memcpy's send-data and send-control tasks: the reserved local tasks 21 and 30 in <a href="#reserves">the table above</a>), and only one PE per row speaks at a time. H2D, by contrast, is one broadcast wavelet per element that each PE's filter accepts or forwards in hardware <span class="tag derived">Derived</span>.</p>
+
 <h2 id="host-side">The host side in eight lines</h2>
 <div class="filename">course/programs/01-saxpy/run.py (excerpt, comments added)</div>
 <pre><code><span class="k">from</span> cerebras.sdk.runtime.sdkruntimepybind <span class="k">import</span> SdkRuntime, MemcpyDataType, MemcpyOrder
@@ -180,25 +219,65 @@ out = np.zeros(N, dtype=np.float32)
 rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)
 rt.stop()</code></pre>
 <p>The four integers name a rectangle of PEs (x, y, width, height), relative to your rectangle, and the last is the element count <em>per PE</em>. Splitting data across PEs is the host's job: with ROW_MAJOR, for an array going to a row of P PEs, block <code>k</code> lands on PE <code>k</code> (programs 03 and 04 lay out their arrays this way).</p>
+
+<div class="callout">
+<strong>How the host finds your arrays</strong>
+<p>The <code>'x'</code> passed to <code>get_id</code> is a name the program declared twice: once in <code>layout.csl</code>, which runs at compile time, and once in <code>pe_program.csl</code>, the code each PE runs (the three files are taught in <a href="10-csl-toolchain.html#three-files">Chapter 10</a>; see <a href="appendix-a-glossary.html#g-layout-csl-pe-program-csl-run-py">the glossary</a>). From program 01:</p>
+<pre><code><span class="c">// layout.csl: declare the name, its type, and whether the host may write it</span>
+<span class="b">@export_name</span>(<span class="s">"x"</span>, [*]<span class="n">f32</span>, <span class="k">true</span>);   <span class="b">@export_name</span>(<span class="s">"saxpy"</span>, <span class="k">fn</span>(<span class="n">f32</span>)<span class="n">void</span>);
+<span class="c">// pe_program.csl: bind the name to this PE's variable and function</span>
+<span class="k">var</span> x_ptr: [*]<span class="n">f32</span> = &amp;x;   <span class="k">comptime</span> { <span class="b">@export_symbol</span>(x_ptr, <span class="s">"x"</span>); <span class="b">@export_symbol</span>(saxpy); }
+<span class="c"># run.py: look the name up; the ID goes into copies and launches</span>
+xs = rt.get_id(<span class="s">'x'</span>)</code></pre>
+<p>The one other memcpy line is <code>const memcpy = @import_module("&lt;memcpy/get_params&gt;", .{ .width = 1, .height = 1 })</code> in the layout. It hands each PE a <a href="appendix-a-glossary.html#g-param"><code>param</code></a> (a compile-time value) called <code>memcpy_params</code>, and the PE turns it into <code>sys_mod = @import_module("&lt;memcpy/memcpy&gt;", memcpy_params)</code>, which is where <code>sys_mod.unblock_cmd_stream()</code> below comes from. More in <a href="appendix-a-glossary.html#g-export-name-export-symbol">@export_name / @export_symbol</a>.</p>
+</div>
 <div class="table-wrap"><table>
 <tr><th>Call</th><th>What it does</th></tr>
-<tr><td><code>SdkRuntime(name, cmaddr)</code></td><td>Opens the compiled <code>out/</code> directory. <code>cmaddr</code> is the CS system's address; <code>None</code> runs the simulator.</td></tr>
+<tr><td><a href="appendix-a-glossary.html#g-sdkruntime"><code>SdkRuntime(name, cmaddr)</code></a></td><td>Opens the compiled <code>out/</code> directory. <code>cmaddr</code> is the CS system's address; <code>None</code> runs the simulator.</td></tr>
 <tr><td><code>get_id(name)</code></td><td>Looks up a symbol or function exported in <code>layout.csl</code>.</td></tr>
 <tr><td><code>load()</code> / <code>run()</code></td><td>Loads the ELFs (yours and the frame's) and starts the PEs.</td></tr>
 <tr><td><code>memcpy_h2d</code> / <code>memcpy_d2h</code></td><td>One copy command. Copy mode names a symbol; streaming mode names a color (below).</td></tr>
-<tr><td><code>launch(fn, args…)</code></td><td>An <strong>RPC</strong> (remote procedure call): runs exported device function <code>fn</code> on every PE of the rectangle. <code>launch()</code> itself returns to Python without waiting for the device; it is the <em>next</em> command that cannot run on a PE until that PE calls <code>unblock_cmd_stream()</code> <span class="tag measured">Measured (Chapter 10 fix)</span>.</td></tr>
+<tr><td><code>launch(fn, args…)</code></td><td>An <a href="appendix-a-glossary.html#g-launch-rpc"><strong>RPC</strong></a> (remote procedure call): runs exported device function <code>fn</code> on every PE of the rectangle. <code>launch()</code> itself returns to Python without waiting for the device; it is the <em>next</em> command that cannot run on a PE until that PE calls <code>unblock_cmd_stream()</code> <span class="tag measured">Measured</span>. See <a href="#what-blocks">What blocks, and where</a>.</td></tr>
 <tr><td><code>stop()</code></td><td>Tears down the run.</td></tr>
 </table></div>
+
+<div class="callout key" id="what-blocks">
+<strong>What blocks, and where</strong>
+<p><code>nonblock=False</code> does not mean the same thing for every call. A blocking <code>memcpy_d2h</code> must hand you data, so it returns only after every PE has run it. A blocking <code>launch</code> returns as soon as the RPC command has been sent. Three consequences:</p>
+<ol>
+<li><code>launch(..., nonblock=False)</code> waits only for the command to be sent, not for your device function.</li>
+<li>The wait for the RPC happens <em>inside the next command</em>. That command cannot run on a PE until the PE calls <code>unblock_cmd_stream()</code>, so the host sits in the following <code>memcpy</code> (or launch) instead.</li>
+<li>A host wall-clock timer around <code>launch()</code> measures nothing. Time kernels on the device with the timestamp counter (<a href="13-lab-stencil.html#tsc">Lab 3, Chapter 13</a>), or accept that a timer around the next blocking call also includes the transfer.</li>
+</ol>
+<svg viewBox="0 0 680 160" width="680" role="img" aria-label="Timeline: launch returns at about time zero; the next memcpy_d2h waits on the host until the PE has finished the RPC and called unblock_cmd_stream, then the D2H runs">
+  <g font-size="11.5">
+    <text x="10" y="50">host (Python)</text>
+    <text x="10" y="112">one PE's command</text><text x="10" y="126" font-size="10.5" class="muted">stream (color 22)</text>
+    <rect x="160" y="36" width="16" height="22" rx="3" class="blu"/>
+    <text x="160" y="28">launch('saxpy') returns: 0.00 s</text>
+    <rect x="182" y="36" width="476" height="22" rx="3" class="amb"/>
+    <text x="190" y="51">memcpy_d2h(y) called at once … the host waits here: 5.06 s</text>
+    <rect x="168" y="100" width="410" height="22" rx="3" class="red"/>
+    <text x="176" y="115">saxpy runs (63,498 cycles); command stream blocked</text>
+    <rect x="590" y="100" width="66" height="22" rx="3" class="grn"/>
+    <text x="596" y="115">D2H</text>
+    <line x1="582" y1="30" x2="582" y2="136" class="s-grn" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="578" y="150" text-anchor="end" class="f-grn mono">unblock_cmd_stream()</text>
+    <text x="160" y="150" class="muted">time →  (not to scale)</text>
+  </g>
+</svg>
+<p>We measured it: program 01 with <code>saxpy</code> made to loop its <code>@fmacs</code> 400 times (63,498 simulated cycles, WSE-3, SDK 2.10.1). <code>launch()</code> took 0.00 s of wall time and the following <code>memcpy_d2h</code> 5.06 s, the whole simulated run <span class="tag measured">Measured</span>. The labs follow the same rule. Their results are correct because the next command is what waits. In a host-driven loop such as <a href="15-lab-cg.html#profile">Lab 5's CG</a>, each phase's wait sits in the launch or copy that follows it, not in the launch that started the phase.</p>
+</div>
 <p>The keyword arguments are the command stream's knobs. <code>order</code> picks the host layout above. <code>MEMCPY_32BIT</code> moves 32-bit words. <code>MEMCPY_16BIT</code> exists too, but the host array is still 32-bit per element and the SDK tutorials strip the upper half afterwards with <code>sdk_utils.memcpy_view</code> <span class="tag sdk">SDK 2.10.1, topic-01</span>. Every wavelet is 32 bits, so 16-bit data does not halve transfer time <span class="tag derived">Derived</span>. <code>nonblock=True</code> makes the call return a <code>Task</code> at once (wait with <code>rt.task_wait(t)</code> or poll <code>rt.is_task_done(t)</code>) <span class="tag sdk">SDK 2.10.1, SdkRuntime</span>. That lets the runtime batch commands to save TCP overhead, but it never reorders them: they still run one at a time on the device. Other calls exist, among them <code>call(name, u32_array)</code> (an RPC with raw arguments, used by bandwidth-test), <code>memcpy_h2d_rowbcast</code>/<code>colbcast</code> and <code>memcpy_h2d_stride</code>.</p>
 
 <div class="callout cuda">
 <strong>If you know CUDA</strong>
-<p><code>memcpy_h2d</code> is <code>cudaMemcpy</code> with the decomposition made explicit: you name a rectangle of PEs and the elements per PE. <code>rt.launch()</code> stands where <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> does, but no threads start: it is an RPC queued in every PE's command stream, and the resident program's exported function runs once per PE. "Launch returned" only means the command was sent. As with an asynchronous CUDA launch, a kernel that never finishes shows up at the next copy, but where a CUDA <code>cudaMemcpy</code> would block forever, here the copy errors after about 4 s with "could be a kernel stall" (<a href="10-csl-toolchain.html#errors">Chapter 10</a>).</p>
+<p><code>memcpy_h2d</code> is <code>cudaMemcpy</code> with the decomposition made explicit: you name a rectangle of PEs and the elements per PE. <code>rt.launch()</code> stands where <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> does, but no threads start: it is an RPC queued in every PE's command stream, and the resident program's exported function runs once per PE. "Launch returned" only means the command was sent. As with an asynchronous CUDA launch, a kernel that never finishes shows up at the next copy, but where a CUDA <code>cudaMemcpy</code> would block forever, here, in the simulator, the copy errors after about 4 s with "could be a kernel stall" (<a href="10-csl-toolchain.html#errors">Chapter 10</a>). How hardware reports it we have not measured.</p>
 </div>
 
 <h2 id="command-stream">The command stream</h2>
-<p>Every host call becomes a short command on color 22. The command fan broadcasts it into each row, and memcpy's control tasks on every PE decode it. A copy command carries the color or symbol, the region (px, py, w, h), the address, the elements per PE, a 16-bit flag and a copy type (dense, row broadcast, column broadcast, strided) <span class="tag sdk">SDK 2.10.1, sys_params.csl</span>. An RPC carries a word count, the arguments and the function ID, all as 32-bit words <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>.</p>
-<p>Commands are <strong>serialized per PE</strong>: a PE blocks color 22 while it handles a command and decodes the next one only after it is unblocked. For copies memcpy unblocks itself. For an RPC, your function must call <code>sys_mod.unblock_cmd_stream()</code>, directly or from a completion task: "The user must call unblock_cmd_stream() at the end of a RPC" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. If even one PE forgets, <code>launch()</code> still returns, but the next command never completes there. In the simulator the next <code>memcpy</code> then fails after about 4 s with "the received length (0 bytes) is not expected … could be a kernel stall", and no <code>sim_stats.json</code> is written, rather than hanging forever <span class="tag measured">Measured (Chapter 10 and 11 reviews)</span>.</p>
+<p>Every host call becomes a short command on color 22, the <a href="appendix-a-glossary.html#g-command-stream">command stream</a>. The command fan broadcasts it into each row, and memcpy's control tasks on every PE decode it. A copy command carries the color or symbol, the region (px, py, w, h), the address, the elements per PE, a 16-bit flag and a copy type (dense, row broadcast, column broadcast, strided) <span class="tag sdk">SDK 2.10.1, sys_params.csl</span>. An RPC carries a word count, the arguments and the function ID, all as 32-bit words <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>.</p>
+<p>Commands are <strong>serialized per PE</strong>: a PE blocks color 22 while it handles a command and decodes the next one only after it is unblocked. For copies memcpy unblocks itself. For an RPC, your function must call <a href="appendix-a-glossary.html#g-unblock-cmd-stream"><code>sys_mod.unblock_cmd_stream()</code></a>, directly or from a completion task: "The user must call unblock_cmd_stream() at the end of a RPC" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. If even one PE forgets, <code>launch()</code> still returns, but the next command never completes there. In the simulator the next <code>memcpy</code> then fails after about 4 s with "the received length (0 bytes) is not expected … could be a <a href="appendix-a-glossary.html#g-kernel-stall-error">kernel stall</a>", and no <code>sim_stats.json</code> is written, rather than hanging forever <span class="tag measured">Measured (Chapter 10 and 11 reviews)</span>. <a href="10-csl-toolchain.html#hangs">Chapter 10's hang procedure</a> shows how to find the PE.</p>
 
 <div class="widget" id="rpc">
 <h4>Where does <code>unblock_cmd_stream()</code> go?</h4>
@@ -232,7 +311,31 @@ The host passes a color ID instead of a symbol. Each element arrives as a wavele
 <tr><td>you want the simple, race-free path</td><td>you accept the obligations: a data task or fabric DSD per color, a barrier before reading, and sending streams in the order the device consumes them</td></tr>
 </table></div>
 
-<p><strong>Where the streaming color comes from.</strong> You pick it at compile time, and it flows through three files. Copy and streaming share one host call; the color field decides which (IDs below 24 mean streaming) <span class="tag sdk">SDK 2.10.1, memcpyh2d.csl</span>. memcpy accepts up to 4 streaming H2D and 4 streaming D2H colors (<code>MEMCPYH2D_1…4</code>, <code>MEMCPYD2H_1…4</code>) <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. memcpy routes the color from the frame to your PEs, so you must not write routing for it: "The routing of the color MEMCPYH2D_DATA_1 must not be defined" <span class="tag sdk">SDK 2.10.1, topic-03</span>. It comes out of your 0–19 budget. On the PE, memcpy's microthread moves each wavelet from color 23 through queue 0 into your color, where your data task picks it up from your own input queue.</p>
+<p><strong>Where the streaming color comes from.</strong> You pick it at compile time, and it flows through three files. Copy and streaming share one host call; the color field decides which (IDs below 24 mean streaming) <span class="tag sdk">SDK 2.10.1, memcpyh2d.csl</span>. memcpy accepts up to 4 streaming H2D and 4 streaming D2H colors (<code>MEMCPYH2D_1…4</code>, <code>MEMCPYD2H_1…4</code>) <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. memcpy routes the color from the frame to your PEs, so you must not write routing for it: "The routing of the color MEMCPYH2D_DATA_1 must not be defined" <span class="tag sdk">SDK 2.10.1, topic-03</span>. It comes out of your 0–19 budget. On the PE, the wavelet makes one extra trip through the router, and that trip is why the rule exists. memcpy's <a href="appendix-a-glossary.html#g-microthread">microthread</a> 0 (UT0) takes each wavelet from color 23 off input queue 0, and sends it out through output queue 0, which memcpy has bound to your color. The wavelet goes down to the router, which turns it straight back up the ramp on your color (a RAMP → RAMP route that memcpy itself sets), into your own input queue, where your <a href="appendix-a-glossary.html#g-data-task">data task</a> picks it up <span class="tag sdk">SDK 2.10.1, memcpy.csl:372–380</span>. A route of yours for that color would conflict with memcpy's, and because the color really is routed on every PE, it uses up one of your 0–19.</p>
+<figure>
+<svg viewBox="0 0 680 196" width="680" role="img" aria-label="Streaming H2D on one PE: router delivers color 23 to input queue 0; memcpy microthread 0 forwards to output queue 0 bound to your color; the router routes your color RAMP to RAMP back into your input queue, where your data task runs">
+  <defs><marker id="st-ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" style="fill:var(--muted)"/></marker></defs>
+  <g font-size="11.5">
+    <text x="10" y="22" font-weight="700">CE (this PE)</text>
+    <rect x="100" y="34" width="92" height="46" rx="5" class="pur"/><text x="146" y="54" text-anchor="middle">IQ0</text><text x="146" y="70" text-anchor="middle" font-size="10.5">memcpy</text>
+    <rect x="208" y="34" width="100" height="46" rx="5" class="pur"/><text x="258" y="54" text-anchor="middle">UT0</text><text x="258" y="70" text-anchor="middle" font-size="10.5">microthread 0</text>
+    <rect x="324" y="34" width="100" height="46" rx="5" class="pur"/><text x="374" y="54" text-anchor="middle">OQ0</text><text x="374" y="70" text-anchor="middle" font-size="10.5">bound to color c</text>
+    <rect x="450" y="34" width="100" height="46" rx="5" class="acc"/><text x="500" y="54" text-anchor="middle">your IQ (e.g. 2)</text><text x="500" y="70" text-anchor="middle" font-size="10.5">on color c</text>
+    <rect x="566" y="34" width="104" height="46" rx="5" class="acc"/><text x="618" y="54" text-anchor="middle">your data task</text><text x="618" y="70" text-anchor="middle" font-size="10.5">runs per wavelet</text>
+    <line x1="192" y1="57" x2="207" y2="57" class="s-muted" stroke-width="1.5" marker-end="url(#st-ar)"/>
+    <line x1="308" y1="57" x2="323" y2="57" class="s-muted" stroke-width="1.5" marker-end="url(#st-ar)"/>
+    <line x1="550" y1="57" x2="565" y2="57" class="s-muted" stroke-width="1.5" marker-end="url(#st-ar)"/>
+    <text x="10" y="128" font-weight="700">router</text>
+    <rect x="20" y="138" width="190" height="44" rx="5" class="box"/><text x="30" y="156">color 23 from the command fan</text><text x="30" y="172" class="muted" font-size="10.5">WEST → RAMP (memcpy's route)</text>
+    <rect x="324" y="138" width="226" height="44" rx="5" class="box"/><text x="334" y="156">your color c: RAMP → RAMP</text><text x="334" y="172" class="f-red" font-size="10.5">set by memcpy: do not route c yourself</text>
+    <line x1="146" y1="138" x2="146" y2="82" class="s-pur" stroke-width="1.5" marker-end="url(#st-ar)"/>
+    <line x1="374" y1="80" x2="374" y2="136" class="s-pur" stroke-width="1.5" marker-end="url(#st-ar)"/>
+    <line x1="500" y1="138" x2="500" y2="82" class="s-acc" stroke-width="1.5" marker-end="url(#st-ar)"/>
+    <text x="380" y="112" font-size="10.5" class="muted">down the ramp</text><text x="506" y="112" font-size="10.5" class="muted">back up</text>
+  </g>
+</svg>
+<figcaption><b>Streaming H2D on one PE.</b> Purple is memcpy's, orange is yours. Drawn from the library's own diagram (<code>memcpy/wse3/memcpy.csl</code>, "H2D data flow") <span class="tag sdk">SDK 2.10.1</span>. In copy mode UT0 writes into your exported array instead, and color c is not involved.</figcaption>
+</figure>
 <div class="filename">course/programs/02-wavelet-tasks (excerpts from four files)</div>
 <pre><code><span class="c"># commands.sh: choose the color</span>
 cslc ... --params=MEMCPYH2D_DATA_1_ID:0 --memcpy --channels 1
@@ -245,7 +348,7 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
 
 <div class="widget" id="cmd">
 <h4>Command-stream timeline: the bug we found in program 02</h4>
-<p class="hint">Program 02 streams 100 values into a PE; a data task accumulates the sum and the sum of squares; then the host copies the statistics back. Toggle the barrier and press Play. Bar lengths are schematic; the values read are the measured ones.</p>
+<p class="hint">Program 02 (<a href="11-lab-first-programs.html#wavelet-tasks">Lab 1</a>) streams 100 values into a PE; a data task accumulates the sum and the sum of squares; then the host copies the statistics back. Toggle the barrier and press Play. Bar lengths are schematic; the values read are the measured ones.</p>
 <div class="controls">
 <label><input type="checkbox" id="c-bar"> add <code>launch('wait_done')</code> barrier before reading</label>
 <button class="btn" id="c-play" type="button">Play</button>
@@ -257,7 +360,8 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
 <div class="callout bug">
 <strong>What actually happened</strong>
 <p>Without the barrier the host read <code>sum = 30.818176</code>; the correct total was <code>26.137941</code>. The value we got is exactly the float32 running sum after 95 of the 100 values. The <code>count</code> read by the next copy was already 100. At N = 500 the same experiment read the running sum after 495 values: again 5 short <span class="tag measured">Measured</span>. With the barrier, both N = 100 and N = 500 pass <span class="tag measured">Measured</span>.</p>
-<p>The evidence shows that a streaming <code>memcpy_h2d</code> completes once memcpy has handed the last wavelet onward, not when your data tasks have processed it, so the next D2H copy raced the last few data tasks <span class="tag derived">Derived</span>. The library's own comment fits: "When UT0 is done, all data in IQ0 is drained, but OQ0 may not be empty" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. Why about 5? On WSE-3, output queue 0 holds 2 wavelets and input queue 2, which program 02 uses, holds 4 <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. Up to 6 values can therefore still be waiting when the copy reports done, which is consistent with the 5 we measured, though not a proof <span class="tag derived">Derived</span>.</p>
+<p>The evidence shows that a streaming <code>memcpy_h2d</code> completes once memcpy has handed the last wavelet onward, not when your data tasks have processed it, so the next D2H copy raced the last few data tasks <span class="tag derived">Derived</span>. The library's own comment fits: "When UT0 is done, all data in IQ0 is drained, but OQ0 may not be empty" <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>, where UT0, IQ0 and OQ0 are memcpy's microthread 0, input queue 0 and output queue 0 (the figure above). Why about 5? On WSE-3, output queue 0 holds 2 wavelets and input queue 2, which program 02 uses, holds 4 <span class="tag sdk">SDK 2.10.1, memcpy.csl</span>. Up to 6 values can therefore still be waiting when the copy reports done, which is consistent with the 5 we measured, though not a proof <span class="tag derived">Derived</span>.</p>
+<p><strong>Why could the D2H run before those 5 tasks?</strong> Chapter 5's <a href="appendix-a-glossary.html#g-run-to-completion">run-to-completion</a> rule says a task is never interrupted; it does not say which ready task runs next. When the D2H command's wavelet arrives on color 22, memcpy's control task for it becomes ready alongside the <code>on_value</code> tasks whose wavelets wait in input queue 2, and the <a href="appendix-a-glossary.html#g-task-picker">task picker</a> is not obliged to drain queue 2 first (<a href="05-tasks.html#priority">Chapter 5, when several tasks are ready</a>). Once memcpy's D2H tasks run, they read <code>sum</code> as it is at that moment <span class="tag derived">Derived</span>. The library guards its own side of the same hazard: "if D2H is after H2D, then we cannot guarantee OQ0 is empty, so D2H command must call QFLUSH(OQ0)" <span class="tag sdk">SDK 2.10.1, memcpy.csl:402–404</span>. It flushes memcpy's queue, not yours, so your tasks still need the barrier.</p>
 <p>The fix is an RPC that leaves the command stream blocked until the last data task runs. Both halves of the handshake:</p>
 <div class="filename">course/programs/02-wavelet-tasks/pe_program.csl (excerpt)</div>
 <pre><code><span class="k">task</span> on_value(v: <span class="n">f32</span>) <span class="n">void</span> {
@@ -268,7 +372,7 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
   <span class="k">if</span> (count[0] == <span class="b">@as</span>(<span class="n">u32</span>, N)) { sys_mod.unblock_cmd_stream(); }  <span class="c">// already done</span>
   <span class="k">else</span> { host_waiting = <span class="k">true</span>; }                                   <span class="c">// on_value() unblocks later</span>
 }</code></pre>
-<p>There is no race between the check and the flag. Tasks on a PE run to completion one at a time (Chapter 5), so <code>on_value</code> cannot run in the middle of <code>wait_done</code>.</p>
+<p>There is no race between the check and the flag. Tasks on a PE run to completion one at a time (<a href="05-tasks.html#rules">Chapter 5</a>), so <code>on_value</code> cannot run in the middle of <code>wait_done</code>.</p>
 </div>
 
 <div class="table-wrap"><table>
@@ -277,10 +381,10 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
 <tr><td>2, 3</td><td>4</td><td>6</td></tr>
 <tr><td>4–7 (output 4–5)</td><td>2</td><td>2</td></tr>
 </table></div>
-<p class="legend">Queue depths from the comments in <code>memcpy/wse3/memcpy.csl</code> <span class="tag sdk">SDK 2.10.1</span>. These small buffers are why back-pressure (Chapter 5) reaches the host link so quickly.</p>
+<p class="legend">Queue depths from the comments in <code>memcpy/wse3/memcpy.csl</code> <span class="tag sdk">SDK 2.10.1</span>. These small buffers are why <a href="appendix-a-glossary.html#g-back-pressure">back-pressure</a> (<a href="04-fabric.html#back-pressure">Chapter 4</a>) reaches the host link so quickly.</p>
 
 <h3 id="ordering">Ordering matters too</h3>
-<p>Because commands are serialized, streams must be sent in the order the device consumes them. The SDK's gemv-09 tutorial warns: "If the b values were streamed in before x, the program would hang" <span class="tag sdk">SDK 2.10.1</span>. The mechanism is back-pressure plus serialization <span class="tag derived">Derived</span>. The device's tasks wait for all of x before they consume b, so b's wavelets are not consumed. They fill the few-wavelet queues and back up through the frame to the link (Chapter 5's back-pressure). The b command therefore never completes, and because commands are serialized, the x command is never sent. Each side waits for the other. The program-02 race and this hang are one model: a streaming copy finishes when the device has <em>accepted</em> the last wavelet, not before the device has room and not after your task has run.</p>
+<p>Because commands are serialized, streams must be sent in the order the device consumes them. The SDK's gemv-09 tutorial warns: "If the b values were streamed in before x, the program would hang" <span class="tag sdk">SDK 2.10.1</span>. The mechanism is back-pressure plus serialization <span class="tag derived">Derived</span>. The device's tasks wait for all of x before they consume b, so b's wavelets are not consumed. They fill the few-wavelet queues and back up through the frame to the link (<a href="04-fabric.html#back-pressure">Chapter 4's back-pressure</a>). The b command therefore never completes. On the host, Python is still inside the blocking <code>memcpy_h2d(b)</code> call, so it never sends x. And even if x were sent, its wavelets would need the same demux and row path where b's stalled wavelets sit, and each PE decodes x only after it has finished b. Each side waits for the other. The program-02 race and this hang are one model: a streaming copy finishes when the device has <em>accepted</em> the last wavelet, not before the device has room and not after your task has run.</p>
 <p>For inputs that every PE in a row or column needs, <code>memcpy_h2d_rowbcast</code> and <code>colbcast</code> let the host send one column (or row) of data instead of a replicated tensor. In the SDK's example a column of 4 values goes to a 3 × 4 region as 4 elements instead of 12, saving host bandwidth 3× (host-to-device only) <span class="tag sdk">SDK 2.10.1, row-col-broadcast</span>. The command carries the broadcast type, and memcpy on the device does the rest.</p>
 
 <div class="callout ok">
@@ -294,7 +398,7 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
 <tr><td>D2H</td><td>1</td><td>1000</td><td>25,000</td><td>199,327</td><td>8.0</td></tr>
 <tr><td>D2H</td><td>4</td><td>1000</td><td>25,000</td><td>199,101</td><td>8.0</td></tr>
 </table></div>
-<p>Lessons. Small copies are dominated by fixed cost even in the simulator. More channels sped H2D up 2.5×. D2H was 8× slower per wavelet and did not scale with channels here; D2H sends a data-and-control pair per wavelet through a switch (<code>memcpy.csl</code>), which may explain part of it, but that is a hypothesis <span class="tag derived">Derived</span>. Compare with hardware: 7 Gb/s ÷ 32 bits ÷ 850 MHz ≈ 0.26 wavelets per cycle per channel <span class="tag derived">Derived</span>, so the simulator's 1 wavelet per cycle is about 4× faster than a real channel, and it charges nothing for TCP. To reproduce: copy <code>benchmarks/bandwidth-test</code>, run <code>commands_wse3.sh</code>, then recompile with <code>pe_length:1000</code> and <code>--channels=4</code> and pass <code>-k=1000 --channels=4</code> (add <code>--d2h</code>) to <code>run.py</code>.</p>
+<p>Lessons. Small copies are dominated by fixed cost even in the simulator. More channels sped H2D up 2.5×. D2H was 8× slower per wavelet and did not scale with channels here. <a href="#d2h-path">The D2H path</a> accounts for the slowdown: every element costs a data wavelet, a switch-advance control wavelet and two task runs, and each row sends one PE at a time <span class="tag derived">Derived</span>. How the 8 cycles split between those we did not measure, and why four channels did not help D2H we did not establish. Compare with hardware: 7 Gb/s ÷ 32 bits ÷ 850 MHz (the clock the SDK benchmarks assume; there is no official WSE-3 clock) ≈ 0.26 wavelets per cycle per channel <span class="tag derived">Derived</span>, so the simulator's 1 wavelet per cycle is about 4× faster than a real channel, and it charges nothing for TCP. To reproduce: copy <code>benchmarks/bandwidth-test</code>, run <code>commands_wse3.sh</code>, then recompile with <code>pe_length:1000</code> and <code>--channels=4</code> and pass <code>-k=1000 --channels=4</code> (add <code>--d2h</code>) to <code>run.py</code>.</p>
 </div>
 
 <div class="quiz">
@@ -303,9 +407,9 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
 <details><summary>Your program-03 variant has P = 10 PEs in one row. What <code>--fabric-dims</code> and <code>--fabric-offsets</code> do you pass, and why?</summary><p><code>17,3</code> and <code>4,1</code>. The frame adds 7 columns (west: 1 halo + demux adaptor + demux + command fan; east: mux + mux adaptor + 1 halo) and 2 halo rows. Your (0,0) sits after the four west columns and the top halo row.</p></details>
 <details><summary>A copy sends 4 elements to each of 4 PEs in one row. Which wire positions does PE 2 keep?</summary><p>Positions 2, 6, 10 and 14. Its counter filter starts at (4 − 2) % 4 = 2, reaches 0 on the third wavelet and every fourth after that. In ROW_MAJOR those wavelets carry host elements 8, 9, 10 and 11.</p></details>
 <details><summary>Why does a copy-mode <code>memcpy_h2d</code> followed by <code>launch</code> never race, when a streaming one can?</summary><p>In copy mode each PE frees the command stream only after memcpy's own task has written the data into memory. In streaming mode memcpy's part ends when it hands the wavelets to your queue; your data task finishes the job later, so you need a barrier.</p></details>
-<details><summary>You stream b, then x, but the device consumes all of x first. What happens and why?</summary><p>Deadlock. b's wavelets are not consumed, back-pressure stops the b command from completing, and because commands are serialized x is never sent.</p></details>
+<details><summary>You stream b, then x, but the device consumes all of x first. What happens and why?</summary><p>Deadlock. b's wavelets are not consumed, back-pressure stops the b command from completing, and the host, still inside the blocking <code>memcpy_h2d(b)</code>, never sends x. Even if it did, each PE would decode x only after finishing b.</p></details>
 <details><summary>Why does every course program use queues ≥ 2 and colors below 20 (in practice 0–3)?</summary><p>memcpy owns colors 20–23 on both architectures, and input/output queue 0 (data) plus, on WSE-3, queue 1 (the command stream). Everything below those colors and from queue 2 up is free; the course simply starts at color 0 and queue 2.</p></details>
-<details><summary>Program 01 copies 64 floats to the device. Roughly how long does that take on a real system, and what would you change for a big workload?</summary><p>About 200 µs, almost all of it TCP overhead; the 256 bytes themselves take under a microsecond at 7 Gb/s. Batch data into few large copies (or nonblocking calls the runtime can aggregate), and keep data resident on the wafer.</p></details>
+<details><summary>One of program 01's copies moves 64 floats to the device. Roughly how long does that copy take on a real system, how long does the whole program's I/O take, and what would you change for a big workload?</summary><p>About 200 µs, almost all of it TCP overhead; the 256 bytes themselves take under a microsecond at 7 Gb/s. Program 01 issues four commands (two H2D copies, one launch, one D2H), so if each pays the overhead its I/O costs about 0.8 ms. Batch data into few large copies (or nonblocking calls the runtime can aggregate), and keep data resident on the wafer.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
@@ -569,6 +673,10 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
         el("line", { x1: X(readAt), x2: X(readAt), y1: 30, y2: 200, class: barrier ? "s-grn" : "s-red", "stroke-width": 2, "stroke-dasharray": "4 3" }, svg);
         T(svg, X(readAt) - 6, 150, `D2H snapshot: on_value() × ${barrier ? 100 : 95}`, { "font-size": 11.5, "text-anchor": "end", class: "mono" });
         if (!barrier && te > INJ) T(svg, X(INJ) + 4, 166, "5 tasks too late", { "font-size": 11, class: "muted" });
+        if (!barrier) {
+          el("line", { x1: X(INJ), x2: X(INJ), y1: 98, y2: 136, class: "s-pur", "stroke-width": 2 }, svg);
+          T(svg, X(INJ) - 4, 92, "picker chooses memcpy's D2H task (color 22) ▸", { "font-size": 11, class: "f-pur", "text-anchor": "end" });
+        }
         T(svg, X(readAt) - 6, 196, barrier ? "reads sum after 100 values = 26.138 ✓" : "reads sum after 95 values = 30.818 ✕",
           { "font-size": 12.5, "font-weight": 700, "text-anchor": "end", class: barrier ? "f-grn" : "f-red" });
       }
@@ -578,7 +686,7 @@ rt.memcpy_h2d(H2D, data, 0, 0, 1, 1, N, streaming=<span class="k">True</span>, .
       const barrier = $("#c-bar").checked;
       out.textContent = barrier
         ? "With the barrier: wait_done() leaves the command stream blocked until the 100th data task calls unblock_cmd_stream(). The D2H copy cannot start early.\nResult: count = 100, sum = 26.137941, matches numpy → SUCCESS (also passes at N = 500)."
-        : "Without the barrier: the streaming H2D completes once memcpy has handed its wavelets on. The D2H copy starts while the last data tasks are still queued.\nResult: sum = 30.818176 (the running sum after 95 values); the count read by the next copy is already 100 → assertion fails.";
+        : "Without the barrier: the streaming H2D completes once memcpy has handed its wavelets on. The D2H copy starts while the last data tasks are still queued.\nResult: sum = 30.818176 (the running sum after 95 values); the count read by the next copy is already 100 → assertion fails.\nDevice side: the D2H command's control task became ready on color 22 while 5 on_value() tasks were still queued, and the picker ran it first.";
       svg.setAttribute("aria-label", "Command stream timeline. " + out.textContent.replace(/\n/g, " "));
       if (reduceMotion) { frame(TEND, barrier); return; }
       const start = performance.now(), DUR = 2600;

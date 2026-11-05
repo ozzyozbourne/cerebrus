@@ -145,7 +145,7 @@
 <li><strong>Broadcast.</strong> The bottom-right PE sends the sum north up the last column, and every PE in that column sends it west along its row, by multicast routes (<a href="12-lab-neighbours.html#broadcast">Lab 2's mechanism</a>). Then a teardown.</li>
 </ol>
 <figure>
-<svg id="ar-svg" viewBox="0 0 760 400" width="760" role="img" aria-label="The allreduce's three stages on a 4 by 3 grid, with the order in which one row's values arrive"></svg>
+<svg id="ar-svg" viewBox="0 0 760 440" width="760" role="img" aria-label="The allreduce's three stages on a 4 by 3 grid, with the order in which one row's values arrive"></svg>
 <figcaption><b>One allreduce, three stages, one color.</b> Top, on a 4 × 3 grid: (1) every row reduces west to east into its last PE; (2) every column reduces north to south at once, but only the last column's sum (into the bottom-right PE) is used; (3) the sum goes back up the last column and west along every row by multicast. A teardown wavelet ends each stage, and every PE then calls <code>reset_routes</code> before the next one. Bottom: one row in stage 1, in time order. Each PE sends its value, then a switch-advance control wavelet that moves the next router from "forward from the west" (position 0) to "take from my CE" (position 1), so the values reach the last PE one at a time, farthest first, and it adds each with <code>@fadds</code>. One message per PE, so the stage costs time per PE, not per hop.</figcaption>
 </figure>
 <p>Between stages each PE calls <code>reset_routes</code>, clears its switch position and exits <a href="appendix-a-glossary.html#g-teardown">teardown</a> mode on that color (<code>tile_config</code>). The teardown wavelet is how the PEs agree that a stage is over. This is the same sequence as <a href="14-lab-gemm.html#collectives">Chapter 14's <code>&lt;collectives_2d&gt;</code></a>: the operation blocks a lock task (<code>C_LOCK</code>), the teardown handler (task 29) activates it, the stage's own work unblocks it when it has finished, and only with both does the lock task run and move the state machine on (the block + activate join of <a href="05-tasks.html#join-rule">Chapter 5</a>). Two things are new here: one color is reused for three stages, and a state machine chains them (row, column, broadcast, then <code>f_callback</code>). That is why it needs only one color, one queue and four task IDs. The cost is that a stage can only start once the previous one has drained, so the three stages run strictly one after another, and every message is a single wavelet whose cost is almost all latency.</p>
@@ -1089,6 +1089,29 @@ SUCCESS!
     draw();
   })();
 
+  // ---------- dependence chain of one iteration ----------
+  (function () {
+    const s = $("#dep-svg");
+    const defs = el("defs", {}, s);
+    const mk = el("marker", { id: "dph", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0 0 L10 5 L0 10 z", fill: cssVar("--muted") }, mk);
+    const B = [["β = ρ/ρ_old", "scalar", "box", "local"], ["p = r + βp", "axpy", "blu", "local"], ["w = A p", "SpMV", "grn", "4 neighbours"],
+      ["η = ⟨p, w⟩", "dot + allreduce", "acc", "GLOBAL sum 1"], ["α = ρ/η", "scalar", "box", "local"], ["x, r −= αw", "2 axpys", "blu", "local"],
+      ["ρ = ⟨r, r⟩", "dot + allreduce", "acc", "GLOBAL sum 2"]];
+    const BW = 92, GAP = 15, X = i => 14 + i * (BW + GAP), Y = 30, BH = 46;
+    B.forEach(([a, b, cls, who], i) => {
+      el("rect", { x: X(i), y: Y, width: BW, height: BH, rx: 5, class: cls }, s);
+      T("text", { x: X(i) + BW / 2, y: Y + 19, "text-anchor": "middle", "font-size": 12, class: "mono" }, s, a);
+      T("text", { x: X(i) + BW / 2, y: Y + 36, "text-anchor": "middle", "font-size": 10.5, class: "muted" }, s, b);
+      T("text", { x: X(i) + BW / 2, y: Y - 9, "text-anchor": "middle", "font-size": 10.5, "font-weight": cls === "acc" ? 700 : 400, class: cls === "acc" ? "f-acc" : "muted" }, s, who);
+      if (i < B.length - 1) el("line", { x1: X(i) + BW + 1, y1: Y + BH / 2, x2: X(i + 1) - 2, y2: Y + BH / 2, class: "s-muted", stroke: cssVar("--muted"), "stroke-width": 1.5, "marker-end": "url(#dph)" }, s);
+    });
+    const xe = X(B.length - 1) + BW / 2, xs0 = X(0) + BW / 2, yb = Y + BH;
+    el("path", { d: `M${xe} ${yb + 2} L${xe} ${yb + 30} L${xs0} ${yb + 30} L${xs0} ${yb + 6}`, fill: "none", stroke: cssVar("--muted"), "stroke-width": 1.5, "stroke-dasharray": "4 3", "marker-end": "url(#dph)" }, s);
+    T("text", { x: (xe + xs0) / 2, y: yb + 26, "text-anchor": "middle", "font-size": 11.5, class: "muted halo-txt" }, s, "next iteration: β needs this ρ (and the stopping test reads it too)");
+    T("text", { x: 14, y: yb + 56, "font-size": 11.5, class: "muted" }, s, "Every arrow is a true data dependence, so each orange step is a point where every PE must wait for every other PE.");
+  })();
+
   // ---------- allreduce stages ----------
   (function () {
     const s = $("#ar-svg");
@@ -1141,6 +1164,8 @@ SUCCESS!
     }
     T("text", { x: 10, y: 372, "font-size": 12, class: "f-red" }, s, "PE 0 sends a teardown wavelet: every PE resets its routes and switch, and the next stage starts.");
     T("text", { x: 10, y: 392, "font-size": 11.5, class: "muted" }, s, "sw 0 = forward from the west, sw 1 = take from my own CE. Values arrive farthest first, one message per PE.");
+    T("text", { x: 10, y: 414, "font-size": 11.5, class: "f-pur" }, s, "Where ≈ 50 cycles per PE go (estimate from the library source, not measured): the sender's async @mov32 completes → task f_send_ctrl");
+    T("text", { x: 10, y: 432, "font-size": 11.5, class: "f-pur" }, s, "runs → control @mov32 → next switch flips → value crosses → the last PE's async @fadds re-activates f_send_data: 2–3 task runs + async starts.");
   })();
 
   // ---------- allreduce fit vs W + H ----------

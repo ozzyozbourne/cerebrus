@@ -378,7 +378,7 @@ If a data task is bound to the queue (WSE-3) or colour (WSE-2) that a fabin DSD 
 </div>
 
 <h3 id="index-offset">Data picks the address: <code>wavelet_index_offset</code></h3>
-<p>A wavelet can carry an index as well as a value (<a href="03-processing-element.html#wavelets">Chapter 3</a>'s 16-bit value + 16-bit index payload <span class="tag sdk">SDK 2.10.1, topic-04</span>). A memory DSD declared with <code>.wavelet_index_offset = true</code> accepts a per-call <code>.index</code> that shifts where it starts, so the arriving data chooses which column to work on:</p>
+<p>A wavelet can carry an index as well as a value (<a href="03-processing-element.html#sparsity">Chapter 3</a>'s 16-bit value + 16-bit index payload <span class="tag sdk">SDK 2.10.1, topic-04</span>). A memory DSD declared with <code>.wavelet_index_offset = true</code> accepts a per-call <code>.index</code> that shifts where it starts, so the arriving data chooses which column to work on:</p>
 <div class="filename">SDK benchmarks/gemv-checkerboard-pattern/pe.csl (condensed)</div>
 <pre><code><span class="k">var</span> A = <span class="b">@zeros</span>([A_local_dim_x, A_local_dim_y]<span class="n">f16</span>);   <span class="c">// row-major</span>
 <span class="k">const</span> dsd_A = <span class="b">@get_dsd</span>(<span class="n">mem1d_dsd</span>, .{ .tensor_access = |i|{A_local_dim_x} -> A[i, 0],
