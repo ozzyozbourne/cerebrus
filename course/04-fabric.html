@@ -108,7 +108,7 @@
 <tr><td>WSE-2, M = 64</td><td>162</td><td>162</td><td>159</td><td>223</td><td>about 2 cycles per wavelet; the distance is hidden until P = 64</td></tr>
 </tbody></table></div>
 <p class="small" style="font-size:14px;color:var(--muted)">Method: <code>--fabric-dims=P+7,3</code>, one color east and one west, an async <code>@fmovs</code> fabric-to-fabric relay at the far end, and <code>&lt;time&gt;</code> stamps on PE 0 before the send and in the receive-completion task <span class="tag measured">Measured</span>. The fixed ~36–44 cycles cover four ramps, the DSD start-up and the relay. In this test WSE-2 streamed at about one wavelet per 2 cycles, a CE-side limit I did not chase further. The simulator's per-hop cost is a model, not silicon. Papers report about 1 cycle per hop on hardware <span class="tag indep">Indep</span>. The program is in the box below.</p>
-<p id="ce-hop"><strong>A hop through a CE costs 4–6 router hops.</strong> A PE that receives, adds and forwards (Lab 2's chain) costs about <strong>9.2 cycles per PE on WSE-3 and 6.0 on WSE-2</strong>, against 2.0 / 1.0 for a pure router hop <span class="tag measured">Measured, round trip, <a href="12-lab-neighbours.html#hop-cost">Ch. 12 #hop-cost</a></span>. (An older "~7 cycles per PE" came from comparing clocks on different PEs and is wrong.) Roughly, on WSE-3: one router hop (2) + down the ramp (≈ 2) + up the ramp (≈ 2) + the CE taking the wavelet from its input queue, adding, and handing it to its output queue (the remaining ≈ 3) ≈ 9 <span class="tag derived">Derived; only the total is measured, the ramp figure is from the papers</span>. That is the rule behind <a href="#relay">relaying, below</a>: keep traffic in the routers (pass-through, multicast), and send it through a CE only when the CE has work to do on it.</p>
+<p id="ce-hop"><strong>A hop through a CE costs 4–6 router hops.</strong> A PE that receives, adds and forwards (Lab 2's chain) costs about <strong>9.2 cycles per PE on WSE-3 and 6.0 on WSE-2</strong>, against 2.0 / 1.0 for a pure router hop <span class="tag measured">Measured, round trip, <a href="12-lab-neighbours.html#hop-cost">Ch. 12 #hop-cost</a></span>. (An older "~7 cycles per PE" came from comparing clocks on different PEs and is wrong.) Roughly, on WSE-3: one router hop (2) + down the ramp (≈ 2) + up the ramp (≈ 2) + the CE taking the wavelet from its input queue, adding, and handing it to its output queue (the remaining ≈ 3) ≈ 9 <span class="tag derived">Derived</span>; only the total is measured, and the ramp figure is from the papers. That is the rule behind <a href="#relay">relaying, below</a>: keep traffic in the routers (pass-through, multicast), and send it through a CE only when the CE has work to do on it.</p>
 
 <details class="callout" id="try-hops">
 <summary><strong>Try it yourself: the hop-cost round trip</strong></summary>
@@ -229,14 +229,16 @@ cs_python run.py --name out</code></pre>
 </div>
 <div>
 <div class="filename">pe_program.csl: CE half</div>
-<pre><code><span class="k">const</span> out_dsd = <span class="b">@get_dsd</span>(fabout_dsd,
-  .{ .extent = M, .output_queue = oq });   <span class="c">// WSE-2: + .fabric_color</span>
-<span class="k">const</span> in_dsd  = <span class="b">@get_dsd</span>(fabin_dsd,
+<pre><code><span class="c">// WSE-2 also names the color here</span>
+<span class="k">const</span> out_dsd = <span class="b">@get_dsd</span>(fabout_dsd,
+  .{ .extent = M, .output_queue = oq });
+<span class="k">const</span> in_dsd = <span class="b">@get_dsd</span>(fabin_dsd,
   .{ .extent = M, .input_queue = iq });
-<span class="b">@initialize_queue</span>(oq, .{ .color = send_c }); <span class="c">// WSE-2: .{}</span>
+<span class="c">// bind queues to colors (WSE-2: oq gets .{})</span>
+<span class="b">@initialize_queue</span>(oq, .{ .color = send_c });
 <span class="b">@initialize_queue</span>(iq, .{ .color = recv_c });
-<span class="c">// middle PE: receive, add own v, send, in one op</span>
-<span class="b">@fadds</span>(out_dsd, in_dsd, v_dsd, .{ .async = <span class="k">true</span>, ... });</code></pre>
+<span class="c">// middle PE: receive + own v, send</span>
+<span class="b">@fadds</span>(out_dsd, in_dsd, v_dsd, .{ .async = <span class="k">true</span>, … });</code></pre>
 </div>
 </div>
 <p class="small" style="font-size:14px;color:var(--muted)">Condensed from <code>programs/03-row-reduce/pe_program.csl</code> <span class="tag sdk">course program</span>. The router half decides where a color goes; the CE half binds a queue to that color (<a href="appendix-a-glossary.html#g-initialize-queue"><code>@initialize_queue</code></a>; on WSE-2 the output DSD names the color itself) and moves the data. Neither half works alone. <a href="06-dsds.html#fabric-dsds">Chapter 6</a> explains the right-hand side, and <a href="05-tasks.html#path">Chapter 5</a> what runs when a wavelet arrives.</p>
