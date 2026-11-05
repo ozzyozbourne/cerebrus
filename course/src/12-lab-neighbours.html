@@ -257,6 +257,7 @@ fn reduce() void { mpi_x.reduce_fadds(P - 1, &amp;v, &amp;r, M, cb_id); }  // ro
 </figure>
 <p>Try it: open <code>/home/user/cerebras-sdk/extras/csl-extras-202604101435-6-d2f7d96e/examples/tutorials/gemv-08-routes-3/</code>. In its <code>layout.csl</code>, find the route that matches program 05's multicast and the color pair that matches program 03's checkerboard.</p>
 
+<p><strong>Next in the SDK →</strong> <a href="appendix-d-sdk-index.html#after-ch12">Appendix D</a> lists the SDK examples to read or run after this chapter, easiest first.</p>
 <h3>Exercises</h3>
 <ol class="quiz">
 <li>Make program 03 compute an element-wise <em>maximum</em> instead of a sum. Hint: look for an <code>@fadds</code>-like builtin for max. Does it take fabric DSDs the same way? Update the check in <code>run.py</code> to <code>V.max(axis=0)</code>.

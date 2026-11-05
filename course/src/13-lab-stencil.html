@@ -219,7 +219,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 </ul>
 
 <h3>Scaling up <span class="tag derived">Derived</span></h3>
-<p><strong>Whole wafer.</strong> A CS-2's SDK-visible fabric is 750 × 994, and the program rectangle must be at least 7 columns narrower and 2 rows shorter, so about 743 × 992 ≈ 737k PEs <span class="tag sdk">SDK</span>. With 90 + 2.5·n cycles per step at 850 MHz and 5 flops per cell (one add, two multiply-adds):</p>
+<p><strong>Whole wafer.</strong> A CS-2's SDK-visible fabric is 750 × 994, and the program rectangle must be at least 7 columns narrower and 2 rows shorter, so about 743 × 992 ≈ 737k PEs <span class="tag sdk">SDK</span> (the same README also reads 750 × 994 as a program size, which would allow 745,500 <span class="tag unv">Unverified</span>; <a href="02-the-wafer.html#cs2-dims">Chapter 2's note</a>). With 90 + 2.5·n cycles per step at 850 MHz and 5 flops per cell (one add, two multiply-adds):</p>
 <ul>
 <li>n = 16: 130 cycles = 0.15 µs per step, 6.5 M steps/s on 11.8 M cells, ≈0.38 PFLOP/s f32.</li>
 <li>n = 5,450: ≈13,700 cycles = 16 µs per step on 4 G cells, ≈1.2 PFLOP/s, close to the 2 flops/cycle/PE × 737k × 0.85 GHz ≈ 1.25 PFLOP/s that the 2.5-cycle slope allows.</li>
@@ -236,6 +236,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 <p><strong>2-D and 3-D.</strong> A 2-D tile of n × m cells needs 4 messages per step and 8 colors (4 directions × 2 parities); its east/west edges are strided columns (a <code>mem1d_dsd</code> with stride n). The constants above predict roughly 4 × 14.6 + 13 + about 1 cycle per edge word + 5 instructions × (6 + the streaming cost). Eight concurrent async operations would need eight microthreads, but on both chips memcpy's queues and microthreads 0 and 1 are taken, so only 2–7 are free: at most six fabric ops in flight at once (<a href="05-tasks.html#budget">Chapter 5's budget table</a>; on WSE-2 the microthread is also fixed to the queue ID, so it is at least as tight). That is why the 7-point library serialises its sends.</p>
 <p><strong>Next: Lab 4.</strong> <a href="14-lab-gemm.html#summa">Lab 4 (Chapter 14)</a> moves to a 2-D grid of PEs, broadcasting blocks along rows and columns instead of exchanging one-cell halos, and gets the opposite result: there, compute dominates the step (<a href="14-lab-gemm.html#measure">its measurements</a>).</p>
 
+<p><strong>Next in the SDK →</strong> <a href="appendix-d-sdk-index.html#after-ch13">Appendix D</a> lists the SDK examples to read or run after this chapter, easiest first.</p>
 <h3>Exercises</h3>
 <ol>
 <li><p><strong>Overlap, done right.</strong> Implement the overlapped version described above: interior Laplacian in <code>start_step()</code> after issuing the transfers, edge Laplacians in <code>update()</code>, then one <code>@fmacs</code> over all cells. Predict the cycles per step before you measure.</p>

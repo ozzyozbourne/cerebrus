@@ -271,7 +271,7 @@ details.bib-group > summary { cursor: pointer; font-weight: 700; font-size: 16px
 <p>These came out of the course's own measurements, not out of the press. Each one is a place where the simulator showed something that no reachable document explains. They are listed so that a reader with access to Cerebras documentation, or the time to run one more experiment, can close them.</p>
 
 <div class="issue" id="iss-bank">
-<h3>1. The SRAM bank model</h3>
+<h3>1. The SRAM <a href="appendix-a-glossary.html#g-bank-sram-bank">bank</a> model</h3>
 <dl>
 <dt>Measured</dt><dd><code>cs_readelf --sym</code> lists the banks each symbol occupies with 16-bit granularity on both chips: a 2-byte variable at 0xcb0, 0xcb4, 0xcb8, 0xcbc lands in banks 0, 2, 4, 6, so bank = (byte address ÷ 2) mod 8, a 16-byte stripe <span class="tag sdk">SDK 2.10.1, cs_readelf</span>. The <code>cs_readelf</code> man page says the bank is "determined by bits [3:1] of the address" and that a 32-bit read "is broken into two 16-bit reads" <span class="tag sdk">SDK 2.10.1</span>. The single-tile-matvec benchmark pads rows to 16 B to avoid bank conflicts; <code>FIFO_MIN_ALIGNMENT</code> is 16 on WSE-3 and 8 on WSE-2 <span class="tag sdk">SDK 2.10.1</span>.</dd>
 <dt>The conflict</dt><dd>Academic descriptions say eight 6 KB banks, each 32 bits wide, with successive 32-bit words in successive banks, a 32-byte stripe <span class="tag indep">Secondary</span> (arXiv 2605.07954, 2209.15040, via search extracts). <a href="03-processing-element.html#bank-model">Chapter 3</a> presents both models.</dd>
@@ -301,7 +301,7 @@ details.bib-group > summary { cursor: pointer; font-weight: 700; font-size: 16px
 </div>
 
 <div class="issue" id="iss-hop">
-<h3>4. The WSE-2 hop-timing floor</h3>
+<h3>3. The WSE-2 hop-timing floor</h3>
 <dl>
 <dt>Measured</dt><dd>Pure router round trips with one wavelet: WSE-2 36 / 48 / 96 / 160 cycles at P = 2 / 8 / 32 / 64 (1.0 cycle/hop); WSE-3 44 / 68 / 164 / 292 (2.0 cycles/hop) <span class="tag measured">Measured</span> (<a href="04-fabric.html#latency">Ch. 4</a>). With 64 wavelets WSE-2 stays near 160 cycles up to P = 32, about 2 cycles per wavelet. In Lab 2's chain the WSE-2 round trips have a ~90-cycle floor for P ≤ 8, so its hop cost is fitted from P ≥ 12 only <span class="tag measured">Measured</span> (<a href="12-lab-neighbours.html#hop-cost">Ch. 12</a>).</dd>
 <dt>Unknown</dt><dd>The cause of the ~90-cycle floor, and of the 2 cycles per streamed wavelet. No explanation has been proposed. (Chapter 12's remark that each PE's clock starts one hop later than its west neighbour's explains a different number, the per-PE "own clock" step, not this floor.)</dd>
@@ -310,29 +310,29 @@ details.bib-group > summary { cursor: pointer; font-weight: 700; font-size: 16px
 </div>
 
 <div class="issue" id="iss-ut">
-<h3>5. Do microthreads share one datapath?</h3>
+<h3>4. Do microthreads share one datapath?</h3>
 <dl>
-<dt>Known</dt><dd>A PE runs up to eight microthreads <span class="tag vendor">Vendor</span>, and the main thread's priority relative to them can be set <span class="tag sdk">SDK 2.10.1</span>. That they share a single datapath, interleaved by operand readiness, comes from one secondary source <span class="tag indep">Secondary</span> (<a href="03-processing-element.html#microthreads">Ch. 3</a>).</dd>
-<dt>Measured</dt><dd>Nothing yet. The obvious test, two memory-to-memory <code>@fadds</code> launched async, does not compile: cslc rejects it with "'async' requires at least one fabric or DSR operand" <span class="tag measured">Measured, cslc 2.10.1</span>. A variant with DSR operands stalled in the simulator during the Chapter 3 fixes.</dd>
-<dt>Would settle it</dt><dd>Two async ops that each have a fabric operand: for example, two <code>@fmovs</code> from two input queues (two colours, fed by the host or a neighbour) into memory, on different microthreads, timed with the TSC on that PE, against the same two receives run one after the other. A total near the sum means one shared datapath; near the longer of the two means they overlap.</dd>
+<dt>Known</dt><dd>A PE runs up to eight <a href="appendix-a-glossary.html#g-microthread">microthreads</a> <span class="tag vendor">Vendor</span>, and the main thread's priority relative to them can be set <span class="tag sdk">SDK 2.10.1</span>. That they share a single datapath, interleaved by operand readiness, comes from one secondary source <span class="tag indep">Secondary</span> (<a href="03-processing-element.html#microthreads">Ch. 3</a>).</dd>
+<dt>Measured</dt><dd>Nothing yet. The obvious test, two memory-to-memory <code>@fadds</code> launched async, does not compile: cslc rejects it with "'async' requires at least one fabric or DSR operand" <span class="tag measured">Measured, cslc 2.10.1</span>. A variant with <a href="appendix-a-glossary.html#g-dsr-data-structure-register">DSR</a> operands stalled in the simulator during the Chapter 3 fixes.</dd>
+<dt>Would settle it</dt><dd>Two async ops that each have a fabric operand: for example, two <code>@fmovs</code> from two <a href="appendix-a-glossary.html#g-input-queue-output-queue">input queues</a> (two colours, fed by the host or a neighbour) into memory, on different microthreads, timed with the TSC on that PE, against the same two receives run one after the other. A total near the sum means one shared datapath; near the longer of the two means they overlap. There is no ready harness: start from <code>programs/01-saxpy/timed</code> for the TSC bracket and add the two colours as in <a href="12-lab-neighbours.html">Lab 2</a>.</dd>
 </dl>
 </div>
 
 <div class="issue" id="iss-index">
-<h3>6. The units of a DSD's <code>.index</code></h3>
+<h3>5. The units of a DSD's <code>.index</code></h3>
 <dl>
 <dt>Known</dt><dd>In the SDK, <code>tutorials/sdklayout-05-gemv/gemv.csl</code> (a dense GEMV over f32 data) passes <code>.index = 2 * idx</code> to <code>@fmacs</code>, and <code>benchmarks/gemv-checkerboard-pattern/pe.csl</code> passes <code>.index = idx</code> to <code>@fmach</code> on f16 data <span class="tag sdk">SDK 2.10.1</span>. Both fit an index counted in 16-bit words <span class="tag derived">Derived</span> (<a href="06-dsds.html#index-offset">Ch. 6</a>).</dd>
 <dt>Unknown</dt><dd>The builtin reference that states it was unreachable.</dd>
-<dt>Would settle it</dt><dd>The online builtin reference, or a one-PE test that writes with <code>.index = 1</code> on f32 data and checks which half-word moves.</dd>
+<dt>Would settle it</dt><dd>The online builtin reference, or a one-PE test that writes with <code>.index = 1</code> on f32 data and checks which half-word moves. A starting point is the Program 01 harness (<code>programs/01-saxpy/timed</code>): declare <code>x_dsd</code> with <code>.wavelet_index_offset = true</code>, replace the op line with <code>@fmovs(y_dsd, x_dsd, .{ .index = 1 })</code>, run <code>bash commands.sh 8 0 0</code> and print <code>y</code> instead of checking it. If <code>y[0]</code> equals <code>x[1]</code>, the index counts f32 elements; a value built from two half-words means 16-bit units.</dd>
 </dl>
 </div>
 
 <div class="issue" id="iss-scale">
-<h3>7. What <code>@fscales</code> and <code>@fnorms</code> compute</h3>
+<h3>6. What <code>@fscales</code> and <code>@fnorms</code> compute</h3>
 <dl>
-<dt>Known</dt><dd>Both exist: <code>csl-libs/dsd_ops.csl</code> maps <code>scale</code> to <code>@fscaleh/@fscales</code> and <code>norm</code> to <code>@fnormh/@fnorms</code>, next to a separate <code>mul</code> → <code>@fmuls</code> <span class="tag sdk">SDK 2.10.1</span>. <a href="06-dsds.html#builtins">Chapter 6</a> tags their meaning <span class="tag unv">Unverified</span>.</dd>
-<dt>Unknown</dt><dd>Whether scale differs from <code>@fmuls</code> with a scalar operand, and what norm returns (a norm, or a normalisation).</dd>
-<dt>Would settle it</dt><dd>The builtin reference, or a simulator run on known inputs (e.g. [3, 4]).</dd>
+<dt>Known</dt><dd>Both exist: <code>csl-libs/dsd_ops.csl</code> maps <code>scale</code> to <code>@fscaleh/@fscales</code> and <code>norm</code> to <code>@fnormh/@fnorms</code>, next to a separate <code>mul</code> → <code>@fmuls</code> <span class="tag sdk">SDK 2.10.1</span>. The standard library shows what they do. <code>LIB/math.csl</code> defines <code>fscale_f32(f: f32, s: i16)</code>: at compile time it returns <code>f * internal.pow2i_f32(s)</code>, at run time it calls <code>@fscales(&amp;r, f, s)</code> <span class="tag sdk">SDK 2.10.1, math.csl</span>. So scale is ldexp, f · 2<sup>s</sup> with an i16 exponent, not a general multiply by a scalar. <code>internal.fnorm</code> (which calls <code>dsd_ops.norm</code>) is used as <code>fnorm(x) - 1.0</code> before a log polynomial, and in the square roots, where the exponent is taken separately, one doubling is followed by the comment "so x_norm in [1,4)" <span class="tag sdk">SDK 2.10.1, math.csl</span>. So norm returns the significand normalised into [1, 2), like the mantissa from frexp, not a vector norm <span class="tag derived">Derived from SDK code</span>. <a href="06-dsds.html#builtins">Chapter 6</a> covers the builtins.</dd>
+<dt>Unknown</dt><dd>The edge cases: what norm returns for zero, infinities and denormals, and how scale rounds or saturates when 2<sup>s</sup> under- or overflows.</dd>
+<dt>Would settle it</dt><dd>The builtin reference, or a one-PE run of <code>@fnorms</code> and <code>@fscales</code> on 0, a denormal, ±∞ and a large <code>s</code>, with the results copied back by <code>memcpy</code>.</dd>
 </dl>
 </div>
 
