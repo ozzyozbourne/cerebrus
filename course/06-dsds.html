@@ -260,22 +260,44 @@ The SDK's <code>single-tile-matvec</code> computes y = A·x for N = 64 on one PE
 </div>
 
 <h2 id="collisions">Layout matters: operand collisions in SRAM</h2>
-<p>A PE's 48 KB is 8 single-ported banks of 6 KB, interleaved by 32-bit word <span class="tag vendor">Vendor</span>. An FMAC needs two source words and writes one word every cycle, so if its streams keep landing on the same hardware, it slows down. The SDK's matvec benchmark shifts A by one word (<code>A_array[i+1]</code>) and pads each column to a multiple of 4 words, "to avoid bank conflicts" <span class="tag sdk">SDK 2.10.1, single-tile-matvec</span>. We measured what that buys:</p>
+<p>A PE's 48 KB is 8 single-ported <a href="appendix-a-glossary.html#g-bank-sram-bank">banks</a> <span class="tag vendor">Vendor, HC22</span>. Academic papers describe them as 6 KB each, interleaved by 32-bit word <span class="tag indep">Independent</span>; the SDK numbers them differently (<a href="#banks">below</a>), and Cerebras has not published the physical layout (<a href="03-processing-element.html#bank-model">Chapter 3</a>, <a href="appendix-e-sources.html#iss-bank">Appendix E</a>). An FMAC needs two source words and writes one word every cycle, so if its streams keep landing on the same hardware, it slows down. The SDK's matvec benchmark shifts A by one word (<code>A_array[i+1]</code>) and pads each column to a multiple of 4 words, "to avoid bank conflicts" <span class="tag sdk">SDK 2.10.1, single-tile-matvec</span>. We measured what that buys:</p>
 <ul>
 <li>Matvec without the +1 shift: 2,134 instead of 1,110 cycles (N = 32), 8,310 instead of 4,214 (N = 64), almost exactly 2× <span class="tag measured">Measured, WSE-3</span>.</li>
 <li>Unpadded columns: N = 31 with stride 31 took 1,294 cycles instead of 1,078 padded to 32 (+20%), because only some columns then collide <span class="tag measured">Measured by the ch06 depth review, WSE-3</span>.</li>
-<li>Single <code>@fmacs</code> over 1,024 elements: the time doubles exactly when its two source streams start at word addresses that are equal modulo 4. <code>@fadds</code> showed no penalty <span class="tag measured">Measured, WSE-2 and WSE-3</span>. This rule is empirical, not documented.</li>
+<li>Single <code>@fmacs</code> over 1,024 elements: the time doubles exactly when its two source streams start at word addresses that are equal modulo 4 <span class="tag measured">Measured, WSE-2 and WSE-3</span>. The next section explains why "mod 4", and the <a href="#banks">table</a> gives the other ops.</li>
+<li><b>Lab 1 hits this case.</b> Program 01 as shipped declares x and y back to back, and N = 1,024 is a multiple of 4, so its <code>@fmacs</code> takes 2,063 cycles on WSE-3 (2,062 on WSE-2). One padding word between the arrays gives 1,039 (1,038) <span class="tag measured">Measured, TSC, <a href="11-lab-first-programs.html#kernel-time">Chapter 11</a></span>.</li>
 </ul>
+
+<h3 id="banks">Which bank does an operand start in? The placement rule</h3>
+<p>The SDK's <code>cs_readelf</code> man page gives the rule: "The bank a memory access lies in is determined by bits [3:1] of the address … A 32-bit read of the same address is broken into two 16-bit reads … Bank conflicts where concurrent reads and writes target the same bank or the same bank modulo 4 may result in cycle delays" <span class="tag sdk">SDK 2.10.1, cs_readelf(1)</span>. Its <code>--sym</code> output prints the banks of every variable, and they follow that rule <span class="tag measured">Measured, cslc 2.10.1 ELFs</span>. So the SDK numbers banks in 16-bit units: bank = (byte address ÷ 2) mod 8. An f32 word covers banks 2k and 2k + 1, four words cover all eight, and the pattern repeats every 16 bytes <span class="tag sdk">SDK 2.10.1</span>.</p>
+<p>That is where "mod 4" comes from. Two streams whose start addresses are equal mod 4 words (16 bytes) start in the same bank, and because they step in lockstep they hit the same banks on every cycle: the man page's "same bank" case. The man page's second clause, "same bank modulo 4" (banks b and b + 4, 8 bytes apart), predicts a second slow case, but it does not slow f32 at all; on WSE-2 it is the <em>fast</em> placement <span class="tag measured">Measured, <a href="appendix-e-sources.html#iss-clash">Appendix E</a></span>. The widget draws the streams on the 16-bit bank ruler.</p>
 
 <div class="widget" id="bk">
 <h4>Do these two streams collide?</h4>
-<p class="hint">An FMAC reads src0[i] and src1[i] in the same step. Choose how far apart (in words, mod 8) the two arrays start. Colour = word address mod 4, the grouping that mattered in our runs.</p>
+<p class="hint">An in-place op reads src0[i] and src1[i] in the same step. Choose the op and how many bytes past a 16-byte boundary src1 starts relative to src0. The ruler shows the SDK's 16-bit banks; each box is one element, coloured by the WSE-2 cycle that reads it.</p>
 <div class="controls">
-<label>src1 starts at src0 + 2048 + <select id="bk-off"><option>0</option><option selected>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select> words</label>
-<label>op <select id="bk-op"><option value="fmacs">@fmacs(dA, dA, dC, 2.0)</option><option value="fadds">@fadds(dA, dA, dC)</option></select></label>
+<label>op <select id="bk-op"><option value="fmacs">@fmacs(y, y, x, a), f32</option><option value="fadds">@fadds(y, y, x), f32</option><option value="fmach">@fmach(y, y, x, a), f16</option></select></label>
+<label>src1 starts at src0 + 16·k + <select id="bk-off"></select> bytes</label>
 </div>
-<svg id="bk-svg" viewBox="0 0 680 182" width="680" role="img" aria-label="Two operand streams coloured by address mod 4"></svg>
+<svg id="bk-svg" viewBox="0 0 680 214" width="680" role="img" aria-label="Two operand streams drawn on the 16-bit SRAM bank ruler"></svg>
 <div class="readout" id="bk-out" aria-live="polite"></div>
+<p class="note">Cycles from the table below <span class="tag measured">Measured</span>. The red marks use a WSE-2 hypothesis (each stream reads a window of rate × element size bytes per cycle; the op stalls when the two windows share a bank) that fits every WSE-2 measurement but not WSE-3 <span class="tag derived">Derived, hypothesis</span>.</p>
+</div>
+
+<p>The canonical table of how placement sets DSD op rates. Each op runs in place over 1,024 elements with two source streams; the column is how far apart the two sources start within the 16-byte bank cycle <span class="tag measured">Measured, simulator, SDK 2.10.1, TSC</span>:</p>
+<div class="table-wrap"><table class="small">
+<tr><th>1,024 elements, cycles (elements / cycle)</th><th>0 B: same bank</th><th>4 B: 2 banks apart</th><th>8 B: 4 banks apart ("opposite halves")</th><th>12 B: 6 banks apart</th></tr>
+<tr><td>f32 <code>@fmacs</code>, WSE-3</td><td><mark>2,063 (0.5)</mark></td><td>1,039 (1)</td><td>1,039 (1)</td><td>1,040 (1)</td></tr>
+<tr><td>f32 <code>@fmacs</code>, WSE-2</td><td><mark>2,062 (0.5)</mark></td><td>1,038 (1)</td><td>1,038 (1)</td><td>1,038 (1)</td></tr>
+<tr><td>f32 <code>@fadds</code>, WSE-3</td><td>527 (2)</td><td>528 (2)*</td><td>527 (2)</td><td>not measured</td></tr>
+<tr><td>f32 <code>@fadds</code>, WSE-2</td><td><mark>1,038 (1)</mark></td><td><mark>1,038 (1)</mark></td><td>526 (2)</td><td>not measured</td></tr>
+<tr><td>f16 <code>@fmach</code>, WSE-3</td><td>272 (≈4)</td><td>272 (≈4)</td><td>272 (≈4)</td><td>not measured</td></tr>
+<tr><td>f16 <code>@fmach</code>, WSE-2</td><td><mark>526 (2)</mark></td><td><mark>526 (2)</mark></td><td>270 (≈4)</td><td>not measured</td></tr>
+</table></div>
+<p class="note">Sources: this chapter's single-op runs (offsets 0–7 words for <code>@fmacs</code>), the Program 01 padding sweep in <a href="11-lab-first-programs.html#kernel-time">Chapter 11</a> and <a href="appendix-e-sources.html#iss-clash">Appendix E</a> (placement checked with <code>cs_readelf --sym</code>), all <span class="tag measured">Measured</span>. * With a separate destination array (the <a href="#op-speed">rate table</a>'s layout). Highlighted cells are the slow ones.</p>
+<div class="callout key">
+<strong>One rule for placement</strong>
+Rates are layout-dependent. Peak needs the two source streams in opposite halves of the 16-byte bank cycle, that is, starting 8 bytes (2 f32 words, 4 f16 elements) apart mod 16; the same bank halves the rate <span class="tag measured">Measured</span>. The rule differs by chip: on WSE-3 only f32 FMAC is sensitive (to the same bank), while on WSE-2 adds and f16 also need the 8-byte placement. That explains Lab 3's fast add on both chips (<code>u[i]</code> and <code>u[i+2]</code> are 8 bytes apart, <a href="13-lab-stencil.html#numbers-say">Chapter 13</a>) and Lab 1's slow FMAC (x and y in the same bank). To place arrays, put a 2-word pad between them and check the start banks with <code>cs_readelf --sym</code> (<a href="10-csl-toolchain.html#memory">Chapter 10</a>). Short vectors can still surprise you (at N = 64 program 01's unpadded case clashes on WSE-3 but not WSE-2, Chapter 11), so pad and measure.
 </div>
 
 <h3 id="dsrs">Where the descriptor lives: DSRs, <code>@load_to_dsr</code> and <code>@map</code></h3>

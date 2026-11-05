@@ -160,12 +160,14 @@ layout {
   @set_rectangle(1, 1);    <span class="c">// the "grid"</span>
   @set_tile_code(0, 0, <span class="s">"pe_program.csl"</span>,
                  .{ &hellip;, .N = N });
-  @export_name(<span class="s">"y"</span>, [*]f32, true);
+  @export_name(<span class="s">"x"</span>, [*]f32, true); <span class="c">// names the</span>
+  @export_name(<span class="s">"y"</span>, [*]f32, true); <span class="c">// host can use</span>
   @export_name(<span class="s">"saxpy"</span>, fn(f32)void); <span class="c">// RPC</span>
 }</code></pre>
 <div class="filename">pe_program.csl</div>
 <pre><code><span class="k">var</span> x: [N]f32;   <span class="c">// static: no cudaMalloc</span>
 <span class="k">var</span> y: [N]f32;
+<span class="k">var</span> x_ptr: [*]f32 = &amp;x; <span class="k">var</span> y_ptr: [*]f32 = &amp;y;
 <span class="k">const</span> x_dsd = @get_dsd(mem1d_dsd,
     .{ .tensor_access = |i|{N} -&gt; x[i] });
 <span class="k">const</span> y_dsd = @get_dsd(mem1d_dsd,
@@ -173,17 +175,72 @@ layout {
 <span class="k">fn</span> saxpy(a: f32) <span class="k">void</span> {
   @fmacs(y_dsd, y_dsd, x_dsd, a); <span class="c">// the loop</span>
   sys_mod.unblock_cmd_stream(); <span class="c">// host may go on</span>
+}
+<span class="k">comptime</span> {                       <span class="c">// bind the names</span>
+  @export_symbol(x_ptr, <span class="s">"x"</span>); @export_symbol(y_ptr, <span class="s">"y"</span>);
+  @export_symbol(saxpy);
 }</code></pre>
 <div class="filename">run.py</div>
-<pre><code>rt.load(); rt.run()      <span class="c"># resident from here</span>
+<pre><code>xs, ys = rt.get_id(<span class="s">'x'</span>), rt.get_id(<span class="s">'y'</span>) <span class="c"># ~ dx, dy</span>
+rt.load(); rt.run()      <span class="c"># resident from here</span>
 rt.memcpy_h2d(xs, x, 0, 0, 1, 1, N, **kw)
 rt.memcpy_h2d(ys, y, 0, 0, 1, 1, N, **kw)
 rt.launch(<span class="s">'saxpy'</span>, a, nonblock=False) <span class="c"># &lt;&lt;&lt;&gt;&gt;&gt;</span>
 rt.memcpy_d2h(out, ys, 0, 0, 1, 1, N, **kw)</code></pre>
 </div>
 </div>
-<p>Line by line, with the Rosetta rows: the CUDA grid becomes <code>@set_rectangle</code> (grid row); <code>cudaMalloc</code> becomes static arrays placed at link time (<code>cudaMalloc</code> row); each <code>cudaMemcpy</code> becomes a <code>memcpy_h2d</code>/<code>memcpy_d2h</code> to a rectangle of PEs, here 1 &times; 1 with N elements per PE (<code>cudaMemcpy</code> row); <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> becomes <code>rt.launch</code>, an RPC to a program that has been running since <code>rt.run()</code> (launch row); and the grid-stride loop with its thread index becomes the extent of one DSD, walked by a single <code>@fmacs</code> (grid-stride row).</p>
-<p>One line has no CUDA counterpart: <code>unblock_cmd_stream()</code>, which tells memcpy the RPC has finished so the host's next command can run. Without it the <code>launch</code> still returns: the next copy fails after about 4 s with &ldquo;could be a kernel stall&rdquo; <span class="tag measured">Measured</span> (<a href="07-host-io.html#host-side">Ch. 7</a>).</p>
+<p>Line by line, with the Rosetta rows: the CUDA grid becomes <code>@set_rectangle</code> (grid row); <code>cudaMalloc</code> becomes static arrays placed at link time (<code>cudaMalloc</code> row); each <code>cudaMemcpy</code> becomes a <code>memcpy_h2d</code>/<code>memcpy_d2h</code> to a rectangle of PEs, here 1 &times; 1 with N elements per PE (<code>cudaMemcpy</code> row); <code>&lt;&lt;&lt;&gt;&gt;&gt;</code> becomes <code>rt.launch</code>, an RPC to a program that has been running since <code>rt.run()</code> (launch row); and the grid-stride loop with its thread index becomes the extent of one DSD, walked by a single <code>@fmacs</code> (grid-stride row). The device pointers <code>dx</code> and <code>dy</code> have a counterpart too: an array becomes an <a href="appendix-a-glossary.html#g-export-name-export-symbol">exported symbol</a>, declared by <code>@export_name</code> in the layout and bound by <code>@export_symbol</code> in the PE program, and the host resolves it with <code>rt.get_id('x')</code>. The handle <code>xs</code> names "array x on every PE of the rectangle", not an address.</p>
+<p>One line has no CUDA counterpart: <code>unblock_cmd_stream()</code>, which tells memcpy the RPC has finished so the host's next command can run. Without it the <code>launch</code> still returns: the next copy waits and fails after a few seconds (about 4&ndash;5 s) with &ldquo;could be a kernel stall&rdquo; <span class="tag measured">Measured</span> (<a href="07-host-io.html#host-side">Ch. 7</a>).</p>
+
+<h2 id="multi-pe">From <code>threadIdx</code> to &ldquo;which PE owns which slice&rdquo;</h2>
+<p>Program 01 runs on one PE, so it never shows the two steps a CUDA programmer needs most: how the data is dealt across PEs, and how a PE learns where it sits. Here is the same SAXPY on a 4 &times; 1 rectangle. The PE program is program 01's, unchanged: its <code>N</code> is now the number of elements <em>per PE</em>. Only the layout and the host's copy change. (A sketch, not one of the course programs; it compiled and printed SUCCESS! on the WSE-3 simulator with 16 elements per PE <span class="tag measured">Measured, SDK 2.10.1</span>.)</p>
+<div class="sbs">
+<div>
+<h4>CUDA: a thread computes its index</h4>
+<pre><code><span class="c">// global index of this thread</span>
+<span class="k">int</span> i = blockIdx.x*blockDim.x + threadIdx.x;
+<span class="k">if</span> (i &lt; n) y[i] = a * x[i] + y[i];
+<span class="c">// x, y: one array in global memory;</span>
+<span class="c">// thread i picks element i out of it</span></code></pre>
+</div>
+<div>
+<h4>CSL: the layout places, the host deals</h4>
+<div class="filename">layout.csl</div>
+<pre><code><span class="k">param</span> N_PE: i16;          <span class="c">// elements per PE</span>
+layout {
+  @set_rectangle(4, 1);
+  <span class="k">for</span> (@range(i16, 4)) |x| { <span class="c">// "blockIdx"</span>
+    @set_tile_code(x, 0, <span class="s">"pe_program.csl"</span>,
+      .{ .memcpy_params = memcpy.get_params(x),
+         .N = N_PE });
+  }
+  &hellip; <span class="c">// same @export_name lines</span>
+}</code></pre>
+<div class="filename">run.py</div>
+<pre><code><span class="c"># (x0, y0, width, height, elems per PE)</span>
+rt.memcpy_h2d(xs, x, 0, 0, 4, 1, N_PE, **kw)
+rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
+</div>
+</div>
+<figure id="deal-fig">
+<svg viewBox="0 0 680 190" width="680" role="img" aria-label="A host array of 4 times N_PE elements is cut into four slices; slice k goes to PE (k, 0), where one @fmacs walks its N_PE elements">
+<text x="20" y="22" font-size="12.5">host array x (4 &middot; N_PE elements, ROW_MAJOR)</text>
+<rect x="20" y="32" width="160" height="28" class="acc"/><rect x="180" y="32" width="160" height="28" class="blu"/><rect x="340" y="32" width="160" height="28" class="grn"/><rect x="500" y="32" width="160" height="28" class="pur"/>
+<text x="100" y="51" text-anchor="middle" font-size="12" class="mono">x[0 : N_PE]</text>
+<text x="260" y="51" text-anchor="middle" font-size="12" class="mono">x[N_PE : 2N_PE]</text>
+<text x="420" y="51" text-anchor="middle" font-size="12" class="mono">x[2N_PE : 3N_PE]</text>
+<text x="580" y="51" text-anchor="middle" font-size="12" class="mono">x[3N_PE : 4N_PE]</text>
+<path d="M100 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M260 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M420 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M580 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/>
+<defs><marker id="dl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="f-muted" style="fill: var(--muted)"/></marker></defs>
+<text x="340" y="84" text-anchor="middle" font-size="11.5" class="muted">memcpy_h2d(xs, x, 0, 0, 4, 1, N_PE): slice k goes to PE (k, 0)</text>
+<rect x="40" y="100" width="120" height="46" rx="6" class="acc"/><rect x="200" y="100" width="120" height="46" rx="6" class="blu"/><rect x="360" y="100" width="120" height="46" rx="6" class="grn"/><rect x="520" y="100" width="120" height="46" rx="6" class="pur"/>
+<text x="100" y="119" text-anchor="middle" font-size="12.5">PE (0, 0)</text><text x="260" y="119" text-anchor="middle" font-size="12.5">PE (1, 0)</text><text x="420" y="119" text-anchor="middle" font-size="12.5">PE (2, 0)</text><text x="580" y="119" text-anchor="middle" font-size="12.5">PE (3, 0)</text>
+<text x="100" y="137" text-anchor="middle" font-size="11" class="mono">@fmacs, N_PE elems</text><text x="260" y="137" text-anchor="middle" font-size="11" class="mono">@fmacs, N_PE elems</text><text x="420" y="137" text-anchor="middle" font-size="11" class="mono">@fmacs, N_PE elems</text><text x="580" y="137" text-anchor="middle" font-size="11" class="mono">@fmacs, N_PE elems</text>
+<text x="340" y="172" text-anchor="middle" font-size="12">CUDA&rsquo;s i = blockIdx&middot;blockDim + threadIdx &nbsp;&harr;&nbsp; i = (PE x)&middot;N_PE + (element j of that PE&rsquo;s DSD)</text>
+</svg>
+<figcaption><b>The host deals the array; the PE never computes an index.</b> With ROW_MAJOR order and width 4, the first N_PE elements go to PE (0, 0), the next N_PE to PE (1, 0), and so on <span class="tag sdk">SDK</span>. The same call with height &gt; 1 deals rows of PEs. <code>memcpy_d2h</code> with the same arguments gathers the slices back in the same order.</figcaption>
+</figure>
+<p>So CUDA's <code>blockIdx</code> becomes the layout loop's <code>x</code>, and <code>threadIdx</code> becomes the position inside the PE's DSD. SAXPY needs no index on the device at all: the slice a PE holds <em>is</em> its share of the work. When a PE must behave differently by position, the layout hands it a <a href="appendix-a-glossary.html#g-param">param</a>, as <a href="12-lab-neighbours.html#roles">program 03</a> does with <code>.role = if (x == 0) 0 else if (x == P - 1) 2 else 1</code> (first, middle, last), or the PE reads its coordinate at run time, as <code>&lt;collectives_2d&gt;</code> does in <a href="14-lab-gemm.html#collectives">Lab 4</a>. Params cost one ELF per distinct value set; a run-time coordinate keeps one ELF for all (<a href="10-csl-toolchain.html#builds">Ch. 10</a>).</p>
 
 <h2 id="budget">One PE's budget</h2>
 <p>Everything a kernel uses on a PE comes out of the limits below. memcpy, the host-I/O runtime, takes its share first (<a href="07-host-io.html#reserves">Chapter 7</a>). WSE-3 is the column to design for; WSE-2 differs in the rows marked in bold. Units: as in the chapters, KB here means 1,024 B, so 48 KB = 49,152 B and 44,500 B &asymp; 43.5 KB.</p>

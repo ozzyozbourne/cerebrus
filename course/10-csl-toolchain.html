@@ -305,7 +305,8 @@ The scalar language is the easy part.
 <tr><td>WSE-3, N = 64 (the course default)</td><td>4,752 B</td></tr>
 <tr><td>WSE-3, N = 1,024</td><td>12,432 B (= 4,240 + 2 × 1,024 × 4)</td></tr>
 <tr><td>WSE-3, N = 5,610</td><td>49,120 B of 49,152</td></tr>
-<tr><td>WSE-3, N = 5,620</td><td>link fails: <code>ld.lld: error: ran out of PE memory for data (section .data.hi)</code></td></tr>
+<tr><td>WSE-3, N = 5,615 (largest that links)</td><td>49,152 B, exactly full (the fixed part shrinks to 4,232 B here, by alignment)</td></tr>
+<tr><td>WSE-3, N = 5,616 or 5,620</td><td>link fails: <code>ld.lld: error: ran out of PE memory for task table</code> · <code>… for data (section .data.hi)</code></td></tr>
 <tr><td>WSE-2, N = 64</td><td>3,362 B (fixed part about 2.85 KB)</td></tr>
 </table></div>
 <div class="widget" id="mem">
@@ -318,7 +319,7 @@ The scalar language is the easy part.
 <svg id="mem-svg" viewBox="0 0 680 92" width="680" role="img" aria-label="48 KB memory bar"></svg>
 <div class="readout" id="mem-out" aria-live="polite"></div>
 </div>
-<p>So even an empty program uses about 4.2 KB on WSE-3 for code and the memcpy runtime, and overflow is a <strong>link</strong> error, not a run-time one. To find your own limit, bisect: <code>for N in 5000 5600 5620; do cslc … --params=N:$N -o b$N; cs_readelf -m b$N/bin/out_0_0.elf; done</code>.</p>
+<p>So SAXPY minus its two arrays still uses about 4.2 KB on WSE-3: roughly 3.2 KB of code (saxpy's plus the memcpy runtime) and about 1 KB of <em>task table</em>, the table the hardware uses to find each task's code from its <a href="appendix-a-glossary.html#g-task-id">task ID</a> (<a href="05-tasks.html">Chapter 5</a>). The split is approximate, scaled from an earlier <code>cs_readelf</code> measurement of a minimal program (3.2 KB code + 1 KB task table) <span class="tag derived">Derived</span>. That is why the linker's first complaint is "ran out of PE memory for task table". Overflow is a <strong>link</strong> error, not a run-time one. To find your own limit, bisect: <code>for N in 5000 5600 5620; do cslc … --params=N:$N -o b$N; cs_readelf -m b$N/bin/out_0_0.elf; done</code>.</p>
 
 <h2 id="stdlib">The standard library map</h2>
 <p>Modules are imported with <code>@import_module("&lt;name&gt;", .{params})</code>. They are plain CSL you can read inside the SIF (<code>csl-libs/</code>). For example, this is the whole of <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> <span class="tag sdk">SDK 2.10.1, csl-libs/layout.csl</span>:</p>
@@ -696,7 +697,7 @@ In this course's cloud container, running as root without <code>CAP_SYS_RESOURCE
 <li>Delete <code>@export_symbol(saxpy);</code>. <details><summary>what you'll see</summary> a clean compile, then "FATAL: Error: the function saxpy does not exist" from run.py.</details></li>
 <li>Delete <code>@export_symbol(x_ptr, "x");</code>. <details><summary>what you'll see</summary> a clean compile, then <code>TypeError: memcpy_h2d(): incompatible function arguments</code> at the first copy. Then put it back as <code>"xx"</code>: now it is a compile error, "name 'xx' was not declared during layout evaluation".</details></li>
 <li>Delete <code>sys_mod.unblock_cmd_stream();</code>. <details><summary>what you'll see</summary> <code>launch</code> returns; the D2H copy then aborts with "could be a kernel stall".</details></li>
-<li>Set <code>N:5620</code>. <details><summary>what you'll see</summary> "ran out of PE memory" from <code>ld.lld</code>. Then try 5610 and run <code>cs_readelf -m</code>.</details></li>
+<li>Set <code>N:5620</code>. <details><summary>what you'll see</summary> "ran out of PE memory" from <code>ld.lld</code>. Then try 5615 (it links, exactly 49,152 B) and 5616 (it fails), and run <code>cs_readelf -m</code>.</details></li>
 <li>Rebuild unchanged with <code>ARCH=wse2 bash commands.sh</code> and open <code>sim_stats.json</code>. <details><summary>what you'll see</summary> about 6,826 cycles instead of 7,740: same source, different chip; <code>@is_arch</code> and the memcpy library choose different code paths and timings.</details></li>
 </ol>
 
@@ -1022,21 +1023,25 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
   const svg = $("#mem-svg"), n = $("#mem-n"), arch = $("#mem-arch"), out = $("#mem-out");
   const CAP = 49152, BASE = { wse3: 4240, wse2: 2850 };
   function draw() {
-    const N = +n.value, b = BASE[arch.value], arr = 8 * N, used = b + arr, over = used > CAP;
+    const N = +n.value, b = BASE[arch.value], arr = 8 * N, used = b + arr, over = used > CAP + 16, edge = !over && used > CAP - 16;
     $("#mem-n-o").textContent = N;
     svg.innerHTML = "";
     const X0 = 20, W = 640, s = W / CAP;
     el("rect", { x: X0, y: 20, width: W, height: 34, rx: 6, class: "box" }, svg);
     el("rect", { x: X0, y: 20, width: b * s, height: 34, rx: 6, class: "pur" }, svg);
-    el("rect", { x: X0 + b * s, y: 20, width: Math.min(arr, CAP - b) * s, height: 34, class: over ? "red" : "acc" }, svg);
+    el("rect", { x: X0 + b * s, y: 20, width: Math.min(arr, CAP - b) * s, height: 34, class: over ? "red" : edge ? "amb" : "acc" }, svg);
     el("text", { x: X0 + 6, y: 15, "font-size": 12, class: "muted" }, svg).textContent = `code + memcpy ≈ ${(b / 1024).toFixed(1)} KB`;
     el("text", { x: X0 + W, y: 15, "text-anchor": "end", "font-size": 12, class: "muted" }, svg).textContent = "48 KB = 49,152 B";
     el("text", { x: X0 + b * s + 8, y: 42, "font-size": 12.5, "font-weight": 600 }, svg).textContent = `x, y: 2 × ${N} × 4 B = ${arr.toLocaleString()} B`;
-    el("text", { x: X0, y: 76, "font-size": 12.5, "font-weight": 700, class: over ? "f-red" : "f-grn" }, svg).textContent =
-      over ? `${used.toLocaleString()} B > 49,152: ld.lld "ran out of PE memory"` : `${used.toLocaleString()} B used, ${(CAP - used).toLocaleString()} B free`;
+    el("text", { x: X0, y: 76, "font-size": 12.5, "font-weight": 700, class: over ? "f-red" : edge ? "f-amb" : "f-grn" }, svg).textContent =
+      over ? `≈ ${used.toLocaleString()} B > 49,152: ld.lld "ran out of PE memory"`
+      : edge ? `≈ ${used.toLocaleString()} B: at the edge; this line is a few bytes off here (alignment), so build and check`
+      : `≈ ${used.toLocaleString()} B used, ${(CAP - used).toLocaleString()} B free`;
     const maxN = Math.floor((CAP - b) / 8);
-    out.textContent = `${arch.value.toUpperCase()}: largest N ≈ ${maxN.toLocaleString()} by this line (Derived).` +
-      (arch.value === "wse3" ? " Measured: 5,610 links at 49,120 B; 5,620 fails." : " WSE-2 fixed part measured at N = 64 only; treat the limit as approximate.");
+    out.textContent = (arch.value === "wse3"
+      ? `WSE-3: largest N ≈ 5,614–5,615 (Derived from this line; Measured: 5,615 links at exactly 49,152 B, 5,616 and 5,620 fail).`
+      : `WSE-2: largest N ≈ ${maxN.toLocaleString()} by this line (Derived; Measured: 5,784 links, 5,790 fails).`) +
+      (arch.value === "wse3" ? " The purple part is ≈ 3.2 KB code + memcpy runtime and ≈ 1 KB task table." : "");
   }
   n.oninput = draw; arch.onchange = draw; draw();
 })();

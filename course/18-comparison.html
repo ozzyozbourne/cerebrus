@@ -257,7 +257,7 @@ ol.decoder li { margin: 4px 0; }
 <p>"GPUs win on throughput per dollar" is the main counterweight to Cerebras's speed. The model below shows <em>why</em> prices differ and what would change them. Every input is editable and tagged; every output is <span class="tag derived">Derived</span>.</p>
 <div class="widget" id="cost">
 <h4>A transparent cost and energy model</h4>
-<p class="hint">$ per M tokens = (capex ÷ amortisation hours + kW × $/kWh) ÷ (aggregate tok/s × 3,600 ÷ 10⁶). Joules per token = W ÷ aggregate tok/s. Try raising the Cerebras stream count until the price reaches the $0.60 list price.</p>
+<p class="hint">$ per M tokens = (capex ÷ amortisation hours + kW × $/kWh) ÷ (aggregate tok/s × 3,600 ÷ 10⁶). Joules per token = W ÷ aggregate tok/s. Try raising the Cerebras stream count until the price reaches the $0.60 list price, then read the KV line: each stream's KV cache must fit in the SRAM the weights leave free (<a href="09-model-to-tokens.html#pipeline">Ch. 9</a>), so the context length caps the stream count.</p>
 <div class="controls"><label>Preset <select id="k-p"><option value="cb">4 × CS-3, Llama 3.3-70B</option><option value="tt">Wormhole Galaxy, Llama 3.3-70B, batch 32</option></select></label></div>
 <div class="calc">
 <label>Capex ($) <input type="number" id="k-capex" min="0" step="1000"><span class="small" id="k-capex-t"></span></label>
@@ -266,6 +266,7 @@ ol.decoder li { margin: 4px 0; }
 <label>Electricity ($/kWh) <input type="number" id="k-e" min="0" step="0.01"><span class="small"><span class="tag derived">Assumption</span></span></label>
 <label>Tokens/s per stream <input type="number" id="k-ts" min="0" step="0.1"><span class="small" id="k-ts-t"></span></label>
 <label>Concurrent streams <input type="number" id="k-n" min="1" step="1"><span class="small" id="k-n-t"></span></label>
+<label id="k-ctx-l">Context per stream (tokens) <input type="number" id="k-ctx" min="128" step="512" value="8192"><span class="small"><span class="tag derived">Derived, Ch. 9</span> 0.33 MB of KV per token; ~36 GB spare after the weights, ~21 GB after code</span></label>
 </div>
 <div class="rd" id="k-out" aria-live="polite"></div>
 </div>
@@ -855,6 +856,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
   const kIn = ["capex", "yr", "kw", "e", "ts", "n"].reduce((o, k) => (o[k] = $("#k-" + k), o), {});
   function kLoad() {
     const p = KP[$("#k-p").value];
+    $("#k-ctx-l").style.display = $("#k-p").value === "cb" ? "" : "none";
     Object.keys(kIn).forEach(k => kIn[k].value = p[k]);
     $("#k-capex-t").innerHTML = p.capexT; $("#k-kw-t").innerHTML = p.kwT; $("#k-ts-t").innerHTML = p.tsT; $("#k-n-t").innerHTML = p.nT;
     kCalc();
@@ -866,12 +868,21 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     let s = `Capex $${capH.toFixed(capH < 10 ? 2 : 0)}/h + power $${powH.toFixed(2)}/h = $${(capH + powH).toFixed(2)}/h. Aggregate ${Math.round(agg).toLocaleString("en-US")} tok/s = ${mtokH.toFixed(2)} M tokens/h.\n`;
     s += `→ $${isFinite(per) ? (per < 1 ? per.toFixed(3) : per.toFixed(2)) : "∞"} per M tokens; ${isFinite(jpt) ? (jpt < 10 ? jpt.toFixed(2) : jpt.toFixed(1)) : "∞"} J per token. `;
     if ($("#k-p").value === "cb" && isFinite(per)) {
-      const need = Math.ceil(per * Math.max(1, g("n")) / 0.60);
-      s += `To reach the $0.60/M list price at these inputs takes ≈ ${need} concurrent streams.`;
+      const n = Math.max(1, g("n")), need = Math.ceil(per * n / 0.60), ctx = Math.max(128, g("ctx")), KVT = 327680;
+      const maxAll = Math.floor(36e9 / (KVT * ctx)), maxCode = Math.floor(21e9 / (KVT * ctx));
+      const perAt = m => m >= 1 ? per * n / m : Infinity, fm = v => isFinite(v) ? "$" + v.toFixed(2) : "∞";
+      s += `To reach the $0.60/M list price (2024) at these inputs takes ≈ ${need} concurrent streams.<br>`;
+      s += `<b>KV limit</b> at ${Math.round(ctx).toLocaleString("en-US")} tokens per stream: 4 × CS-3 holds at most ${maxAll} stream${maxAll === 1 ? "" : "s"} (~${maxCode} after code), so at best ${fm(perAt(maxAll))}/M, or ${fm(perAt(maxCode))}/M after code. `;
+      if (n > maxAll) s += `<b>${n} streams do not fit</b> at this context. `;
+      if (need <= maxAll) s += `${need} streams fit at this context.`;
+      else {
+        const capNeed = (0.60 * maxAll * g("ts") * 3600 / 1e6 - powH) * Math.max(0.5, g("yr")) * 8760;
+        s += `${need} streams fit only below ~${Math.floor(36e9 / (KVT * need)).toLocaleString("en-US")} tokens each; at ${maxAll} stream${maxAll === 1 ? "" : "s"} the $0.60 price needs capex ≤ ${capNeed > 0 ? "$" + (capNeed / 1e6).toFixed(1) + "M" : "zero (power alone costs more)"}, or KV held off the wafer.`;
+      }
     } else s += "Compare: batched H100 ~$0.10–0.25/M (analyst); no H100 capex in the sources.";
     $("#k-out").innerHTML = s.replace("\n", "<br>") + " " + tg("derived");
   }
-  $("#k-p").onchange = kLoad; Object.values(kIn).forEach(i => i.oninput = kCalc); kLoad();
+  $("#k-p").onchange = kLoad; Object.values(kIn).forEach(i => i.oninput = kCalc); $("#k-ctx").oninput = kCalc; kLoad();
 
   // ---------- 8. Lab 3 step chart ----------
   const labN = $("#lab-n");
