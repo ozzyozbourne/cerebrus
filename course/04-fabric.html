@@ -491,10 +491,8 @@ cp -r $EX/tutorials/topic-08-filters ~/t8 &amp;&amp; cd ~/t8 &amp;&amp; bash com
       const xa = p.from === "W" ? x0 + 8 : x0 + PW - 8, xb = p.from === "W" ? cxp - 42 : cxp + 42;
       T("line", { x1: xa, y1: 78, x2: xb, y2: 78, stroke: cssVar(p.col), "stroke-width": 3, "marker-end": `url(#${p.m})` }, g);
       if (p.ctrl) T("circle", { cx: (xa + xb) / 2, cy: 78, r: 7, fill: cssVar("--surface"), stroke: cssVar("--purple"), "stroke-width": 2.5 }, g);
-      T("text", { x: cxp, y: 124, "text-anchor": "middle", "font-size": 11, class: "mono muted" }, g, "");
       T("text", { x: cxp, y: 44, "text-anchor": "middle", "font-size": 11, class: "mono" }, g, p.route);
-      p.note.forEach((n, k) => T("text", { x: cxp, y: 196 + k * 16, "text-anchor": "middle", "font-size": 11, class: k || i !== 2 ? "muted" : "mono" }, g, n));
-      if (i === 2) { /* both lines mono */ }
+      p.note.forEach((n, k) => T("text", { x: cxp, y: 196 + k * 16, "text-anchor": "middle", "font-size": 11, class: i === 2 ? "mono" : "muted" }, g, n));
       T("text", { x: cxp, y: 234, "text-anchor": "middle", "font-size": 11, class: "f-pur mono" }, g, p.state);
     });
   })();
