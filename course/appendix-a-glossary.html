@@ -85,7 +85,7 @@
 <h2 id="glossary">Glossary</h2>
 <div class="widget" id="gl">
 <h4>Search the glossary</h4>
-<p class="hint">Type the start of a term, a builtin (<code>@fmacs</code>), a format (<code>bf16</code>) or a word from a definition. Pick a machine to narrow the list. Each entry links to the chapter section that explains it; the <b>#</b> is the entry's own link, for sharing.</p>
+<p class="hint">Type the start of a term, a builtin (<code>@fmacs</code>, <code>@get_dsd</code>), a format (<code>bf16</code>) or a word from a definition. Pick a machine to narrow the list. Each entry links to the chapter section that explains it; the <b>#</b> is the entry's own link, for sharing.</p>
 <div class="gl-tools">
 <div class="chips" role="group" aria-label="Filter by machine">
 <button type="button" data-cat="all" aria-pressed="true">All</button>
@@ -333,9 +333,9 @@
 <figure>
 <svg id="fmt-svg" viewBox="0 0 760 520" width="760" role="img" aria-labelledby="fmt-t fmt-d">
 <title id="fmt-t">Bit layouts of the number formats in this course</title>
-<desc id="fmt-d">Rows of bit cells, one row per format. fp32: 1 sign, 8 exponent, 23 mantissa bits. bf16: 1, 8, 7. fp16: 1, 5, 10. cb16, layout unverified: 1, 6, 9. FP8 E5M2: 1, 5, 2. FP8 E4M3: 1, 4, 3. FP4 E2M1: 1, 2, 1. int8: 8 integer bits. Block formats: BlockFP8 (bfloat8_b) stores one shared 8-bit exponent and 16 values of sign plus 7 mantissa bits; NVFP4 stores one FP8 E4M3 scale and 16 E2M1 values, plus a per-tensor FP32 scale; MXFP4 stores one 8-bit power-of-two scale and 32 E2M1 values.</desc>
+<desc id="fmt-d">Rows of bit cells, one row per format. fp32: 1 sign, 8 exponent, 23 mantissa bits. bf16: 1, 8, 7. fp16: 1, 5, 10. cb16 (bias assumed): 1, 6, 9. FP8 E5M2: 1, 5, 2. FP8 E4M3: 1, 4, 3. FP4 E2M1: 1, 2, 1. int8: 8 integer bits. Block formats: BlockFP8 (bfloat8_b) stores one shared 8-bit exponent and 16 values of sign plus 7 mantissa bits; NVFP4 stores one FP8 E4M3 scale and 16 E2M1 values, plus a per-tensor FP32 scale; MXFP4 stores one 8-bit power-of-two scale and 32 E2M1 values.</desc>
 </svg>
-<figcaption><b>One cell per bit.</b> The scalar formats share one cell width, and the block formats a narrower one, so bits compare to scale within each group (including the amber 8-bit scales). Field labels give the field and its width: E5 = 5 exponent bits, M2 = 2 mantissa bits. Red = sign, blue = exponent, green = mantissa, grey = integer, amber = a scale shared by a block. IEEE fp32/fp16 and bfloat16 are industry standards, and the f16 encoding was checked in <code>cslc</code> (below). The FP8 and MXFP4 layouts follow the OCP specifications <span class="tag unv">not re-read for this course</span>; NVFP4 is from NVIDIA <span class="tag vendor">Vendor</span> (<a href="17-gpu.html#generations">Ch. 17</a>), BlockFP8 from Tenstorrent <span class="tag vendor">Vendor</span> (<a href="16-tenstorrent.html#tensix">Ch. 16</a>). The cb16 row is dashed: 1 / 6 / 9 is a commonly reported split that no source in this course confirms <span class="tag unv">Unverified</span>.</figcaption>
+<figcaption><b>One cell per bit.</b> The scalar formats share one cell width, and the block formats a narrower one, so bits compare to scale within each group (including the amber 8-bit scales). Field labels give the field and its width: E5 = 5 exponent bits, M2 = 2 mantissa bits. Red = sign, blue = exponent, green = mantissa, grey = integer, amber = a scale shared by a block. IEEE fp32/fp16 and bfloat16 are industry standards, and the f16 encoding was checked in <code>cslc</code> (below). The FP8 and MXFP4 layouts follow the OCP specifications <span class="tag unv">not re-read for this course</span>; NVFP4 is from NVIDIA <span class="tag vendor">Vendor</span> (<a href="17-gpu.html#generations">Ch. 17</a>), BlockFP8 from Tenstorrent <span class="tag vendor">Vendor</span> (<a href="16-tenstorrent.html#tensix">Ch. 16</a>). The cb16 row is dashed: Cerebras's ML documentation gives the 1 / 6 / 9 split <span class="tag vendor">Vendor</span>, but not the bias or how special values are encoded, so those are assumed IEEE-like <span class="tag derived">Derived</span>.</figcaption>
 </figure>
 
 <div class="table-wrap"><table>
@@ -343,7 +343,7 @@
 <tr><td><b>fp32</b> (CSL <code>f32</code>)</td><td>1 / 8 / 23</td><td>127</td><td>3.40 &times; 10<sup>38</sup></td><td>1.18 &times; 10<sup>&minus;38</sup></td><td>1.19 &times; 10<sup>&minus;7</sup></td><td>every lab; MemoryX master weights and gradients (<a href="08-systems.html#memoryx">Ch. 8</a>)</td></tr>
 <tr><td><b>fp16</b> (IEEE half; CSL <code>f16</code> by default)</td><td>1 / 5 / 10</td><td>15</td><td>65,504</td><td>6.10 &times; 10<sup>&minus;5</sup></td><td>9.77 &times; 10<sup>&minus;4</sup></td><td>WSE SIMD widths and f16 rates (<a href="03-processing-element.html#pe-speed">Ch. 3</a>, <a href="06-dsds.html#op-speed">Ch. 6</a>); weight-streaming weights (<a href="08-systems.html#weight-streaming">Ch. 8</a>)</td></tr>
 <tr><td><b>bf16</b> (bfloat16)</td><td>1 / 8 / 7</td><td>127</td><td>3.39 &times; 10<sup>38</sup></td><td>1.18 &times; 10<sup>&minus;38</sup></td><td>7.81 &times; 10<sup>&minus;3</sup></td><td>H100's 989 TF, Tensix tiles, WSE-3 SIMD (<a href="17-gpu.html#tensor-flops">Ch. 17</a>, <a href="16-tenstorrent.html#tensix">Ch. 16</a>)</td></tr>
-<tr><td><b>cb16</b> (Cerebras 16-bit) <span class="tag unv">Unverified layout</span></td><td>1 / 6 / 9 (reported)</td><td>31 (if IEEE-like)</td><td>&asymp; 4.29 &times; 10<sup>9</sup></td><td>9.31 &times; 10<sup>&minus;10</sup></td><td>1.95 &times; 10<sup>&minus;3</sup></td><td><code>--fp16-format=cb16</code> (<a href="10-csl-toolchain.html#flags">Ch. 10</a>)</td></tr>
+<tr><td><b>cb16</b> (Cerebras 16-bit) <span class="tag vendor">Vendor, Cerebras ML docs</span></td><td>1 / 6 / 9</td><td>31 (if IEEE-like) <span class="tag derived">Derived</span></td><td>&asymp; 4.29 &times; 10<sup>9</sup></td><td>9.31 &times; 10<sup>&minus;10</sup></td><td>1.95 &times; 10<sup>&minus;3</sup></td><td><code>--fp16-format=cb16</code> (<a href="10-csl-toolchain.html#flags">Ch. 10</a>)</td></tr>
 <tr><td><b>FP8 E5M2</b></td><td>1 / 5 / 2</td><td>15</td><td>57,344</td><td>6.10 &times; 10<sup>&minus;5</sup></td><td>0.25</td><td>Hopper FP8 (<a href="17-gpu.html#generations">Ch. 17</a>)</td></tr>
 <tr><td><b>FP8 E4M3</b> (no infinities)</td><td>1 / 4 / 3</td><td>7</td><td>448</td><td>1.56 &times; 10<sup>&minus;2</sup></td><td>0.125</td><td>Hopper FP8; NVFP4's block scale (<a href="17-gpu.html#generations">Ch. 17</a>)</td></tr>
 <tr><td><b>FP4 E2M1</b> (no NaN or infinity)</td><td>1 / 2 / 1</td><td>1</td><td>6</td><td>1</td><td>0.5</td><td>the element of NVFP4 and MXFP4; B200's 9 PF (<a href="17-gpu.html#generations">Ch. 17</a>)</td></tr>
@@ -370,7 +370,7 @@
 <option value="fp32">fp32 (1/8/23)</option>
 <option value="bf16">bf16 (1/8/7)</option>
 <option value="fp16" selected>fp16 (1/5/10)</option>
-<option value="cb16">cb16 (1/6/9, unverified layout)</option>
+<option value="cb16">cb16 (1/6/9; bias assumed)</option>
 <option value="e5m2">FP8 E5M2</option>
 <option value="e4m3">FP8 E4M3</option>
 <option value="e2m1">FP4 E2M1</option>
@@ -516,7 +516,7 @@ const FMT = {
   fp32: { n: "fp32", e: 8, m: 23, bias: 127, kind: "ieee" },
   bf16: { n: "bf16", e: 8, m: 7, bias: 127, kind: "ieee" },
   fp16: { n: "fp16", e: 5, m: 10, bias: 15, kind: "ieee" },
-  cb16: { n: "cb16 (assumed 1/6/9, IEEE-like; unverified)", e: 6, m: 9, bias: 31, kind: "ieee" },
+  cb16: { n: "cb16 (1/6/9 per Cerebras docs; bias 31 assumed)", e: 6, m: 9, bias: 31, kind: "ieee" },
   e5m2: { n: "FP8 E5M2", e: 5, m: 2, bias: 15, kind: "ieee" },
   e4m3: { n: "FP8 E4M3", e: 4, m: 3, bias: 7, kind: "e4m3" },
   e2m1: { n: "FP4 E2M1", e: 2, m: 1, bias: 1, kind: "nospec" },
@@ -579,7 +579,7 @@ const fmtNum = v => !Number.isFinite(v) ? String(v) : v === 0 ? (Object.is(v, -0
   const svg = $("#fmt-svg");
   const rows = [
     ["fp32", [["s", 1], ["e", 8], ["m", 23]]], ["bf16", [["s", 1], ["e", 8], ["m", 7]]], ["fp16", [["s", 1], ["e", 5], ["m", 10]]],
-    ["cb16 (?)", [["s", 1], ["e", 6], ["m", 9]], true], ["FP8 E5M2", [["s", 1], ["e", 5], ["m", 2]]], ["FP8 E4M3", [["s", 1], ["e", 4], ["m", 3]]],
+    ["cb16 (bias?)", [["s", 1], ["e", 6], ["m", 9]], true], ["FP8 E5M2", [["s", 1], ["e", 5], ["m", 2]]], ["FP8 E4M3", [["s", 1], ["e", 4], ["m", 3]]],
     ["FP4 E2M1", [["s", 1], ["e", 2], ["m", 1]]], ["int8", [["i", 8]]],
   ];
   const cls = { s: "red", e: "blu", m: "grn", i: "box", k: "amb" }, lab = { s: "S", e: "E", m: "M", i: "int " };
@@ -701,7 +701,7 @@ const fmtNum = v => !Number.isFinite(v) ? String(v) : v === 0 ? (Object.is(v, -0
     if (note) lines.push(note);
     if (Number.isFinite(v)) { const nu = nextUp(f, code); if (nu !== v && Number.isFinite(nu)) lines.push(`next value up: ${fmtNum(nu)} (gap ${fmtNum(nu - v)})`); }
     lines.push(`largest finite ${fmtNum(maxFinite(f))}` + (f.kind !== "int" ? ` · smallest normal ${fmtNum(2 ** (1 - f.bias))} · relative step 2^-${f.m} = ${fmtNum(2 ** -f.m)}` : ""));
-    if (sel.value === "cb16") lines.push("cb16: the bit split and bias are an unverified assumption (see the table).");
+    if (sel.value === "cb16") lines.push("cb16: the 1/6/9 split is from Cerebras's ML docs; the bias (31) and IEEE-like special values are assumed (see the table).");
     out.textContent = lines.join("\n");
   }
   // On a format change keep the value if the box holds one; otherwise keep the old bits' value.

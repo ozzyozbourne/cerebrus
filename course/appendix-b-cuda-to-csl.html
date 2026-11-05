@@ -62,7 +62,7 @@
 </ul>
 </div>
 
-<p>Tags as in the chapters: <span class="tag vendor">Vendor</span> <span class="tag indep">Independent</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span>. Every number here is copied from the linked chapter or from the course's cross-chapter notes; nothing new was measured for this page. Terms are defined in <a href="appendix-a-glossary.html">Appendix A</a>.</p>
+<p>Tags as in the chapters: <span class="tag vendor">Vendor</span> <span class="tag indep">Independent</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span>. Every number here is copied from the linked chapter or from the course's cross-chapter notes; nothing new was measured for this page except one compile-and-run of the four-PE SAXPY sketch (<a href="#multi-pe">below</a>). Terms are defined in <a href="appendix-a-glossary.html">Appendix A</a>.</p>
 
 <h2 id="rosetta">CUDA &rarr; CSL &rarr; TT-Metalium</h2>
 <p>The short version: CUDA launches many identical threads over one shared memory and lets hardware schedule and cache. CSL places a resident program on every PE, gives each one private memory, and moves data only along routes you declared. TT-Metalium sits between: per-core programs and explicit transfers, but large local memory and GDDR6 beside the chip that every core reaches over the NoC (<a href="18-comparison.html#programming-model">Chapter 18</a>, <a href="16-tenstorrent.html">Ch. 16</a>). Rows marked <span class="noeq">no equivalent</span> are where CUDA intuition misleads.</p>

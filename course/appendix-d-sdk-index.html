@@ -166,7 +166,7 @@ bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
   //   arch: both | w3 | w2 | none | lib.   chapters: numbers or "C" (drive the chapter filter and the heat map).
   //   where: [[label, chapter, anchor, concept?], ...]; chapter null = plain text.  status: lab | exp | nam | no
   const T = "tutorial", B = "benchmark", L = "library";
-  const IMP = "Needs the benchmark-libs import fix (see the callout above).";
+  const IMP = 'Needs the benchmark-libs import fix (<a href="#run">see the callout above</a>).';   // notes are trusted HTML
   const D = [
     ["gemv-00-basic-syntax", T, "Language", "CSL syntax tour: types, functions, loops, comptime. A code fragment, not a program", "none", [10, 18],
       [["The language in one screen", 10, "language"], ["Where to go next", 18, "next"]], "exp", "No run script: nothing to run."],
@@ -229,25 +229,25 @@ bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
     ["topic-12-debug-library", T, "Debug & timing", "<debug> trace buffers (values, strings, timestamps) read by the host", "both", [10, "C"],
       [["Debugging", 10, "debugging"], ["Other ways to look inside", "C", "tools"]], "exp"],
     ["topic-13-simprint", T, "Debug & timing", "<simprint>: print to sim.log from the device", "both", [10, "C"],
-      [["When it hangs: a four-step procedure", 10, "hangs"], ["Other ways to look inside", "C", "tools"]], "exp", "No course program uses <simprint>; Ch 10 and App C explain it."],
+      [["When it hangs: a four-step procedure", 10, "hangs"], ["Other ways to look inside", "C", "tools"]], "exp", "A variant of topic-12 (its README: \"modifies the previous example\"), so run topic-12 first. No course program uses &lt;simprint&gt;; Ch 10 and App C explain it."],
     ["topic-14-color-swap", T, "Fabric routing", "Color swap: a router flips between two colors", "w2", [4],
-      [["Why programs alternate colors", 4, "checkerboard"]], "nam", "WSE-2 only; not supported on WSE-3 in 2.10.1."],
+      [["Why programs alternate colors", 4, "checkerboard"], ["The router by the numbers (color swap row)", 4, "router-numbers"]], "nam", 'WSE-2 only; not supported on WSE-3 in 2.10.1 (<a href="04-fabric.html#router-numbers">Ch 4 router table</a>).'],
     ["topic-15-wse3-microthreads", T, "Tasks & queues", "Explicit microthread IDs, decoupled from queue IDs", "w3", [3, 5, 6],
       [["Microthreads: overlap, not more FLOPs", 3, "microthreads"], ["WSE-2 versus WSE-3", 5, "portability"], ["Async operations and completion tasks", 6, "async"]], "exp", "WSE-3 only."],
     ["topic-16-queue-flush", T, "Tasks & queues", "@queue_flush: reuse a WSE-3 output queue with another color", "both", [4, 5, 10],
       [["Reusing a queue on WSE-3: @queue_flush and teardown task 29", 5, "queue-flush"], ["Teardown", 4, "teardown"]], "exp"],
     ["25-pt-stencil", B, "Stencils & solvers", "3-D 25-point time-marching stencil (seismic), velocity and source fields", "w2", [4, 5, 6, 13, 18],
-      [["How the SDK's stencils differ", 13, "sdk-stencils"], ["Budget check (18 local tasks)", 5, "budget"], ["More than one dimension: mem4d_dsd", 6, "mem4d"]], "exp", "WSE-2 only."],
+      [["How the SDK's stencils differ", 13, "sdk-stencils"], ["Budget check (18 local tasks)", 5, "budget"], ["More than one dimension: mem4d_dsd", 6, "mem4d"]], "exp", 'WSE-2 only. A port would first have to share tasks: it binds 18 local task IDs, more than WSE-3 leaves free (<a href="05-tasks.html#budget">Ch 5 · Budget check</a>).'],
     ["7pt-stencil-spmv", B, "Stencils & solvers", "3-D 7-point stencil as SpMV, timed with TSC + sync + time_ref", "both", [10, 13, 18, "C"],
       [["How the SDK's stencils differ", 13, "sdk-stencils"], ["On-tile cycles: the TSC", "C", "tsc"], ["The standard library map", 10, "stdlib"]], "exp", IMP],
     ["bandwidth-test", B, "Host I/O", "Host-device bandwidth measured on the device with the TSC", "both", [1, 7, 11, 12, "C"],
-      [["The narrow door", 7, "door"], ["Measure the kernel itself", 11, "kernel-time"], ["On-tile cycles: the TSC", "C", "tsc"]], "exp"],
-    ["bicgstab", B, "Stencils & solvers", "BiCGSTAB on a 7-point stencil matrix; host loop or device loop", "both", [2, 13, 18],
-      [["Choosing (SDK benchmark list)", 18, "choosing"], ["Surviving defects (the CS-1 BiCGStab result)", 2, "defects"], ["same modules as the CG lab: Composing modules", 15, "modules", 1]], "nam", IMP],
+      [["The narrow door", 7, "door"], ["Measure the kernel itself", 11, "kernel-time"], ["On-tile cycles: the TSC", "C", "tsc"]], "exp", "Prints bandwidth measurements, not SUCCESS!."],
+    ["bicgstab", B, "Stencils & solvers", "BiCGSTAB on a 7-point stencil matrix; host loop or device loop", "both", [2, 10, 13, 18],
+      [["Choosing (SDK benchmark list)", 18, "choosing"], ["Surviving defects (the CS-1 BiCGStab result)", 2, "defects"], ["How the SDK's stencils differ (CS-1 BiCGSTAB for comparison)", 13, "sdk-stencils"], ["The standard library map (benchmark-libs)", 10, "stdlib"], ["same modules as the CG lab: Composing modules", 15, "modules", 1]], "nam", IMP],
     ["cholesky", B, "Linear algebra", "Right-looking Cholesky on the lower triangle", "both", [18],
       [["Choosing (SDK benchmark list)", 18, "choosing"]], "nam"],
     ["conjugate-gradient", B, "Stencils & solvers", "CG composed from stencil_3d_7pts (SpMV), allreduce (dots) and blas.csl", "both", [6, 10, 15, 18, "C"],
-      [["Composing modules", 15, "modules"], ["Where an iteration's cycles go", 15, "profile"]], "lab", IMP],
+      [["Composing modules", 15, "modules"], ["Two loops, one program (run.py vs device_run.py)", 15, "two-loops"], ["Where an iteration's cycles go", 15, "profile"]], "lab", IMP],
     ["fft-1d-2d", B, "Other algorithms", "Radix-2 Cooley-Tukey 1-D and 2-D DFT with DSD base/length/stride moves", "both", [6],
       [["Two spellings, and moving a DSD", 6, "moving-dsd"]], "nam"],
     ["fft-3d", B, "Other algorithms", "3-D FFT by pencil decomposition: local FFTs and all-to-all transposes", "w3", [10, 18],
@@ -261,21 +261,21 @@ bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
     ["gemv-collectives_2d", B, "Collectives", "2-D GEMV with <collectives_2d> scatter, broadcast and reduce", "both", [12],
       [["The library version: <collectives_2d>", 12, "collectives"]], "exp"],
     ["histogram-torus", B, "Other algorithms", "Distributed histogram with buckets spread over PEs on a torus; kernels/tally for completion", "w2", [4, 10],
-      [["Reaching PEs you have no route to", 4, "relay"], ["The standard library map (kernels/tally)", 10, "stdlib"]], "nam", "WSE-2 only."],
+      [["Reaching PEs you have no route to", 4, "relay"], ["The standard library map (kernels/tally)", 10, "stdlib"]], "nam", 'WSE-2 only. The course names no specific blocker; a port starts from the WSE-3 queue rules (<a href="05-tasks.html#portability">Ch 5 · WSE-2 versus WSE-3</a>); kernels/tally already has WSE-3 code paths.'],
     ["mandelbrot", B, "Other algorithms", "Pipeline-parallel Mandelbrot on 4 × 4 PEs (left/middle PE roles)", "both", [],
       [["Not covered (try after Ch 12: load imbalance along a pipeline)", null]], "no"],
-    ["power-method", B, "Stencils & solvers", "Power iteration for the largest eigenvalue of a 7-point stencil matrix", "both", [18],
-      [["Choosing (SDK benchmark list)", 18, "choosing"], ["same modules as the CG lab: Composing modules", 15, "modules", 1]], "nam", IMP],
-    ["preconditioned-conjugate-gradient", B, "Stencils & solvers", "PCG: CG with a preconditioner on the 7-point stencil", "both", [18],
-      [["Choosing (SDK benchmark list)", 18, "choosing"], ["CG itself: Composing modules", 15, "modules", 1]], "nam", IMP],
+    ["power-method", B, "Stencils & solvers", "Power iteration for the largest eigenvalue of a 7-point stencil matrix", "both", [10, 18],
+      [["Choosing (SDK benchmark list)", 18, "choosing"], ["The standard library map (benchmark-libs)", 10, "stdlib"], ["same modules as the CG lab: Composing modules", 15, "modules", 1]], "nam", IMP],
+    ["preconditioned-conjugate-gradient", B, "Stencils & solvers", "PCG: CG with a (Jacobi) preconditioner on the 7-point stencil", "both", [10, 15, 18],
+      [["How it scales (the SDK's PCG uses Jacobi)", 15, "scaling"], ["Choosing (SDK benchmark list)", 18, "choosing"], ["The standard library map (benchmark-libs)", 10, "stdlib"], ["CG itself: Composing modules", 15, "modules", 1]], "nam", IMP],
     ["residual", B, "Linear algebra", "|b − Ax| on 2 × 2 PEs: row reduction, then column reduction for the norm", "both", [],
       [["Not covered", null], ["row reduction: Program 03", 12, "row-reduce", 1]], "no"],
     ["row-col-broadcast", B, "Host I/O", "memcpy_h2d_rowbcast / colbcast send one row or column to a region", "both", [7],
-      [["How a copy reaches its PE", 7, "copy-path"]], "exp"],
+      [["How a copy reaches its PE", 7, "copy-path"]], "exp", "Prints measurements, not SUCCESS!."],
     ["single-tile-matvec", B, "Linear algebra", "One-PE y = Ax sweep: memory bandwidth and FLOP/s per PE", "both", [1, 2, 3, 6, 7, 9, 10, 18],
       [["Is memory fast enough to feed the math?", 3, "feed"], ["Where the 48 KB goes", 3, "memory-map"], ["How fast is one instruction?", 6, "op-speed"], ["Where the SDK fits", 9, "sdk"]], "exp"],
     ["spmv-hypersparse", B, "Linear algebra", "Hypersparse SpMV with its own allreduce and f_sync timing", "w2", [3, 5],
-      [["When several tasks are ready (its priority mask)", 5, "priority"], ["Where the 48 KB goes", 3, "memory-map"], ["sparsity", 3, "sparsity", 1]], "nam", "WSE-2 only."],
+      [["When several tasks are ready (its priority mask)", 5, "priority"], ["Where the 48 KB goes", 3, "memory-map"], ["sparsity", 3, "sparsity", 1]], "nam", 'WSE-2 only. The course names no specific blocker; a port starts from the WSE-3 queue and microthread rules (<a href="05-tasks.html#portability">Ch 5 · WSE-2 versus WSE-3</a>). Prints measurements, not SUCCESS!.'],
     ["wide-multiplication", B, "Other algorithms", "128 × 128 → 256-bit integer multiply from 16-bit words: carry chains", "both", [],
       [["Not covered", null]], "no"],
     ["benchmark-libs/allreduce", L, "Collectives", "Allreduce over a rectangle: row reduce, column reduce, broadcast back; also the sync for TSC timing", "lib", [10, 12, 15, "C"],
@@ -287,6 +287,28 @@ bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
     ["csl-libs/kernels/tally", L, "Collectives", "Two-phase global completion tally reported from one PE", "lib", [10],
       [["The standard library map", 10, "stdlib"]], "nam", "Library with WSE-2 and WSE-3 code paths; its only consumer, histogram-torus, ships a WSE-2 script."],
   ];
+  // X3: which course program does a Labbed example
+  const PROG = { "gemv-01-complete-program": "01-saxpy", "gemv-03-memcpy": "01-saxpy", "topic-02-libraries": "01-saxpy",
+    "gemv-09-streaming": "02-wavelet-tasks", "topic-03-streaming-wavelet-data": "02-wavelet-tasks", "gemv-06-routes-1": "03-row-reduce",
+    "gemv-07-routes-2": "05-column-broadcast", "topic-11-collectives": "06-summa", "gemm-collectives_2d": "06-summa",
+    "conjugate-gradient": "07-cg", "benchmark-libs/allreduce": "07-cg", "benchmark-libs/stencil_3d_7pts": "07-cg" };
+  // X4: first use of a term in a row's "What it teaches" links to the glossary
+  const GL = [[/\bSpMV\b/, "spmv"], [/\bpencil decomposition\b/i, "pencil-decomposition"], [/\bSUMMA\b/, "summa"], [/\bsentinel/i, "sentinel"],
+    [/\brange filters?\b/i, "filter-range-counter"], [/\bcolor swap\b/i, "color-swap"], [/@queue_flush/, "queue-flush"], [/\bmicrothread/i, "microthread"],
+    [/\bTSC\b/, "timestamp-counter-tsc"], [/\bpreconditioner\b/i, "preconditioner"], [/\bAllreduce\b/i, "allreduce"], [/\bSdkLayout\b/, "sdklayout"],
+    [/\bFIFO\b/, "fifo"], [/\bDSDs?\b/, "dsd-data-structure-descriptor"], [/\bswitches\b/i, "switch-route-positions"], [/\bcontrol wavelets?\b/i, "control-wavelet"],
+    [/\bstreaming mode\b/i, "copy-mode-streaming-mode"], [/\bcheckerboard\b/i, "checkerboard"], [/\bstencil\b/i, "stencil"], [/&lt;collectives_2d&gt;/, "collectives-2d"],
+    [/\bmemcpy_h2d \/ memcpy_d2h\b/, "memcpy-h2d-memcpy-d2h"], [/\bcomptime\b/, "comptime"], [/\bCG\b/, "conjugate-gradient-cg"]];
+  const GLRE = new RegExp(GL.map(g => g[0].source).join("|"), "gi");
+  function gloss(html) {
+    const used = new Set();
+    return html.replace(GLRE, m => {
+      const g = GL.find(([re]) => new RegExp("^(?:" + re.source + ")$", re.flags).test(m));
+      if (!g || used.has(g[1])) return m;
+      used.add(g[1]);
+      return `<a href="appendix-a-glossary.html#g-${g[1]}">${m}</a>`;
+    });
+  }
   const FILES = { 1: "01-memory-wall.html", 2: "02-the-wafer.html", 3: "03-processing-element.html", 4: "04-fabric.html", 5: "05-tasks.html",
     6: "06-dsds.html", 7: "07-host-io.html", 9: "09-model-to-tokens.html", 10: "10-csl-toolchain.html", 11: "11-lab-first-programs.html",
     12: "12-lab-neighbours.html", 13: "13-lab-stencil.html", 14: "14-lab-gemm.html", 15: "15-lab-cg.html", 18: "18-comparison.html",
@@ -331,7 +353,7 @@ bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
     if (ar === "w2only" && d[4] !== "w2") return false;
     if (ar === "none" && d[4] !== "none") return false;
     if (ar === "lib" && d[4] !== "lib") return false;
-    if (q && !norm([d[0], d[3], d[2], d[8] || "", ...d[6].map(w => w[0])].join(" ")).includes(q)) return false;
+    if (q && !norm([d[0], d[3], d[2], (d[8] || "").replace(/<[^>]+>/g, ""), PROG[d[0]] || "", ...d[6].map(w => w[0])].join(" ")).includes(q)) return false;
     return true;
   }
   function whereCell(d) {
@@ -345,8 +367,8 @@ bash commands_wse3.sh   # SUCCESS!, |xf_ref - xf_wse| = 3.05e-05</code></pre>
     const rows = D.filter(match);
     $("#ix-table tbody").innerHTML = rows.map(d => {
       const a = ARCH[d[4]];
-      return `<tr id="${rowId(d[0])}"><td class="nm">${brk(d[0])}<small>${d[1]} · ${esc(d[2])}</small><small class="path">${brk(path(d))}</small></td>` +
-        `<td data-l="Teaches">${esc(d[3])}${d[8] ? `<span class="note">${esc(d[8])}</span>` : ""}</td>` +
+      return `<tr id="${rowId(d[0])}"><td class="nm">${brk(d[0])}<small>${d[1]} · ${esc(d[2])}</small><small class="path">${brk(path(d))}</small>${PROG[d[0]] ? `<small class="prog">course: programs/${brk(PROG[d[0]])}/</small>` : ""}</td>` +
+        `<td data-l="Teaches">${gloss(esc(d[3]))}${d[8] ? `<span class="note">${d[8]}</span>` : ""}</td>` +
         `<td data-l="Chips"><span class="arch ${a[0]}">${a[1]}</span></td><td class="where" data-l="Where">${whereCell(d)}</td>` +
         `<td class="cv" data-l="Coverage"><span class="st ${d[7]}">${ST[d[7]]}</span></td></tr>`;
     }).join("") || `<tr><td colspan="5">No example matches these filters.</td></tr>`;
