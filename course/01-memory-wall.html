@@ -279,7 +279,7 @@
   <text x="675.0" y="75" text-anchor="middle" font-size="9">user E</text>
   <text x="675.0" y="179" text-anchor="middle" font-size="9">user F</text>
   <text x="20" y="224" font-size="13.5">Each band is one layer's <tspan font-weight="700">region</tspan>: ≈ 45,000 PEs (1/80 of 3.6 million) holding that layer's ≈ 1.75 GB of weights.</text>
-  <text x="20" y="244" font-size="13.5" class="muted">User A's token is in one band at a time, top to bottom, wafer to wafer. Users B–F fill other bands at the same moment.</text>
+  <text x="20" y="244" font-size="13.5" class="muted">User A's token is in one band at a time, top to bottom, wafer to wafer. Users B–F fill other bands meanwhile.</text>
 </svg>
 <figcaption><b>Layer-pipelined decode on 4 × CS-3.</b> The model is cut by layer, not within a layer: each layer lives on its own region of PEs, and a token flows through the 80 regions in order (a <a href="appendix-a-glossary.html#g-layer-pipelined-mode">pipeline split</a>; a <em>tensor-parallel</em> split would instead give every chip a slice of every layer). So one user sees about 1/80 of the SRAM bandwidth <em>and</em> 1/80 of the FLOPs; the ≈ 600,000 tok/s total is the sum over all the users in flight. Region size and bytes: <span class="tag derived">Derived</span> (140 GB ÷ 80; 4 × 900,000 ÷ 80). Chapter 9 maps a real layer onto its region (<a href="09-model-to-tokens.html#pipeline">The inference pipeline</a>).</figcaption>
 </figure>
@@ -600,9 +600,9 @@ const ROOF = (function () {
     svg.innerHTML = "";
     // chips needed
     el("text", { x: 10, y: 22, "font-size": 13, "font-weight": 600 }, svg).textContent = `chips needed: ${N} × ${s.name}`;
-    const show = Math.min(N, 36);
-    for (let k = 0; k < show; k++) el("rect", { x: 250 + k * 10.5, y: 11, width: 8, height: 13, rx: 2, class: "acc", "stroke-width": 1 }, svg);
-    if (N > show) el("text", { x: 250 + show * 10.5 + 4, y: 22, "font-size": 12, class: "muted" }, svg).textContent = `+${N - show}`;
+    const show = Math.min(N, 30);
+    for (let k = 0; k < show; k++) el("rect", { x: 300 + k * 10.5, y: 11, width: 8, height: 13, rx: 2, class: "acc", "stroke-width": 1 }, svg);
+    if (N > show) el("text", { x: 300 + show * 10.5 + 4, y: 22, "font-size": 12, class: "muted" }, svg).textContent = `+${N - show}`;
     // bars
     const x0 = 130, BW = 480, sc = BW / step;
     const bar = (y, label, segs, txt) => {

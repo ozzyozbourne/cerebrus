@@ -223,7 +223,7 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 </div>
 </div>
 <figure id="deal-fig">
-<svg viewBox="0 0 680 190" width="680" role="img" aria-label="A host array of 4 times N_PE elements is cut into four slices; slice k goes to PE (k, 0), where one @fmacs walks its N_PE elements">
+<svg viewBox="0 0 680 202" width="680" role="img" aria-label="A host array of 4 times N_PE elements is cut into four slices; slice k goes to PE (k, 0), where one @fmacs walks its N_PE elements">
 <text x="20" y="22" font-size="12.5">host array x (4 &middot; N_PE elements, ROW_MAJOR)</text>
 <rect x="20" y="32" width="160" height="28" class="acc"/><rect x="180" y="32" width="160" height="28" class="blu"/><rect x="340" y="32" width="160" height="28" class="grn"/><rect x="500" y="32" width="160" height="28" class="pur"/>
 <text x="100" y="51" text-anchor="middle" font-size="12" class="mono">x[0 : N_PE]</text>
@@ -232,11 +232,11 @@ rt.memcpy_h2d(ys, y, 0, 0, 4, 1, N_PE, **kw)</code></pre>
 <text x="580" y="51" text-anchor="middle" font-size="12" class="mono">x[3N_PE : 4N_PE]</text>
 <path d="M100 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M260 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M420 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/><path d="M580 62 V96" class="s-muted" stroke-width="1.4" fill="none" marker-end="url(#dl-arr)"/>
 <defs><marker id="dl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill: var(--muted)"/></marker></defs>
-<text x="340" y="84" text-anchor="middle" font-size="11.5" class="muted">memcpy_h2d(xs, x, 0, 0, 4, 1, N_PE): slice k goes to PE (k, 0)</text>
+<text x="340" y="168" text-anchor="middle" font-size="11.5" class="muted mono">memcpy_h2d(xs, x, 0, 0, 4, 1, N_PE): slice k goes to PE (k, 0)</text>
 <rect x="40" y="100" width="120" height="46" rx="6" class="acc"/><rect x="200" y="100" width="120" height="46" rx="6" class="blu"/><rect x="360" y="100" width="120" height="46" rx="6" class="grn"/><rect x="520" y="100" width="120" height="46" rx="6" class="pur"/>
 <text x="100" y="119" text-anchor="middle" font-size="12.5">PE (0, 0)</text><text x="260" y="119" text-anchor="middle" font-size="12.5">PE (1, 0)</text><text x="420" y="119" text-anchor="middle" font-size="12.5">PE (2, 0)</text><text x="580" y="119" text-anchor="middle" font-size="12.5">PE (3, 0)</text>
 <text x="100" y="137" text-anchor="middle" font-size="11" class="mono">@fmacs, N_PE elems</text><text x="260" y="137" text-anchor="middle" font-size="11" class="mono">@fmacs, N_PE elems</text><text x="420" y="137" text-anchor="middle" font-size="11" class="mono">@fmacs, N_PE elems</text><text x="580" y="137" text-anchor="middle" font-size="11" class="mono">@fmacs, N_PE elems</text>
-<text x="340" y="172" text-anchor="middle" font-size="12">CUDA&rsquo;s i = blockIdx&middot;blockDim + threadIdx &nbsp;&harr;&nbsp; i = (PE x)&middot;N_PE + (element j of that PE&rsquo;s DSD)</text>
+<text x="340" y="190" text-anchor="middle" font-size="12">CUDA&rsquo;s i = blockIdx&middot;blockDim + threadIdx &nbsp;&harr;&nbsp; i = (PE x)&middot;N_PE + (element j of that PE&rsquo;s DSD)</text>
 </svg>
 <figcaption><b>The host deals the array; the PE never computes an index.</b> With ROW_MAJOR order and width 4, the first N_PE elements go to PE (0, 0), the next N_PE to PE (1, 0), and so on <span class="tag sdk">SDK</span>. The same call with height &gt; 1 deals rows of PEs. <code>memcpy_d2h</code> with the same arguments gathers the slices back in the same order.</figcaption>
 </figure>
