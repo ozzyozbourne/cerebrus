@@ -468,12 +468,12 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 </ul>
 
 <h3>Scaling up <span class="tag derived">Derived</span></h3>
-<p><strong>Whole wafer.</strong> A CS-2's SDK-visible fabric is 750 × 994, and the program rectangle must be at least 7 columns narrower and 2 rows shorter, so about 743 × 992 ≈ 737k PEs <span class="tag sdk">SDK</span>. (The source is the SDK's <code>single-tile-matvec</code> README, which says <code>fabric-dims</code> must be <code>750,994</code> on a real CS-2 but also runs a 750 × 994 <em>program</em> rectangle. The SDK's online gemv-01 tutorial supports the second reading: it gives the CS-2 fabric as 757 × 996, which makes 750 × 994 the largest program rectangle, and "most CS-3s" as 762 × 1172 <span class="tag sdk">SDK docs, tutorial gemv-01</span>. On that reading the count is ≈745k and the figures below rise by 1%; this page keeps the smaller count.) With 90 + 2.5·n cycles per step at 850 MHz and 5 flops per cell (one add, two multiply-adds):</p>
+<p><strong>Whole wafer.</strong> A CS-2's fabric is 757 × 996 as the SDK sees it, and a program built with <code>--memcpy</code> must leave 7 columns and 2 rows to memcpy's frame, so the largest program rectangle is 750 × 994 = 745,500 PEs <span class="tag sdk">SDK docs, tutorial gemv-01; SDK 2.10.1, single-tile-matvec sweep.py and run.py</span>. (<code>sweep.py</code> takes <code>--dims 750,994</code> as the program rectangle and compiles with <code>--fabric-dims</code> 7 wider and 2 taller, and <code>run.py</code> scales its results to 994 × 750 PEs. One sentence in that benchmark's README says <code>fabric-dims</code> must be <code>750,994</code>; the scripts and the tutorial contradict it.) With 90 + 2.5·n cycles per step at 850 MHz and 5 flops per cell (one add, two multiply-adds):</p>
 <ul>
-<li>n = 16: 130 cycles = 0.15 µs per step, 6.5 M steps/s on 11.8 M cells, ≈0.38 PFLOP/s f32.</li>
-<li>n = 5,450: ≈13,700 cycles = 16 µs per step on 4 G cells, ≈1.2 PFLOP/s, close to the 2 flops/cycle/PE × 737k × 0.85 GHz ≈ 1.25 PFLOP/s that the 2.5-cycle slope allows.</li>
+<li>n = 16: 130 cycles = 0.15 µs per step, 6.5 M steps/s on 11.9 M cells, ≈0.39 PFLOP/s f32.</li>
+<li>n = 5,450: ≈13,700 cycles = 16 µs per step on 4.1 G cells, ≈1.26 PFLOP/s, close to the 2 flops/cycle/PE × 745.5k × 0.85 GHz ≈ 1.27 PFLOP/s that the 2.5-cycle slope allows.</li>
 </ul>
-<p>Caveats: these are simulator cycles and an assumed clock; the PE count is the CS-2's (on the 762 × 1172 fabric the SDK docs give for most CS-3s, the same frame leaves 755 × 1,170 ≈ 883k PEs, 20% more); a 1-D chain across a 2-D wafer must snake back and forth, so the turn PEs need north/south routes (still one hop, so the model should hold, but the layout code changes); host I/O is excluded; and a 1-D rod is a toy, since real codes are 3-D pencils. For comparison, a CS-1 BiCGSTAB solve on a 7-point stencil reached about 0.86 PFLOP/s, roughly a third of peak <span class="tag indep">Measured by Cerebras/NETL authors, arXiv:2010.03660</span>.</p>
+<p>Caveats: these are simulator cycles and an assumed clock; the PE count is the CS-2's (on the 762 × 1172 fabric the SDK docs give for most CS-3s, the same frame leaves 755 × 1,170 ≈ 883k PEs, 18% more); a 1-D chain across a 2-D wafer must snake back and forth, so the turn PEs need north/south routes (still one hop, so the model should hold, but the layout code changes); host I/O is excluded; and a 1-D rod is a toy, since real codes are 3-D pencils. For comparison, a CS-1 BiCGSTAB solve on a 7-point stencil reached about 0.86 PFLOP/s, roughly a third of peak <span class="tag indep">Measured by Cerebras/NETL authors, arXiv:2010.03660</span>.</p>
 <p><strong>Strong scaling.</strong> Fix the rod at L = 4,096 cells and add PEs:</p>
 <div class="table-wrap"><table>
 <tr><th>PEs</th><th>n</th><th>Cycles per step</th><th>Speed-up vs 64 PEs</th></tr>
@@ -760,7 +760,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
   const ms = $("#m-svg");
   const meas = [[4, 100.2], [16, 130.2], [64, 250.2]];
   const PARTS = [["4 transfers + tasks", 58.4, "acc"], ["bookkeeping", 12.8, "box"], ["DSD start-up", 19, "pur"]];
-  const FIX = 90.2, MAXN = 5450, PES = 737e3, CLK = 850e6;
+  const FIX = 90.2, MAXN = 5450, PES = 745.5e3, CLK = 850e6;
   function model() {
     const nn = Math.max(1, Math.round(2 ** +$("#m-n").value)); $("#m-nv").textContent = nn;
     ms.innerHTML = "";
@@ -797,7 +797,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
     $("#m-out").textContent = `n = ${nn}: ≈ ${cyc.toFixed(0)} cycles/step → ${tstr} at 850 MHz; streaming share ${(100 * comp).toFixed(0)}%` +
       (nn > MAXN ? `\n⚠ n > ~${MAXN}: u and lap no longer fit (cslc fails above ~5,450 on WSE-3)` : `\nmemory: u + lap = ${((2 * nn + 2) * 4 / 1024).toFixed(2)} KB of ≈43 KB available for arrays`) +
       ((nn + 1) % 4 === 0 && nn <= MAXN ? `\n⚠ n + 1 is a multiple of 4: program 04 hits the @fmacs bank clash here (measured at n = 15: 158 instead of 128); pad lap by one word` : "") +
-      `\nwhole wafer (derived, 737k PEs, 1-D snake): ${(cells / 1e6).toFixed(cells < 1e8 ? 1 : 0)} M cells, ${(sps / 1e6).toFixed(2)} M steps/s, ≈ ${pf.toFixed(2)} PFLOP/s f32`;
+      `\nwhole wafer (derived, 745.5k PEs, 1-D snake): ${(cells / 1e6).toFixed(cells < 1e8 ? 1 : 0)} M cells, ${(sps / 1e6).toFixed(2)} M steps/s, ≈ ${pf.toFixed(2)} PFLOP/s f32`;
   }
   $("#m-n").oninput = model; model();
 })();

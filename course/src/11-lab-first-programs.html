@@ -356,7 +356,6 @@ grep "P4.1: .*EX OP.*FMACS" sim.log | head -2</code></pre>
 <ul>
 <li><code>cslc: command not found</code>: run <code>source /home/user/cerebras-sdk/env.sh</code> in this shell.</li>
 <li><code>cs_python</code> errors when started from a directory under <code>/tmp</code>: work under your home directory instead (see the setup box: this failed in the course's first experiments, and did not fail in later reruns on this machine).</li>
-<li><code>Failed to created JSON RPC file.</code> [sic] from <code>cslc</code>, with no other error: seen once in the course's verification runs, on a heavily loaded machine; the same command compiled when it was run again <span class="tag measured">Measured</span>. Rerun before changing anything.</li>
 <li><code>ld.lld: error: ran out of PE memory for data</code> (or "for task table"): your arrays plus memcpy's code and tables exceed the PE's memory; reduce N (exercise 1).</li>
 <li><code>the received length (0 bytes) is not expected … could be a kernel stall</code>: an RPC never called <code>unblock_cmd_stream()</code>, or a barrier never released. On a busy machine it can also be a host-side timeout; rerun alone before debugging.</li>
 <li><code>AssertionError: Not equal to tolerance</code>: compare with the expected output above; for streaming programs, suspect reading results too early.</li>
