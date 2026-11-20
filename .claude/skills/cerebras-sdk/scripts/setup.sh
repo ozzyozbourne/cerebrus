@@ -40,7 +40,8 @@ if [ ! -d "$SDK_DIR/extras" ]; then
   tar -xzf "$SDK_DIR"/csl-extras-*.tar.gz -C "$SDK_DIR/extras"
 fi
 
-# 3. Install Singularity from Ubuntu's own repos (third-party Apptainer PPA is blocked by the permission classifier).
+# 3. Container runtime. Any `singularity` command will do (SingularityCE, or Apptainer's symlink of that name);
+#    if there is none, install SingularityCE from Ubuntu's own repos.
 if ! command -v singularity >/dev/null 2>&1; then
   log "Installing singularity-container from Ubuntu universe ..."
   apt-get update -qq
@@ -55,6 +56,7 @@ export PATH=$SDK_DIR:\$PATH
 export TMPDIR=$SDK_DIR/tmp
 mkdir -p "\$TMPDIR"
 # The cloud container lacks CAP_SYS_RESOURCE; Singularity-as-root fails unless it is dropped.
+# (Not needed, but harmless, under Apptainer with 'root default capabilities = no' in apptainer.conf.)
 export SINGULARITY_DROP_CAPS=CAP_SYS_RESOURCE
 ENVEOF
 

@@ -26,7 +26,7 @@ Open `course/index.html` in a browser. It is plain static HTML with no build ste
 
 All seven pass on both `--arch=wse3` and `--arch=wse2` with the Cerebras SDK 2.10.1 simulator.
 
-The cycle column is the whole run's `cycle_count` from `sim_stats.json`, which includes the time the simulated wafer waits for host commands, so it is not repeatable to the cycle. Two later re-runs of `run_all.sh` on a shared machine, plus one more simulation of programs 01–06, gave 7,739–8,232 (01), 7,021–7,068 (02), 6,859–7,667 (03), 11,666–11,788 (04), 7,616–7,750 (05), 36,968–37,062 (06) and 145,260–145,432 (07). The table quotes the total printed in each program's `expected_output.txt`, which is the one run that file was captured from. PASS/FAIL is the check. Kernel timings in the labs come from the on-tile TSC instead.
+The cycle column is the whole run's `cycle_count` from `sim_stats.json`, which includes the time the simulated wafer waits for host commands, so it is not repeatable to the cycle. Two later re-runs of `run_all.sh` on a shared machine, plus one more simulation of programs 01–06, gave 7,739–8,232 (01), 7,021–7,068 (02), 6,859–7,667 (03), 11,666–11,788 (04), 7,616–7,750 (05), 36,968–37,062 (06) and 145,260–145,432 (07). A further run while the machine was heavily loaded (load average about 17 on 4 cores) still passed 7 of 7 but counted 16,370 cycles for 03 and 17,015 for 04. The table quotes the total printed in each program's `expected_output.txt`, which is the one run that file was captured from. PASS/FAIL is the check. Kernel timings in the labs come from the on-tile TSC instead.
 
 ```bash
 bash .claude/skills/cerebras-sdk/scripts/setup.sh      # one-time SDK install
@@ -43,6 +43,13 @@ Chapters 11–15 are generated from `course/src/*.html`, so their code listings 
 python3 course/tools/build.py
 ```
 
+Appendix E's table of flagged claims is generated from the provenance tags in all pages. After changing tags or tagged sentences in any chapter, run:
+
+```bash
+python3 course/tools/scan_tags.py            # rewrites course/appendix-e-sources.html
+python3 course/tools/scan_tags.py --check    # summary only, changes nothing
+```
+
 ## Sources
 
-The facts come from the research in `reports/Cerebras architecture course research.md` and `research_notes/`. Every number in the course carries a provenance tag (Vendor, Indep, Analyst, SDK 2.10.1, Measured, Derived). The research sessions could not open most vendor documentation sites directly. Many web figures therefore come from search-engine extracts of the primary sources and should be checked against those documents before you rely on them.
+The facts come from the research in `reports/Cerebras architecture course research.md` and `research_notes/`. Every number in the course carries a provenance tag (Vendor, Indep, Analyst, SDK 2.10.1, Measured, Derived, Unverified). The research sessions could not open most vendor documentation sites directly, so many web figures first came from search-engine extracts of the primary sources. Two later verification passes checked many of them against the primary documents (SDK docs, Hot Chips slides, white paper, vendor blogs) and re-ran the programs; `course/appendix-e-sources.html` lists what is still unverified. Check a figure against its source before you rely on it.

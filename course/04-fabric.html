@@ -36,7 +36,7 @@
 </div>
 
 <h2 id="mesh">A mesh of five-port routers</h2>
-<p>Every PE has a router with five bidirectional ports: <strong>NORTH, SOUTH, EAST, WEST</strong> to its neighbours, and <strong>RAMP</strong> down to its own compute engine (CE). A link carries one 32-bit word per cycle and a hop takes about one cycle <span class="tag vendor">Vendor, HC22: "single cycle latency between cores"</span> (arXiv:2209.15040, with Cerebras co-authors, says "one clock cycle on average"). The ramp takes about two: a paper on wafer-scale reductions found two cycles between a wavelet entering the router and the CE being able to use it "by inspection of the cycle-accurate simulator, which models ideal conditions", and cites earlier work (Tramm et al.) that puts it "around 7" <span class="tag indep">Indep (arXiv:2404.15888)</span>. So two cycles is the simulator's ramp, and real hardware may be slower. There are no long wires and no global bus. On a CS-2, whose SDK-visible fabric is 750 × 994 positions <span class="tag sdk">SDK 2.10.1</span>, a wavelet from one corner to the other takes 749 + 993 = 1,742 hops, about 1.6 µs at the WSE-2's 1.1 GHz <span class="tag vendor">Vendor, HC22</span> or 2.0 µs at the 850 MHz the SDK benchmarks assume <span class="tag derived">Derived</span>.</p>
+<p>Every PE has a router with five bidirectional ports: <strong>NORTH, SOUTH, EAST, WEST</strong> to its neighbours, and <strong>RAMP</strong> down to its own compute engine (CE). A link carries one 32-bit word per cycle and a hop takes about one cycle <span class="tag vendor">Vendor, HC22: "single cycle latency between cores"</span> (arXiv:2209.15040, with Cerebras co-authors, says "one clock cycle on average"). The ramp takes about two: a paper on wafer-scale reductions found two cycles between a wavelet entering the router and the CE being able to use it "by inspection of the cycle-accurate simulator, which models ideal conditions", and cites earlier work (Tramm et al.) that puts it "around 7" <span class="tag indep">Indep (arXiv:2404.15888)</span>. So two cycles is the simulator's ramp, and real hardware may be slower. There are no long wires and no global bus. On a CS-2, whose fabric is 757 × 996 positions <span class="tag sdk">SDK docs</span> (Chapter 2 explains how this relates to the 750 × 994 program rectangle), a wavelet from one corner to the other takes 756 + 995 = 1,751 hops, about 1.6 µs at the WSE-2's 1.1 GHz <span class="tag vendor">Vendor, HC22</span> or 2.1 µs at the 850 MHz the SDK benchmarks assume <span class="tag derived">Derived</span>.</p>
 <p>A color is a <em>virtual channel</em>: a lane label carried by the wavelet, not a separate wire. All colors crossing one link share that link's one word per cycle, and the router interleaves them. What each color gets is its own route rule and its own small input buffer, so colors can be steered and stalled independently. (Think of one railway track carrying trains of different liveries, with the points at every junction set in advance for each livery.) More colors do not mean more bandwidth.</p>
 
 <figure>
@@ -82,7 +82,7 @@
 
 <div class="widget" id="bp">
 <h4>One link, two colors: sharing and back-pressure</h4>
-<p class="hint">Two senders both route EAST over the same link: c0 from the west, c1 from the north. The link carries one wavelet per cycle and alternates between colors that have data and room downstream. Tick "stall c0 receiver" and watch c0's buffers fill, its sender stop, and c1 keep flowing. Buffer depth 2 is illustrative; real depths are not published.</p>
+<p class="hint">Two senders both route EAST over the same link: c0 from the west, c1 from the north. The link carries one wavelet per cycle and alternates between colors that have data and room downstream. Tick "stall c0 receiver" and watch c0's buffers fill, its sender stop, and c1 keep flowing. Buffer depth 2 is illustrative; router buffer depths are not published (the CE's input and output queue lengths are: Chapter 5).</p>
 <div class="controls">
 <button class="btn" id="bp-run" type="button">Run</button>
 <button class="btn secondary" id="bp-step" type="button">Step</button>
@@ -111,7 +111,7 @@
 <h4>Stream-time calculator</h4>
 <p class="hint">Time ≈ ramp up + distance × hop cost + ramp down + (length − 1). All results are <span class="tag derived">Derived</span> from the inputs you pick.</p>
 <div class="controls">
-<label>distance <input type="range" id="lat-d" min="1" max="1742" value="100"> <span class="mono" id="lat-dv"></span></label>
+<label>distance <input type="range" id="lat-d" min="1" max="1751" value="100"> <span class="mono" id="lat-dv"></span></label>
 <label>length <input type="range" id="lat-m" min="0" max="12" value="10"> <span class="mono" id="lat-mv"></span></label>
 <label>hop cost <select id="lat-h"><option value="1">1 cycle (HC22 and papers)</option><option value="2">2 cycles (WSE-3 simulator, Measured)</option></select></label>
 <label>clock <select id="lat-c"><option value="1.1">1.1 GHz (WSE-2, Vendor)</option><option value="0.85">850 MHz (SDK assumption)</option></select></label>
@@ -251,13 +251,13 @@
 <tr><td>filters per PE</td><td>6 (4 + 2 banks)</td><td>6 (1 bank)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
 <tr><td>input / output queues</td><td>8 / 6</td><td>8 / 8</td><td><span class="tag sdk">SDK 2.10.1</span> (Ch. 5)</td></tr>
 <tr><td>fabric coordinate field</td><td>10 bits (0x03ff)</td><td>11 bits (0x07ff)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
-<tr><td>SDK-visible fabric</td><td>750 × 994 (CS-2)</td><td>not published</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
+<tr><td>SDK-visible fabric</td><td>757 × 996 (CS-2)</td><td>762 × 1,172 ("most CS-3s")</td><td><span class="tag sdk">SDK docs, gemv-01 tutorial</span></td></tr>
 <tr><td>color swap</td><td>yes</td><td>no (in CSL)</td><td><span class="tag sdk">SDK 2.10.1</span></td></tr>
 <tr><td>simulator cycles per hop</td><td>1.0</td><td>2.0</td><td><span class="tag measured">Measured</span></td></tr>
 <tr><td>clock</td><td>1.1 GHz</td><td>not published</td><td><span class="tag vendor">Vendor, HC22</span>; SDK assumes 850 MHz</td></tr>
 </tbody></table></div>
 
-<p>The aggregate fabric numbers follow from this design: 32 bits × 4 ports × 2 (in + out) × ~850k routers × 1.1 GHz ≈ 2.4 × 10<sup>17</sup> bit/s, or ≈ 2.1 × 10<sup>17</sup> with the 745,500 SDK-visible positions. The vendor's 220 Pb/s for WSE-2 sits in that range <span class="tag derived">Derived</span>. The "× 2" counts each link once from each end, as vendors appear to. Each individual link, though, carries only 3.4–4.4 GB/s per direction <span class="tag derived">Derived</span>: the fabric is fast in aggregate, not between any two distant PEs.</p>
+<p>The aggregate fabric numbers follow from this design: 32 bits × 4 ports × 2 (in + out) × ~850k routers × 1.1 GHz ≈ 2.4 × 10<sup>17</sup> bit/s, or ≈ 2.1 × 10<sup>17</sup> with the 753,972 SDK-visible positions. The vendor's 220 Pb/s for WSE-2 sits in that range <span class="tag derived">Derived</span>. The "× 2" counts each link once from each end, as vendors appear to. Each individual link, though, carries only 3.4–4.4 GB/s per direction <span class="tag derived">Derived</span>: the fabric is fast in aggregate, not between any two distant PEs.</p>
 
 <div class="quiz">
 <h3>Check yourself</h3>
@@ -454,7 +454,7 @@
       parts.forEach(([n, v]) => { T("text", { x: lx, y: 66, "font-size": 12, class: "muted" }, svg, `${n} ${v.toLocaleString()} (${(100 * v / tot).toFixed(0)}%)`); lx += 220; });
       const bw = 4 * M / ns; // bytes per ns = GB/s
       $("#lat-out").textContent = `first wavelet ≈ ${(ramp + hops).toLocaleString()} cycles · last ≈ ${tot.toLocaleString()} cycles ≈ ${ns >= 1000 ? (ns / 1000).toFixed(2) + " µs" : ns.toFixed(0) + " ns"}\neffective bandwidth ≈ ${bw.toFixed(2)} GB/s (link peak ${(4 * f).toFixed(1)} GB/s)` +
-        (d >= 1742 ? "\nd = 1,742 is CS-2 corner to corner (750 × 994 fabric)." : "");
+        (d >= 1751 ? "\nd = 1,751 is CS-2 corner to corner (757 × 996 fabric)." : "");
     }
     ["lat-d", "lat-m", "lat-h", "lat-c"].forEach(id => { $("#" + id).oninput = upd; $("#" + id).onchange = upd; });
     upd();
