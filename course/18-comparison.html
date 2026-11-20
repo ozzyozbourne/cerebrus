@@ -111,7 +111,7 @@ ol.decoder li { margin: 4px 0; }
 <tr><td>Caches</td><td>none; a small software-managed cache (256 B WSE-2, 512 B WSE-3) <span class="tag vendor">Vendor</span></td><td>none (on Blackhole each RISC-V core has a 64-byte "L0" data cache in front of L1, never dirty; the coprocessor and the NoC read L1 directly) <span class="tag vendor">ISA docs, BabyRISCV</span></td><td>hardware L1 + L2 <span class="tag vendor">Vendor</span></td></tr>
 <tr><td>On-chip network</td><td>2-D mesh, 32-bit wavelets, 24 static colors (memcpy takes 4) <span class="tag sdk">SDK</span>; router hop 2.0 cycles WSE-3, 1.0 WSE-2 <span class="tag measured">Measured</span></td><td>two 2-D tori, 64 B flits, packets ≤ 16 KiB, 1.35 GHz (Wormhole: 32 B / 8 KiB) <span class="tag vendor">ISA docs</span></td><td>crossbar to L2 <span class="tag unv">not verified here</span></td></tr>
 <tr><td>Off-device links</td><td>1.2 Tb/s per CS-3 <span class="tag vendor">Vendor, HC2024</span></td><td>4 × 800 GbE QSFP-DD (8 of the die's 14 × 400 GbE tiles wired; none on p100) <span class="tag vendor">ISA docs</span></td><td>NVLink 4: 900 GB/s (H100); NVLink 5: 1.8 TB/s (B200) <span class="tag vendor">Vendor via secondary</span></td></tr>
-<tr><td>Power</td><td>~23 kW for a whole 15U system, cooling included <span class="tag vendor">Vendor</span></td><td>300 W per card <span class="tag vendor">Vendor</span></td><td>H100 SXM up to 700 W; B200 up to 1,000 W (1,200 W liquid-cooled): max TDP per GPU module, not a system <span class="tag vendor">Vendor datasheets, via review web search</span></td></tr>
+<tr><td>Power</td><td>~23 kW for a whole 15U system, cooling included, as quoted at launch; the current datasheet says 27 kW max, 16 RU <span class="tag vendor">Vendor</span></td><td>300 W per card <span class="tag vendor">Vendor</span></td><td>H100 SXM up to 700 W; B200 up to 1,000 W (1,200 W liquid-cooled): max TDP per GPU module, not a system <span class="tag vendor">Vendor datasheets, via review web search</span></td></tr>
 <tr><td><b>Consequence</b></td><td><b>Weights must fit in SRAM across enough wafers; then each layer reads its weights at SRAM speed.</b></td><td><b>Weights stream from slow DRAM every token; the large L1 holds tiles, not models.</b></td><td><b>Weights stream from fast HBM; batching shares each byte across users.</b></td></tr>
 </table></div>
 
@@ -145,7 +145,7 @@ ol.decoder li { margin: 4px 0; }
 <tr><td>Concurrency slots</td><td>8 microthreads; async fabric ops on WSE-2 run on the microthread equal to their queue ID (WSE-3 default) <span class="tag sdk">SDK</span></td><td>5 RISC-V cores, 3 kernels + host; ≤ 32 CBs (Wormhole), 64 (Blackhole) <span class="tag vendor">Vendor</span></td><td>64 warps, 32 blocks per SM <span class="tag vendor">Vendor</span></td></tr>
 <tr><td>Task / ID space</td><td>user task IDs best kept to 8–20; data tasks bind to input queues on WSE-3 <span class="tag sdk">SDK</span></td><td>runtime args to every core, even idle ones</td><td>—</td></tr>
 <tr><td>Data shape</td><td>any; one 32-bit wavelet at a time</td><td>32 × 32 tiles; pad the edges</td><td>32 B sectors in 128 B lines; coalesce</td></tr>
-<tr><td>Files for a 1-D heat stencil</td><td>4 files, 246 lines incl. timing code (program 04: layout 45, PE 140, run.py 53, commands 8) <span class="tag measured">Measured, wc -l</span></td><td colspan="2">not written for this course; no independent productivity study exists for any of the three</td></tr>
+<tr><td>Files for a 1-D heat stencil</td><td>4 files, 250 lines incl. timing code (program 04: layout 45, PE 144, run.py 53, commands 8) <span class="tag measured">Measured, wc -l</span></td><td colspan="2">not written for this course; no independent productivity study exists for any of the three</td></tr>
 </table></div>
 
 <h3 id="stack">The software stack</h3>
@@ -307,7 +307,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 <li><b>Who measured?</b> gpt-oss-120B: ~3,000 claimed, ~1,700 measured, a factor of 0.57 <span class="tag derived">Derived</span>.</li>
 <li><b>Which spec revision?</b> Rubin HBM4 went from 22 to 19.2 TB/s after announcement, and in November 2026 two NVIDIA pages still disagreed (Ch. 17).</li>
 <li><b>Shipping or announced?</b> The p150 was cut by firmware from 140 to 120 cores, 774 to 664 TF.</li>
-<li><b>Usable or marketed units?</b> A CS-2's SDK-visible fabric is 750 × 994 ≈ 745k positions against 850k marketed cores; B200 192 GB announced vs ~180–186 GB in NVIDIA's system tables.</li>
+<li><b>Usable or marketed units?</b> A CS-2's SDK-visible fabric is 750 × 994 ≈ 745k positions (the SDK 2.10.1 example README; the online tutorial says 757 × 996) against 850k marketed cores; B200 192 GB announced vs ~180–186 GB in NVIDIA's system tables.</li>
 <li><b>Is it the paper's number?</b> MD: 179× in the peer-reviewed paper, 748× in a later vendor configuration.</li>
 </ol>
 <p><strong>Open questions</strong> the sources leave unanswered: how many concurrent streams one Cerebras inference instance serves, and so its true cost per token; tokens per joule on any of the three, measured independently; WSE utilisation on real workloads (CS-1's ~1/3 of peak is the only data point); multi-system training efficiency; why neither Cerebras nor Tenstorrent appears in MLPerf; whether CS-4's "4,400 tok/s" holds up; how many wafers Kimi K2.6 actually uses (~1 TB at FP8 ≈ 23 wafers <span class="tag derived">Derived</span>, unless the deployment does something cleverer; all experts must be resident even though only ~32B parameters are read per token <span class="tag vendor">Vendor, via press</span>); what CS-6, which integrates "wafer-scale SRAM and compute with 3D-stacked DRAM" <span class="tag vendor">Vendor</span>, does to the capacity limit; and whether Tenstorrent's software closes its gap.</p>
@@ -327,7 +327,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 <li><strong>Communication is cheap but not free.</strong> A Lab 3 step costs about 90 + 2.5·n cycles for n cells per PE. The 2.5 is three vector instructions streaming: 0.5 (@fadds, 2 f32 per cycle on WSE-3) + 1 + 1 (two @fmacs). The ≈ 90 is four one-word transfers, their completion tasks, bookkeeping and instruction start-up. Compute overtakes it only past 90 ÷ 2.5 = 36 cells per PE <span class="tag derived">Derived</span>. In Lab 2 a pure router hop costs 2.0 cycles on WSE-3 and 1.0 on WSE-2, but a hop that goes through a PE's compute (receive, @fadds, send) costs about 9.2 and 6.0 (<a href="12-lab-neighbours.html">Ch. 12</a>). Streaming the partial sums beat store-and-forward 101 to 348 cycles at P = 8.</li>
 <li><strong>Peak rates hide traps.</strong> @fmacs runs at half speed when its two source streams start at addresses equal mod 4 words (a bank clash, <a href="06-dsds.html">Ch. 6</a>). The rule is empirical and differs by chip: pad and measure.</li>
 <li><strong>Weak scaling is flat; capacity is not.</strong> Weak scaling means the problem grows with the PEs (n cells each); strong scaling means a fixed problem split over more PEs. Once every interior PE has two neighbours, per-step cost is flat: about 130 cycles at 8 PEs and ~130.8 at 16. At P = 2 both PEs are ends with one neighbour, so a step does two transfers instead of four and costs 101. But each WSE-3 PE leaves only about 44,500 B (≈ 43.5 KB) for arrays (Lab 3 fits about 5,450 cells), and data enters through a ~7 Gb/s-per-channel door <span class="tag sdk">SDK</span>.</li>
-<li><strong>The host dominates small runs.</strong> In Lab 2 the kernel is 1–3% of the whole-run cycle count; the rest is host I/O. Its TSC kernel times are 58 / 73 / 101 / 158 cycles for P = 2 / 4 / 8 / 16, about M + 7P for M = 32. Lab 1's @fmacs took ≈ 130 of 7,740 cycles.</li>
+<li><strong>The host dominates small runs.</strong> In Lab 2 the kernel is 1–3% of the whole-run cycle count; the rest is host I/O. Its TSC kernel times are 58 / 73 / 101 / 158 cycles for P = 2 / 4 / 8 / 16, about M + 7P plus a fixed 12–14 cycles, for M = 32. Lab 1's @fmacs took ≈ 130 of 7,740 cycles.</li>
 <li><strong>The simulator is a real asset, with limits.</strong> In-kernel timestamp (TSC) readings are stable from run to run, so they pin a per-step cost to within a cycle. Whole-run totals in <code>sim_stats.json</code> are not: they vary by +1–4% with host load, sometimes more, and a loaded run can even abort with "could be a kernel stall". TSC values on different PEs are not comparable, because each counter starts when the launch reaches its PE; time on one PE or use a round trip. A GPU profiler measures real hardware, with run-to-run variance from clocks and scheduling. The simulator trades speed and scale (the largest grid we simulated was 16 × 16 = 256 PEs, in <a href="15-lab-cg.html#scaling">Lab 5</a>) for repeatable cycle counts and a per-instruction trace.</li>
 </ul>
 
@@ -346,7 +346,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 <tr><td>Stencil or particle science that fits on one wafer, needing strong scaling</td><td><span class="pill cb">Cerebras</span></td><td>MD 179× <span class="tag indep">Peer-reviewed</span>, with the authors' caveat; Lab 3's flat weak scaling; stencil extrapolation above</td><td>problems larger than a wafer</td></tr>
 <tr><td>Iterative sparse solvers or FFTs on grids that fit on the wafer</td><td><span class="pill cb">Cerebras</span>, try it</td><td>the SDK ships CG, preconditioned CG, BiCGStab, Cholesky, FFT 1-D/2-D/3-D, SpMV and power-method benchmarks <span class="tag sdk">SDK</span>; CS-1 BiCGStab ~1/3 of peak</td><td>performance comparisons: the tag says the patterns exist, not that they win</td></tr>
 <tr><td>Highest throughput per dollar at big batches</td><td><span class="pill nv">NVIDIA</span></td><td>~$0.10–0.25 vs $0.60 per M tokens <span class="tag analyst">Analyst</span> / <span class="tag vendor">Vendor</span>; batching shares each weight byte (ridge ≈ 295)</td><td>an independent TCO study</td></tr>
-<tr><td>Huge models, long context, large KV caches</td><td><span class="pill nv">NVIDIA</span></td><td>capacity per device 80–192 GB; NVL72 ~13.4 TB</td><td>—</td></tr>
+<tr><td>Huge models, long context, large KV caches</td><td><span class="pill nv">NVIDIA</span></td><td>capacity per device 80 to ~186 GB; NVL72 ~13.4 TB</td><td>—</td></tr>
 <tr><td>Large-scale training</td><td><span class="pill nv">NVIDIA</span> by default</td><td>Cerebras weight streaming (MemoryX/SwarmX, to 2,048 CS-3s) is vendor-reported only</td><td>any independent multi-system training benchmark</td></tr>
 <tr><td>Low cost, open stack, willingness to work close to the hardware</td><td><span class="pill tt">Tenstorrent</span></td><td>list prices (QuietBox 2 $9,999; Galaxy Blackhole from $110k at its April 2026 launch, $160k list on the vendor page in November 2026 <span class="tag vendor">Vendor</span>); open source and public ISA</td><td>independent performance data of any kind</td></tr>
 <tr><td>Learning a spatial architecture cheaply</td><td><span class="pill dep">Either</span></td><td>the Cerebras SDK simulator (every lab here) or a Tenstorrent board / ttsim</td><td>—</td></tr>
@@ -378,7 +378,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
 <div class="quiz">
 <h3>Final check</h3>
 <details><summary>Why is Cerebras fast at single-user decode, and what limits it?</summary><p>On a GPU, decode does ~1 FLOP per byte and must stream every weight from HBM per token, so it is bandwidth-bound. On the wafer the weights stay in SRAM spread across ~900k PEs, and each layer region reads its own weights at SRAM speed: about 2,000–4,000 tok/s for one user at real kernel read rates (7,500 at headline bandwidth; the 600,000 ceiling is summed over all users in the pipeline). The measured 2,314 tok/s is inside that range, so the limit is each region's SRAM reads plus per-layer latency (reductions, pipeline synchronisation, hops between wafers), still far faster than streaming weights from HBM.</p></details>
-<details><summary>Why might a provider still serve that model on GPUs?</summary><p>With large batches GPUs reuse each weight across many requests, reaching a lower cost per token (~$0.10–0.25 vs $0.60 per M tokens, an analyst estimate against a list price). And a single GPU holds 2–4× more memory than one wafer (80–192 GB vs 44 GB), so long contexts and large KV caches fit.</p></details>
+<details><summary>Why might a provider still serve that model on GPUs?</summary><p>With large batches GPUs reuse each weight across many requests, reaching a lower cost per token (~$0.10–0.25 vs $0.60 per M tokens, an analyst estimate against a list price). And a single GPU holds about 2–4× more memory than one wafer (80 to ~186 GB vs 44 GB), so long contexts and large KV caches fit.</p></details>
 <details><summary>Which of the three programming models is closest to CSL, and how do they differ?</summary><p>TT-Metalium: both use explicit, software-scheduled data movement between cores with private SRAM and no hardware caches. CSL is finer-grained (32-bit wavelets, not 32 × 32 tiles), routes are declared statically per color, and there is no DRAM behind the PE.</p></details>
 <details><summary>A 400B-parameter model at FP16 must serve 50 tok/s per user to 10,000 users. How many wafers hold the weights, and what does the evidence say?</summary><p>800 GB ÷ 44 GB ≈ 18.2, so at least 19 wafers before any KV cache <span class="tag derived">Derived</span>. The aggregate demand is 500,000 tok/s. 50 tok/s per user is within a GPU's reach: five B200s (~180 GB usable each) hold the weights, and their 40 TB/s gives a ceiling of exactly 50 tok/s per user, so in practice eight. The deciding question is cost per token, where the only data is an analyst estimate favouring batched GPUs, and the missing data is how many streams one wafer pipeline serves.</p></details>
 <details><summary>With 90 + 2.5·n cycles per step, how many cells per PE before compute is more than half of each step? How would you lower the 90?</summary><p>2.5·n &gt; 90 at n &gt; 36. The 90 is mostly per-message work (≈ 14.6 cycles per transfer with its completion task, Ch. 13) and instruction start-up, so send fewer, larger messages (a wider halo costs about 1 cycle per extra word) and issue fewer, longer vector instructions. Overlapping the halo with the interior update was measured and made it slower (178 vs 130 cycles), because there was almost no latency to hide.</p></details>
@@ -512,7 +512,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
   const CM = {
     cap: { name: "Memory that holds the weights: capacity", u: "B",
       why: "Cerebras: on-wafer SRAM (MemoryX, for training, is not drawn). Others: DRAM/HBM. The wafer's 44 GB must also hold KV cache and activations.",
-      dev: [{ v: 44e9, l: "44 GB", d: "44 GB SRAM", t: V }, { v: 32e9, l: "32 GB", d: "32 GB GDDR6", t: V }, { v: 80e9, l: "80 GB", d: "80 GB HBM3", t: V }, { v: 192e9, l: "192 GB", d: "192 GB HBM3e as announced; NVIDIA's system tables give ~180–186 GB per GPU", t: V }],
+      dev: [{ v: 44e9, l: "44 GB", d: "44 GB SRAM", t: V }, { v: 32e9, l: "32 GB", d: "32 GB GDDR6", t: V }, { v: 80e9, l: "80 GB", d: "80 GB HBM3", t: V }, { v: 186e9, l: "~186 GB", d: "~180–186 GB HBM3e per GPU in NVIDIA's system tables (372 GB per 2-GPU GB200 superchip, 1.4 TB per 8-GPU HGX B200); 192 GB was the announced figure", t: V }],
       rack: [{ v: 132e9, l: "132 GB", d: "3 × 44 GB SRAM", t: D }, { v: 1e12, l: "1 TB", d: "1 TB GDDR6", t: V }, { v: 13.4e12, l: "13.4 TB", d: "~13.4 TB HBM3e", t: VS }, { v: 20.7e12, l: "20.7 TB", d: "20.7 TB HBM4 (72 × 288 GB)", t: V }] },
     bw: { name: "Memory that holds the weights: bandwidth", u: "B/s",
       why: "The wafer's figure is aggregate SRAM bandwidth (hollow): the right comparison for 'reading the weights', but a different kind of memory from DRAM/HBM.",
@@ -539,8 +539,8 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
       rack: [NA(), { v: 12e3, l: "≤12 kW", d: "8–10 kW average, 12 kW max (vendor page)", t: V }, NA(), NA()] },
     ridge: { name: "Ridge point of the weight memory (FLOP per byte)", u: "",
       why: "Peak ÷ bandwidth of the memory holding the weights. Batch-1 decode at 16-bit is ~1 FLOP/B. Formats follow the 16-bit row where available.",
-      dev: [{ v: 0.743, l: "0.74", d: "15.6 PF ÷ 21 PB/s", t: D }, { v: 1297, l: "~1,300", d: "BlockFP8 664 TF ÷ 512 GB/s", t: D, odd: 1 }, { v: 295, l: "295", d: "989 TF ÷ 3.35 TB/s", t: D }, { v: 281, l: "281", d: "2.25 PF ÷ 8 TB/s (FP4: ~1,125)", t: D }],
-      rack: [{ v: 0.58, l: "0.58", d: "~75 PF ÷ 129.6 PB/s", t: D }, { v: 1438, l: "~1,440", d: "BlockFP8 23 PF ÷ 16 TB/s", t: D, odd: 1 }, { v: 312, l: "~310", d: "BF16 180 PF ÷ 576 TB/s", t: D }, { v: 206, l: "~206", d: "BF16 288 PF ÷ 1.4 PB/s (NVFP4: ~1,800 on the dense training figure, ~2,600 on the sparse inference figure)", t: D }] }
+      dev: [{ v: 0.743, l: "0.74", d: "15.6 PF ÷ 21 PB/s", t: D }, { v: 324, l: "~324", d: "BF16 at HiFi4 166 TF ÷ 512 GB/s (at the BlockFP8 LoFi peak of 664 TF: ~1,300, the figure Chapter 1 uses)", t: D }, { v: 295, l: "295", d: "989 TF ÷ 3.35 TB/s", t: D }, { v: 281, l: "281", d: "2.25 PF ÷ 8 TB/s (FP4: ~1,125)", t: D }],
+      rack: [{ v: 0.58, l: "0.58", d: "~75 PF ÷ 129.6 PB/s", t: D }, { v: 332, l: "~330", d: "BF16 at HiFi4 ~5.3 PF ÷ 16 TB/s (at the vendor's 23 PF BlockFP8 LoFi figure: ~1,440)", t: D }, { v: 312, l: "~310", d: "BF16 180 PF ÷ 576 TB/s", t: D }, { v: 206, l: "~206", d: "BF16 288 PF ÷ 1.4 PB/s (NVFP4: ~1,800 on the dense training figure, ~2,600 on the sparse inference figure)", t: D }] }
   };
   let cmode = "dev";
   const cSel = $("#c-m");
@@ -601,7 +601,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
       { n: "p150 GDDR6", c: "grn", C: 32e9, B: 512e9, t: V },
       { n: "H100 L2", c: "blu", C: 50e6, B: 5.5e12, t: ["indep", "Indep, lower bound (PCIe card)"], grp: "h" },
       { n: "H100 HBM3", c: "blu", C: 80e9, B: 3.35e12, t: V, grp: "h" },
-      { n: "B200 HBM3e", c: "pur", C: 192e9, B: 8e12, t: V }],
+      { n: "B200 HBM3e", c: "pur", C: 186e9, B: 8e12, t: V }],
     rack: [
       { n: "CS-4 SRAM", c: "acc", C: 132e9, B: 129.6e15, t: V },
       { n: "Galaxy BH GDDR6", c: "grn", C: 1e12, B: 16e12, t: V },
@@ -686,7 +686,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     wl.forEach((w, i) => bx(s, 40, 30 + i * 26, 180, 20, "blu", w));
     bx(s, 40, 140, 180, 34, "pur", "SM: L1 / shared", "256 KB, per SM");
     bx(s, 40, 200, 180, 34, "pur", "L2 cache", "~50 MB, shared");
-    bx(s, 40, 260, 180, 34, "amb", "HBM", "80–192 GB");
+    bx(s, 40, 260, 180, 34, "amb", "HBM", "80 to ~186 GB");
     arr(s, "a-cu", 130, 260, 130, 236); arr(s, "a-cu", 130, 200, 130, 176); arr(s, "a-cu", 130, 140, 130, 132);
     T(s, 228, 220, "hardware", { "font-size": 10, class: "muted", "text-anchor": "end" });
     T(s, 228, 252, "caches", { "font-size": 10, class: "muted", "text-anchor": "end" });
@@ -833,7 +833,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     cb: { capex: 10e6, yr: 4, kw: 92, e: 0.10, ts: 2314, n: 1,
       capexT: tg("unv") + " $8–12M per 70B instance, unverified estimate (Medium)", kwT: "4 × ~23 kW " + tg(V), tsT: tg("indep") + " AA via interview", nT: "unknown: the sources do not report concurrency" },
     tt: { capex: 70e3, yr: 4, kw: 12, e: 0.10, ts: 72.5, n: 32,
-      capexT: tg(V) + " from $70k (JP page)", kwT: tg(V) + " Galaxy Blackhole maximum (vendor page: 8–10 kW average, 12 kW max), assumed for Wormhole", tsT: tg(["vendor", "Vendor repo table"]), nT: "batch 32 " + tg(V) + " (vendor total ~2,269)" }
+      capexT: tg("unv") + " $70k: an unconfirmed secondary figure. No Wormhole Galaxy list price was found; Galaxy Blackhole was $110k at launch and $160k list in November 2026", kwT: tg(V) + " Galaxy Blackhole maximum (vendor page: 8–10 kW average, 12 kW max), assumed for Wormhole", tsT: tg(["vendor", "Vendor repo table"]), nT: "batch 32 " + tg(V) + " (vendor total ~2,269)" }
   };
   const kIn = ["capex", "yr", "kw", "e", "ts", "n"].reduce((o, k) => (o[k] = $("#k-" + k), o), {});
   function kLoad() {
@@ -903,7 +903,7 @@ Cerebras's independently confirmed advantage is <em>per-user tokens per second</
     { n: "Blackhole p150", cls: "tt", cap: 32e9, bw: 512e9, t: V },
     { n: "Galaxy Blackhole", cls: "tt", cap: 1e12, bw: 16e12, t: V },
     { n: "H100 SXM", cls: "nv", cap: 80e9, bw: 3.35e12, t: V },
-    { n: "B200 (~180 GB usable)", cls: "nv", cap: 180e9, bw: 8e12, t: A },
+    { n: "B200 (~180 GB usable)", cls: "nv", cap: 180e9, bw: 8e12, t: V },
     { n: "GB200 NVL72", cls: "nv", cap: 13.4e12, bw: 576e12, t: VS }
   ];
   function chCalc() {
