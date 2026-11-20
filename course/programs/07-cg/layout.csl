@@ -5,7 +5,7 @@
 // allreduce (dot products). The top level owns all hardware IDs and hands each module its share.
 //
 // Budget on every PE                          stencil    allreduce   memcpy       this program
-//   routable colors                           0-7        8           (21-30)*     -
+//   routable colors                           0-7        8           (20-23)*     -
 //   local task IDs                            14-16      17-20       -            12 (state machine)
 //   input/output queues (pe_program.csl)      in 4-7     2           0, 1         -
 //                                             out 4-7 (WSE-3) / 3 (WSE-2)

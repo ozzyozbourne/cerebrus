@@ -48,13 +48,13 @@
 <h2>Set up a working copy</h2>
 <div class="callout ok">
 <strong>Run it yourself</strong>
-<p>Load the SDK into this shell, then copy the programs so the course sources stay pristine (the page and <code>run_all.sh</code> are built from them). Work under your home directory, not <code>/tmp</code>: <code>cs_python</code> fails there.</p>
+<p>Load the SDK into this shell, then copy the programs so the course sources stay pristine (the page and <code>run_all.sh</code> are built from them). Work under your home directory, not <code>/tmp</code>: the <code>cs_python</code> wrapper mounts <code>$TMPDIR</code> over <code>/tmp</code> inside its container, and a run started from a directory under <code>/tmp</code> failed in the course's first experiments. (With Apptainer 1.5.5 on this machine such runs do work, but they leave stub directories under <code>$TMPDIR</code>.)</p>
 <pre><code>source /home/user/cerebras-sdk/env.sh
 mkdir -p ~/lab1 &amp;&amp; cp -r course/programs/01-saxpy course/programs/02-wavelet-tasks ~/lab1/
 cd ~/lab1/01-saxpy &amp;&amp; bash commands.sh            # WSE-3 (default)
 ARCH=wse2 bash commands.sh                          # same program on WSE-2
 python3 -c "import json;print(json.load(open('sim_stats.json'))['cycle_count'])"</code></pre>
-<p>Do the same in <code>~/lab1/02-wavelet-tasks</code>, and do every exercise in these copies. <code>course/programs/run_all.sh</code> runs the pristine versions of all programs and prints PASS/FAIL with cycle counts. A run takes 10–30 s of wall time. If something fails, see <a href="#trouble">If it fails</a>.</p>
+<p>Do the same in <code>~/lab1/02-wavelet-tasks</code>, and do every exercise in these copies. <code>course/programs/run_all.sh</code> runs the pristine versions of all programs and prints PASS/FAIL with cycle counts. One run of program 01 or 02 takes 10–30 s of wall time on an idle machine; <code>run_all.sh</code> runs all seven programs and takes a few minutes (program 07 alone needs about 100 s). If something fails, see <a href="#trouble">If it fails</a>.</p>
 </div>
 
 <h2 id="saxpy">Program 01 · SAXPY: y ← a·x + y</h2>
@@ -303,7 +303,7 @@ SUCCESS!
 
 <h3 id="trace">Look inside: the instruction trace</h3>
 <p>The simulator can write a readable per-cycle trace of every instruction on every PE. Set one environment variable for the run (SDK 2.10.1; the trace did not change cycle counts beyond normal noise in our runs) <span class="tag measured">Measured</span>:</p>
-<pre><code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace cs_python run.py --name out    # writes ~100k lines to sim.log
+<pre><code>SINGULARITYENV_SIMFABRIC_DEBUG=inst_trace cs_python run.py --name out    # writes ~86k lines to sim.log
 grep "P4.1: .*EX OP.*FMACS" sim.log | head -2</code></pre>
 <p>Five lines from program 01's <code>sim.log</code>, shortened. <code>@3124</code> is the cycle, <code>P4.1</code> your PE, <code>T01</code> the task running (memcpy's command task, which is running your RPC), <code>Seq</code> the element of the DSD op, and the operands are hex floats (<code>40200000</code> = 2.5, <code>3f24aefe</code> = 0.64329517, the first result):</p>
 <pre class="output"><code>@3089 P4.1: Seq: 0,  [EX OP] | 0x0114: T01 BLK    Src1:0001
@@ -567,7 +567,7 @@ SUCCESS!
 <ul>
 <li><b>Tasks start at cycle 1,329 and take about 40 cycles each</b> (about 21 instructions; the rest is task entry and exit) <span class="tag measured">Measured</span>. memcpy delivers faster than that, so a backlog builds in the queues: the core runs one task at a time.</li>
 <li><b>The streaming H2D is "done" at cycle 4,709</b>, when memcpy's <code>T27</code> unblocks the command stream. Only <b>84 of 100</b> tasks have run; 16 values are still queued <span class="tag measured">Measured</span>.</li>
-<li><b>Without the barrier</b>, the D2H of <code>stats</code> needs about 830 cycles of command handling, so its first element (the sum) leaves at cycle 5,539, after 95 tasks. The D2H then sends one element at a time while tasks keep running: the sum of squares leaves after 96 tasks, which is why the failing row reads 3207.2998, the sum of 96 squares. One <code>memcpy_d2h</code> sampled four values at four different moments. <code>count</code> is read last, at cycle 7,777, so it shows 100: a correct-looking counter does not prove the result was read at the right time.</li>
+<li><b>Without the barrier</b>, the D2H of <code>stats</code> needs about 830 cycles of command handling, so its first element (the sum) leaves at cycle 5,539, after 95 tasks. The D2H then sends one element at a time while tasks keep running: the sum of squares leaves after 96 tasks, which is why the failing row reads 3207.2998, the sum of 96 squares. One <code>memcpy_d2h</code> sampled four values at four different moments. <code>count</code> is read last, long after the 100th task has run (at cycle 7,777 in the run plotted here and 6,617 in a rerun; that moment depends on host timing), so it shows 100: a correct-looking counter does not prove the result was read at the right time.</li>
 <li><b>With the barrier</b>, <code>wait_done</code> arrives at cycle 4,987 with 89 done and blocks; the 100th <code>on_value</code> starts at 5,421 and unblocks at 5,460; only then does the D2H start.</li>
 </ul>
 

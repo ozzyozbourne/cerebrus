@@ -306,7 +306,7 @@ The scalar language is the easy part.
 <tr><td><code>benchmark-libs/allreduce</code>, <code>benchmark-libs/stencil_3d_7pts</code> (in the extras, not the image)</td><td>reusable user-level modules: rectangle allreduce; 3-D 7-point SpMV</td><td>imported by relative path, colors passed as params</td><td>7pt-stencil-spmv and the four CG-family solvers (conjugate-gradient, preconditioned-conjugate-gradient, bicgstab, power-method); Ch 15</td></tr>
 </table></div>
 <p class="legend">Function names read from <code>csl-libs/*.csl</code> in the SDK image <span class="tag sdk">SDK 2.10.1</span>. Every SDK example, with its chips and the chapter that explains it, is in <a href="appendix-d-sdk-index.html">Appendix D</a>.</p>
-<p><b>If an import fails with "Unable to open ./src/../../benchmark-libs/…".</b> Five benchmarks, <code>7pt-stencil-spmv</code> and the four CG-family solvers, import <code>benchmark-libs</code> by a relative path. The SDK wrappers run <code>cslc</code> in a container that sees only the current directory, <code>$TMPDIR</code> and any <code>CSL_IMPORT_PATH</code> entries, so the import fails even in place in the extras tree. Copy <code>benchmark-libs/</code> next to the example. If both copies are under <code>$TMPDIR</code> (<code>env.sh</code> sets it to <code>/home/user/cerebras-sdk/tmp</code>), that is enough. Anywhere else, also run <code>export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)</code> before the commands script; the wrapper bind-mounts that path. The compiler's own flag, <code>--import-path DIR</code>, adds a search directory for <code>&lt;…&gt;</code> imports, but alone it did not fix this case for us <span class="tag measured">Measured, WSE-3</span>. Details in <a href="appendix-d-sdk-index.html#run">Appendix D</a>.</p>
+<p><b>If an import fails with "Unable to open ./src/../../benchmark-libs/…".</b> Five benchmarks, <code>7pt-stencil-spmv</code> and the four CG-family solvers, import <code>benchmark-libs</code> by a relative path. The SDK wrappers run <code>cslc</code> in a container that sees only the current directory, <code>$TMPDIR</code> and any <code>CSL_IMPORT_PATH</code> entries, so the import fails even in place in the extras tree. Copy <code>benchmark-libs/</code> next to the example. Then run <code>export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)</code> before the commands script; the wrapper bind-mounts that path, and this worked wherever we put the copies. If both copies are under <code>$TMPDIR</code> the export is not needed, but only when <code>$TMPDIR</code> is already a real path: on a machine where <code>/home/user/cerebras-sdk</code> was a symlink, the same copy failed until <code>TMPDIR</code> was set to its <code>realpath</code> or <code>CSL_IMPORT_PATH</code> was exported <span class="tag measured">Measured</span>. The compiler's own flag, <code>--import-path DIR</code>, adds a search directory for <code>&lt;…&gt;</code> imports, but alone it did not fix this case for us <span class="tag measured">Measured, WSE-3</span>. Details in <a href="appendix-d-sdk-index.html#run">Appendix D</a>.</p>
 
 <h2 id="source-to-sim">From source to simulation</h2>
 <div class="filename">course/programs/01-saxpy/commands.sh</div>
@@ -413,20 +413,27 @@ cs_python run.py --name out</code></pre>
 <svg id="elf-svg" viewBox="0 0 680 210" width="680" role="img" aria-label="6 by 2 rectangle coloured by ELF file"></svg>
 <div class="readout" id="elf-out" aria-live="polite"></div>
 </div>
-<p><code>out_i_j</code> numbers a <em>group</em> of identical PEs; it is not a PE coordinate. <code>cs_readelf -r</code> shows which fabric tiles a file covers: in the 6 × 2 build without routes, <code>out_1_0.elf</code> covers fabric (5..8, 1..2), all eight middle PEs <span class="tag measured">Measured</span>. The practical consequence: <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> removes coordinate params, but not route differences. Compile time grows with the number of groups, not with the PE count.</p>
+<p><code>out_i_j</code> numbers a <em>group</em> of identical PEs; it is not a PE coordinate. <code>cs_readelf -r</code> (and <code>-m</code>, which prints one line per tile) shows which fabric tiles a file covers: in the 6 × 2 build without routes, <code>out_1_0.elf</code> covers fabric (5..8, 1..2), all eight middle PEs <span class="tag measured">Measured</span>. The practical consequence: <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> removes coordinate params, but not route differences. Compile time grows with the number of groups, not with the PE count.</p>
 
 <h3>What memcpy adds to every PE's router</h3>
 <p><code>--out-routes</code> on the 6 × 2 build with the per-row route prints (first rows shown) <span class="tag measured">Measured</span>:</p>
-<pre class="output"><code>|    PE    | color | rx        | tx        | sw-1  |
-|    0,0   | 3     | R         | E         |       |
-|          | 21    | R         | E         | rx=R  |
-|          | 22    | W         | R,E       |       |
-|          | 23    | W         | R,E       |       |
-|    0,1   | 3     | W         | R         |       |
-|    1,0   | 3     | R         | E         |       |
-|          | 21    | W         | E         | rx=R  |
-|          | 22    | W         | R,E       |       |</code></pre>
-<p>Your color 3 sits next to memcpy's colors on every PE. Commands (22) and H2D data (23) enter from the west and are passed both to the PE (R) and east along the row; D2H data (21) leaves eastward, with a switch position that lets each PE inject its own results. PE coordinates in this table are rectangle coordinates.</p>
+<pre class="output"><code>+----------+-------+-----------+-----------+-------+-------+-------+
+|    PE    | color | rx        | tx        | sw-1  | sw-2  | sw-3  |
++----------+-------+-----------+-----------+-------+-------+-------+
+|    0,0   | 3     | R         | E         |       |       |       |
+|          | 21    | R         | E         | rx=R  |       |       |
+|          | 22    | W         | R,E       |       |       |       |
+|          | 23    | W         | R,E       |       |       |       |
+|    0,1   | 3     | W         | R         |       |       |       |
+|          | 21    | R         | E         | rx=R  |       |       |
+|          | 22    | W         | R,E       |       |       |       |
+|          | 23    | W         | R,E       |       |       |       |
++----------+-------+-----------+-----------+-------+-------+-------+
+|    1,0   | 3     | R         | E         |       |       |       |
+|          | 21    | W         | E         | rx=R  |       |       |
+|          | 22    | W         | R,E       |       |       |       |
+|          | 23    | W         | R,E       |       |       |       |</code></pre>
+<p>Your color 3 sits next to memcpy's colors on every PE. Commands (22) and H2D data (23) enter from the west and are passed both to the PE (R) and east along the row; D2H data (21) leaves eastward: the first column injects from its own ramp (rx R), and the columns east of it forward what arrives from the west, with a switch position (sw-1, rx=R) that lets each PE inject its own results. PE coordinates in this table are rectangle coordinates.</p>
 
 <h2 id="sim-outputs">Simulator outputs</h2>
 <p>The simulator writes <code>sim.log</code>, <code>sim_stats.json</code>, <code>simconfig.json</code> and <code>simfab_traces/</code> into the directory you ran <code>cs_python</code> from; the host's <code>print</code> output goes to your terminal. A real <code>sim_stats.json</code> from program 01 (WSE-3, a quiet rerun) <span class="tag measured">Measured</span>:</p>
@@ -440,7 +447,7 @@ cs_python run.py --name out</code></pre>
 <ul>
 <li><b>Idle stop.</b> The simulator stops after an idle window once the host has stopped; <code>simconfig.json</code> has <code>"sunsetCount": 50</code>, and most runs stopped after exactly 50 idle cycles <span class="tag measured">Measured</span>.</li>
 <li><b>A deadlock and a success can both end "Stopped due to idleness".</b> Only your host-side check (the <code>assert_allclose</code>) tells you which.</li>
-<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2) every time. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. The Chapter 11 review saw +1.4 % to +2.3 % for program 01 in parallel runs and up to about 4× on one variant, while in-kernel timestamps did not move <span class="tag measured">Measured</span>. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
+<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2). In a later verification on a busy machine, WSE-3 gave 7,740 four times in a row, while WSE-2 gave 7,081 (305-cycle idle tail), 7,007 and then 6,826 <span class="tag measured">Measured</span>. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. The Chapter 11 review saw +1.4 % to +2.3 % for program 01 in parallel runs and up to about 4× on one variant, while in-kernel timestamps did not move <span class="tag measured">Measured</span>. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
 <li><b>To time a kernel</b>, read the PE's own timestamp counter with <code>&lt;time&gt;</code> (topic-02), which stays stable under load, or difference two runs as Lab 3 does. Do not read a single <code>cycle_count</code>.</li>
 <li>A fatal stop writes no <code>sim_stats.json</code> at all <span class="tag measured">Measured</span>. <code>sim.log</code> names the chip internally: FYN = WSE-2, SDR = WSE-3.</li>
 </ul>
@@ -477,9 +484,9 @@ cs_python run.py --name out</code></pre>
   prt.fmt_with_coords(<span class="s">"saxpy start, a = {f}"</span>, .{a});
   …</code></pre>
 <div class="filename">sim.log (6 × 2 run)</div>
-<pre class="output"><code>@4232 PE(0,0): saxpy start, a = 2.5
-@4233 PE(0,1): saxpy start, a = 2.5
-@4234 PE(1,0): saxpy start, a = 2.5</code></pre>
+<pre class="output"><code>@4233 PE(0,0): saxpy start, a = 2.5
+@4235 PE(1,0): saxpy start, a = 2.5
+@4236 PE(0,1): saxpy start, a = 2.5</code></pre>
 <p class="legend">Each line is prefixed with the cycle; <code>fmt_with_coords</code> adds the PE (rectangle coordinates). Output is flushed at each newline; <code>fmt</code> adds one, <code>print_string</code> does not <span class="tag sdk">SDK 2.10.1, topic-13</span> <span class="tag measured">Measured</span>.</p>
 </div>
 <div>
@@ -544,19 +551,19 @@ rt.read_symbol(1, 0, <span class="s">'buffer'</span>, dtype=<span class="s">'uin
 <h2 id="setup">Setting up the SDK</h2>
 <ol>
 <li><b>Get the SDK.</b> Cerebras distributes the SDK 2.10.1 tarball (it is not in a package manager). Unpack it into a directory such as <code>~/cerebras-sdk</code>. It contains the wrapper scripts <code>cslc</code>, <code>cs_python</code>, <code>csdb</code>, <code>cs_readelf</code>, <code>sdk_debug_shell</code> and a 3.5 GB Singularity image (<code>sdk-cbcore-2.10.1-….sif</code>) with the compiler, runtime and simulator <span class="tag measured">Measured</span>. Unpack <code>csl-extras-*.tar.gz</code> inside it to get the tutorials and benchmarks.</li>
-<li><b>Install a container runtime.</b> The wrappers call <code>singularity</code>. On Ubuntu, <code>apt-get install singularity-container</code> (SingularityCE 4.1.1) works <span class="tag measured">Measured</span>.</li>
+<li><b>Install a container runtime.</b> The wrappers call <code>singularity</code>. On Ubuntu, <code>apt-get install singularity-container</code> (SingularityCE 4.1.1) works <span class="tag measured">Measured</span>. Apptainer 1.5.5, which installs a <code>singularity</code> command, also ran every tool in this chapter <span class="tag measured">Measured</span>.</li>
 <li><b>Create <code>env.sh</code></b> and source it in every shell:
 <pre><code><span class="k">export</span> PATH=$HOME/cerebras-sdk:$PATH
-<span class="k">export</span> TMPDIR=$HOME/cerebras-sdk/tmp    <span class="c"># cs_python fails under /tmp</span>
+<span class="k">export</span> TMPDIR=$HOME/cerebras-sdk/tmp    <span class="c"># mounted over the container's /tmp</span>
 mkdir -p <span class="s">"$TMPDIR"</span>
 <span class="k">export</span> SINGULARITY_DROP_CAPS=CAP_SYS_RESOURCE  <span class="c"># only if root without CAP_SYS_RESOURCE</span></code></pre>
-In this course's cloud container, running as root without <code>CAP_SYS_RESOURCE</code>, every tool failed with "Requesting capability set … while permitted capability set is …" until that last line was added <span class="tag measured">Measured</span>. Run <code>cs_python</code> from a directory outside <code>/tmp</code>, with run.py in the directory you run it from.</li>
+In this course's cloud container, running as root without <code>CAP_SYS_RESOURCE</code>, every tool failed with "Requesting capability set … while permitted capability set is …" until that last line was added <span class="tag measured">Measured</span>. Run <code>cs_python</code> with run.py in the directory you run it from: the wrappers run everything in a container that sees only the current directory, <code>$TMPDIR</code> (mounted over the container's <code>/tmp</code>, which hides the host's <code>/tmp</code>) and any <code>CSL_IMPORT_PATH</code> entries <span class="tag sdk">SDK 2.10.1, sdk_debug_shell, cs_python</span>. Earlier in this course's history <code>cs_python</code> failed in a working directory under <code>/tmp</code>; in a later verification run both <code>cslc</code> and <code>cs_python</code> worked from a directory under <code>/tmp</code> (the current directory is bind-mounted on top), though each run left empty mount-point directories behind in <code>$TMPDIR</code> <span class="tag measured">Measured</span>. A working directory outside <code>/tmp</code> avoids both.</li>
 <li><b>Smoke test</b>: <code>cslc --help</code>, then <code>bash commands.sh</code> in a copy of <code>programs/01-saxpy</code>; it should print <code>SUCCESS!</code>.</li>
 </ol>
 <p class="legend">If you are using this course's repository, <code>.claude/skills/cerebras-sdk/scripts/setup.sh</code> does all of this idempotently. Then <code>source ~/cerebras-sdk/env.sh; cd course/programs &amp;&amp; ARCH=wse3 bash run_all.sh</code>.</p>
 
 <h2>Break it on purpose</h2>
-<p>Copy <code>programs/01-saxpy</code> to a scratch directory outside <code>/tmp</code> and make one change at a time. Predict the message first; each takes under a minute.</p>
+<p>Copy <code>programs/01-saxpy</code> to a scratch directory (preferably outside <code>/tmp</code>, see Setting up) and make one change at a time. Predict the message first; each takes under a minute.</p>
 <ol class="break">
 <li>Change <code>var y_ptr</code> to <code>const y_ptr</code>. <details><summary>what you'll see</summary> "exported symbol mutability mismatch" at compile time.</details></li>
 <li>Drop <code>--params=N:64</code> from commands.sh. <details><summary>what you'll see</summary> "only 'var' and 'extern const' variables may be uninitialized".</details></li>
@@ -1002,7 +1009,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     el("text", { x: X0, y: 200, "font-size": 12, class: "muted" }, svg).textContent = "Same pe_program.csl and same .N everywhere. File names number groups, not PE coordinates.";
     out.textContent = r
       ? "out/bin/: out_0_0 out_0_1 out_1_0 out_1_1 out_2_0 out_2_1 .elf (Measured). cs_readelf --routing on out_0_1.elf shows color 3 WEST → RAMP."
-      : "out/bin/: out_0_0 out_1_0 out_2_0 .elf (Measured). cs_readelf -m out_1_0.elf: fabric (5..8, 1..2), 5,088 bytes each.";
+      : "out/bin/: out_0_0 out_1_0 out_2_0 .elf (Measured). cs_readelf -m out_1_0.elf: fabric (5..8, 1..2), 4,752 bytes each (5,088 once the <simprint> line of the Debugging section is added).";
   }
   cbx.onchange = draw; draw();
 })();

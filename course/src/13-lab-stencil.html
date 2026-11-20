@@ -210,7 +210,7 @@ P=16 n=64 ARCH=wse2 STEPS=100 bash commands.sh   # other configurations: set P, 
 </ul>
 
 <h3>Scaling up <span class="tag derived">Derived</span></h3>
-<p><strong>Whole wafer.</strong> A CS-2's SDK-visible fabric is 750 × 994, and the program rectangle must be at least 7 columns narrower and 2 rows shorter, so about 743 × 992 ≈ 737k PEs <span class="tag sdk">SDK</span>. With 90 + 2.5·n cycles per step at 850 MHz and 5 flops per cell (one add, two multiply-adds):</p>
+<p><strong>Whole wafer.</strong> A CS-2's SDK-visible fabric is 750 × 994, and the program rectangle must be at least 7 columns narrower and 2 rows shorter, so about 743 × 992 ≈ 737k PEs <span class="tag sdk">SDK</span>. (The source is the SDK's <code>single-tile-matvec</code> README, which says <code>fabric-dims</code> must be <code>750,994</code> on a real CS-2 but also runs a 750 × 994 <em>program</em> rectangle; if the second reading is right, the count is ≈745k and the figures below rise by 1%.) With 90 + 2.5·n cycles per step at 850 MHz and 5 flops per cell (one add, two multiply-adds):</p>
 <ul>
 <li>n = 16: 130 cycles = 0.15 µs per step, 6.5 M steps/s on 11.8 M cells, ≈0.38 PFLOP/s f32.</li>
 <li>n = 5,450: ≈13,700 cycles = 16 µs per step on 4 G cells, ≈1.2 PFLOP/s, close to the 2 flops/cycle/PE × 737k × 0.85 GHz ≈ 1.25 PFLOP/s that the 2.5-cycle slope allows.</li>

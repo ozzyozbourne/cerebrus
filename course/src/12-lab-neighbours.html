@@ -60,7 +60,7 @@
 <p><b>Two chips, one source.</b> On WSE-3, <code>@initialize_queue</code> binds an output queue to one color, and the DSD names only the queue. On WSE-2 the color goes on the <code>fabout_dsd</code> (<code>.fabric_color</code>), and the queue is initialized without one. Input queues are bound to a color on both chips. The <code>@is_arch</code> expressions select the right form at compile time (Chapter 5, WSE-2 vs WSE-3 table).</p>
 
 <div class="callout">
-<strong>Why output queue 2 and input queue 2 are safe here, but were not in Lab 3</strong>
+<strong>Why output queue 2 and input queue 2 are safe here, but will not be in Lab 3</strong>
 On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's rule is that two <em>concurrent</em> operations must not share a microthread, and on WSE-3 a queue's microthread defaults to its queue ID. A middle PE runs <em>one</em> operation, <code>@fadds(out, in, v)</code>. That op uses both queues on one microthread, so nothing clashes. Lab 3 runs several ops at once, which is why it needs distinct input queues. Program 05 uses input queue 4 only out of habit: no PE there uses both queues.
 </div>
 
@@ -89,7 +89,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 
 <h3 id="streaming">Why it is fast: streaming, not store-and-forward</h3>
 <p>A middle PE does not wait for the whole vector before forwarding. <code>@fadds(out_dsd, in_dsd, v_dsd)</code> processes element <em>i</em> as soon as wavelet <em>i</em> arrives and emits it immediately. The vector moves through the row as a wavefront. The reduction takes about <strong>M + c·(P − 1)</strong> cycles, plus a fixed few tens, not <strong>P × M</strong>. Here c is the cost of one CE-forwarded hop: the router hop, ramp up, the CE's <code>@fadds</code> pipeline and ramp down. It is measured below at ≈ 9 cycles on WSE-3 and ≈ 6 on WSE-2 <span class="tag measured">Measured</span>. Throughput stays one wavelet per cycle per link, so c only shifts the wavefront.</p>
-<p>The SDK's gemv-06/07/08 tutorials do <code>@fadds(y, in, y)</code> into memory and send in a separate step. That is store-and-forward per PE, a fine choice when the PE has other work to do on the data. For a pure chain, the measured cost differs a lot.</p>
+<p>The SDK's gemv-08 tutorial reduces the same way: its middle columns run <code>@fadds(out_dsd, y_dsd, in_dsd)</code>, fabric in and fabric out in one op (gemv-06 and gemv-07 have only a sender and a receiver, so they have no middle PE) <span class="tag sdk">SDK 2.10.1, gemv-08 pe_program.csl</span>. The alternative is to receive the whole vector into memory with <code>@fadds(v, in, v)</code> and send it on in a second op. That is store-and-forward per PE, a fine choice when the PE has other work to do on the data. For a pure chain, the measured cost differs a lot.</p>
 
 <div class="widget" id="pipe">
 <h4>Race: streaming vs store-and-forward, on one clock</h4>
@@ -121,7 +121,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 <tr><td>Same, store-and-forward variant (<code>@fadds(v, in, v)</code>, then <code>@fmovs(out, v)</code>)</td><td>58</td><td>154</td><td>348</td><td>733</td><td>–</td></tr>
 <tr><td>Whole-run cycles, uninstrumented program</td><td>4,394</td><td>4,496</td><td>4,748</td><td>5,260</td><td>–</td></tr>
 </table></div>
-<p>All of these are <span class="tag measured">Measured</span> with the SDK 2.10.1 simulator. Store-and-forward pays about M + 16 cycles per PE on these own-clock readings (48 at M = 32, and 1,024 vs 199 cycles at P = 8, M = 128), against about 7 for streaming. On WSE-2 the store-and-forward variant takes 307 / 643 cycles at P = 8 / 16. At P = 8 the kernel takes 77 / 101 / 199 / 588 cycles for M = 8 / 32 / 128 / 512, so about 1 cycle per element: the link rate of one wavelet per cycle. Each op here has only one memory operand stream, so the bank clash that halves a memory-to-memory <code>@fmacs</code> when its two source arrays start at addresses equal mod 4 words (Chapter 11) cannot occur. The whole run grows from 3,025 cycles (M = 8) to 11,463 (M = 128) because the host copies P × M elements in and M results out. On WSE-2 the kernel takes 54 / 64 / 84 / 124 / 204 cycles for P = 2 / 4 / 8 / 16 / 32. With the timer in place, the program's own total rises to 6,861 cycles: one more launch and two more small reads, all of it host I/O again. Whole-run totals also wander by tens to hundreds of cycles between identical runs, more when the host is busy. TSC differences repeat exactly.</p>
+<p>All of these are <span class="tag measured">Measured</span> with the SDK 2.10.1 simulator. Store-and-forward pays about M + 16 cycles per PE on these own-clock readings (48 at M = 32, and 1,024 vs 199 cycles at P = 8, M = 128), against about 7 for streaming. On WSE-2 the store-and-forward variant takes 307 / 643 cycles at P = 8 / 16. At P = 8 the kernel takes 77 / 101 / 199 / 588 cycles for M = 8 / 32 / 128 / 512, so about 1 cycle per element: the link rate of one wavelet per cycle. Each op here has only one memory operand stream, so the bank clash that halves a memory-to-memory <code>@fmacs</code> when its two source arrays start at addresses equal mod 4 words (Chapters 6 and 11) cannot occur. The whole run grows from 3,025 cycles (M = 8) to 11,463 (M = 128) because the host copies P × M elements in and M results out. On WSE-2 the kernel takes 54 / 64 / 84 / 124 / 204 cycles for P = 2 / 4 / 8 / 16 / 32. With the timer in place, the program's own total rises to 6,861 cycles: one more launch and two more small reads, all of it host I/O again. Whole-run totals also wander by tens to hundreds of cycles between identical runs, more when the host is busy. Program 03's TSC differences repeated exactly in every rerun. (Program 05's do not quite: its stamps include command-stream skew that depends on host timing, and they move by a cycle or two between runs, as described below.)</p>
 
 <div class="callout warn">
 <strong>Only subtract timestamps from the same PE</strong>
@@ -130,7 +130,7 @@ On WSE-3 queues 0 and 1 belong to memcpy, so user queues start at 2. Chapter 5's
 </div>
 
 <h3 id="hop-cost">The hop cost, on one clock: a round trip</h3>
-<p>A variant of program 03 (in <code>tmp/fix-ch11/rt</code>) makes the last PE send its sum back west on a third color. That path is pure router hops. PE 0 then times "send v → receive the sum back" on its own counter. A second variant with no CE work in the middle PEs (the middle routers just pass c0 through) measures the router-only round trip. The slope of each against P gives the per-hop costs <span class="tag measured">Measured</span>:</p>
+<p>A variant of program 03 (a scratch copy, not shipped in <code>course/programs</code>) makes the last PE send its sum back west on a third color. That path is pure router hops. PE 0 then times "send v → receive the sum back" on its own counter. A second variant with no CE work in the middle PEs (the middle routers just pass c0 through) measures the router-only round trip. The slope of each against P gives the per-hop costs <span class="tag measured">Measured</span>:</p>
 <div class="table-wrap"><table>
 <tr><th>Round trip on PE 0 (M = 32)</th><th>P = 2</th><th>8</th><th>16</th><th>24</th><th>32</th><th>slope per PE</th></tr>
 <tr><td>WSE-3: CE chain east + router hops back</td><td>76</td><td>142</td><td>231</td><td>321</td><td>410</td><td>11.1</td></tr>
@@ -183,7 +183,7 @@ A lone statement <code>if</code> without braces is fine (program 03: <code>if (r
 </div>
 
 <h3>Going 2-D: one color for every column</h3>
-<p>To broadcast down C columns at once, loop over x as well as y, and pass <code>memcpy.get_params(x)</code>. One color still works: routes are per PE, and no wavelet ever crosses from one column into another. The changes to program 05 (a copy is in <code>tmp/fix-ch11/b2d</code>):</p>
+<p>To broadcast down C columns at once, loop over x as well as y, and pass <code>memcpy.get_params(x)</code>. One color still works: routes are per PE, and no wavelet ever crosses from one column into another. The changes to program 05 (made in a scratch copy, not shipped in <code>course/programs</code>):</p>
 <pre><code>param C: i16;                                         // new: columns
 const memcpy = @import_module("&lt;memcpy/get_params&gt;", .{ .width = C, .height = R });
 @set_rectangle(C, R);
@@ -231,7 +231,7 @@ fn reduce() void { mpi_x.reduce_fadds(W - 1, &amp;v, &amp;r, M, cb_id); }  // ro
 </div>
 
 <h2 id="composing">Composing the two: a distributed GEMV</h2>
-<p>Put program 05 and program 03 together and you have the SDK's gemv-08 pattern: multicast the <code>x</code> slices down the columns, let each PE multiply its block of <code>A</code>, then reduce the partial results along the rows with alternating colors. The SDK tutorials gemv-06 to gemv-08 build up to exactly this <span class="tag sdk">SDK 2.10.1</span>. gemv-08 is the full pattern, with 3 colors. It consumes <code>x</code> with a wavelet-triggered task rather than a bulk copy, and its per-PE reduction step stores into memory before sending, which is store-and-forward.</p>
+<p>Put program 05 and program 03 together and you have the SDK's gemv-08 pattern: multicast the <code>x</code> slices down the columns, let each PE multiply its block of <code>A</code>, then reduce the partial results along the rows with alternating colors. The SDK tutorials gemv-06 to gemv-08 build up to exactly this <span class="tag sdk">SDK 2.10.1</span>. gemv-08 is the full pattern, with 3 colors. It consumes <code>x</code> with a wavelet-triggered task rather than a bulk copy, and its middle columns reduce with the same streaming <code>@fadds(out_dsd, y_dsd, in_dsd)</code> as program 03.</p>
 <figure>
 <svg viewBox="110 0 600 270" width="600" role="img" aria-label="GEMV composed from broadcast and reduction">
   <defs>
