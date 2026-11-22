@@ -10,7 +10,7 @@
 <main class="wide">
 <div class="kicker">An 18-chapter visual course with five appendices</div>
 <h1>Wafer-Scale Computing</h1>
-<p class="lede">How the Cerebras Wafer-Scale Engine works, from a single 48 KB processing element up to multi-wafer clusters; how to program it in CSL, with seven original programs compiled and validated on the Cerebras SDK 2.10.1 simulator; and how it compares with Tenstorrent and NVIDIA GPUs.</p>
+<p class="lede">How the Cerebras Wafer-Scale Engine works, from a single 48 KB processing element up to multi-wafer clusters; how to program it in CSL, with seven programs (five original, two adapted from SDK benchmarks) compiled and validated on the Cerebras SDK 2.10.1 simulator; and how it compares with Tenstorrent and NVIDIA GPUs.</p>
 
 <figure>
 <svg viewBox="0 0 980 150" width="980" role="img" aria-label="Course map">
@@ -23,7 +23,7 @@
   <div class="stat"><div class="v">18 + 5</div><div class="l">chapters and appendices, each with diagrams</div></div>
   <div class="stat"><div class="v">90</div><div class="l">interactive widgets</div></div>
   <div class="stat"><div class="v">7 / 7</div><div class="l">programs pass on WSE-3 and WSE-2 <span class="tag measured">Measured</span></div></div>
-  <div class="stat"><div class="v">4</div><div class="l">real problems hit while writing the programs, explained</div></div>
+  <div class="stat"><div class="v">3</div><div class="l">real bugs hit while writing the programs, explained (mutability flag, streaming race, microthread clash; Chapter 10)</div></div>
 </div>
 
 <div id="toc"></div>
@@ -32,7 +32,7 @@
 <h2>How to use this course</h2>
 <ul>
 <li>Read in order the first time: each chapter builds on the previous one. Every chapter ends with "Check yourself" questions, and the lab chapters have exercises with expected answers.</li>
-<li>Every number carries a provenance tag: <span class="tag vendor">Vendor</span> <span class="tag indep">Indep</span> <span class="tag analyst">Analyst</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span>. Web figures were gathered largely from search extracts of primary sources; check them against the primary document before relying on them.</li>
+<li>Every number carries a provenance tag: <span class="tag vendor">Vendor</span> <span class="tag indep">Indep</span> <span class="tag analyst">Analyst</span> <span class="tag sdk">SDK 2.10.1</span> <span class="tag measured">Measured</span> <span class="tag derived">Derived</span> <span class="tag unv">Unverified</span>. Web figures were first gathered largely from search extracts of primary sources. Two later verification passes checked many of them against the primary documents; <a href="appendix-e-sources.html">Appendix E</a> lists what is still unverified. Check a figure against its source before relying on it.</li>
 <li>To run the programs: set up the SDK with <code>.claude/skills/cerebras-sdk/scripts/setup.sh</code>, then <code>source /home/user/cerebras-sdk/env.sh</code> and <code>bash course/programs/run_all.sh</code>.</li>
 <li>The research behind the course is in <code>reports/</code> and <code>research_notes/</code> in this repository.</li>
 </ul>

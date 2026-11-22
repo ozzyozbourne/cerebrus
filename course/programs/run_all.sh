@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Compile + simulate every course program and report PASS/FAIL and simulated cycles.
 # Usage: source /home/user/cerebras-sdk/env.sh; ARCH=wse3 bash run_all.sh   (or ARCH=wse2)
+# The cycle column is the whole run's cycle_count from sim_stats.json. It includes the time the
+# simulated wafer waits for host commands, so it changes from run to run (by a few cycles on a
+# quiet machine, by hundreds or more on a busy one). PASS/FAIL is the check; time kernels with
+# the TSC as the lab chapters do. Each program leaves out/, sim.log, sim_stats.json and run.log
+# in its directory (all git-ignored).
 cd "$(dirname "$0")"
 ARCH=${ARCH:-wse3}; export ARCH
 fail=0

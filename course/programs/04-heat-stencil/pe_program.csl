@@ -36,10 +36,14 @@ const ghost_e    = @get_dsd(mem1d_dsd, .{ .tensor_access = |i|{1} -> u[n + 1] })
 
 // One hardware queue per direction (WSE-3 binds each queue to one color).
 // Queues 0/1 belong to memcpy. All four IDs differ: an async fabric op runs on
-// the microthread whose ID equals its queue ID (always on WSE-2; the default on
+// the microthread whose ID equals its queue ID (the output queue if the op has
+// a fabout operand, else its input queue; always on WSE-2, the default on
 // WSE-3 unless you pass .ut_id), and two concurrent ops must not share a
-// microthread (output queue 2 + input queue 2 would both use microthread 2:
-// the simulator aborts with "trying to term ut_instr[..], but it's not ours").
+// microthread. Here a send and a receive are separate ops running at the same
+// time, so a send on output queue 2 and a receive on input queue 2 would both
+// use microthread 2: the simulator aborts with "trying to term ut_instr[..],
+// but it's not ours". (One op that reads input queue 2 and writes output
+// queue 2, as in program 03, is a single microthread and is fine.)
 const oq_e = @get_output_queue(2);
 const oq_w = @get_output_queue(3);
 const iq_w = @get_input_queue(4);

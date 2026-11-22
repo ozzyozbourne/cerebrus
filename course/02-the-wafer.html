@@ -41,7 +41,7 @@
 
 <h2 id="reticle">From reticle to wafer</h2>
 <p>Lithography exposes a wafer one <em>reticle</em> field at a time, and a field is at most about 26 × 33 mm <span class="tag indep">Industry standard</span>. That is why the largest conventional GPU dies stop near 800 mm², and why NVIDIA's B200 joins two such dies with a 10 TB/s die-to-die link <span class="tag vendor">Vendor</span>. Cerebras prints an ordinary grid of reticle-sized fields, then adds wires <em>across the scribe lines</em> (the narrow strips between fields where a saw would normally cut). The on-chip network therefore continues from one field to the next as if the boundary were not there. Cerebras calls that network the <em>fabric</em>: a 2-D mesh linking every core to its four neighbours (Chapter 4). Each core is a <em>processing element</em> (PE); the course uses the two words interchangeably.</p>
-<p>The result is a square about 215 mm on a side (√46,225 = 215) <span class="tag derived">Derived</span>, the largest that fits on the wafer. A full 215 mm square has a 304 mm diagonal, slightly more than the 300 mm wafer, so either the corners are trimmed or 46,225 mm² is rounded; the sources do not say <span class="tag derived">Derived</span>. The drawing below is to scale and shows that clipping honestly.</p>
+<p>The result is a square about 215 mm on a side (√46,225 = 215) <span class="tag derived">Derived</span>, the largest that fits on the wafer. A full 215 mm square has a 304 mm diagonal, slightly more than the 300 mm wafer, so the corners of the quoted square must be trimmed (the Hot Chips 2022 deck prints "215mm x 215mm" without comment) <span class="tag derived">Derived</span>. The drawing below is to scale and shows that clipping honestly.</p>
 
 <figure>
 <div class="panels">
@@ -63,10 +63,10 @@
   <text x="170" y="196" text-anchor="middle" font-size="13">46,225 mm²</text>
   <text x="170" y="56" text-anchor="middle" font-size="11.5" class="muted">corner silicon: never used</text>
   <text x="170" y="341" text-anchor="middle" font-size="13" class="muted">215 × 215 mm, clipped by the wafer edge</text>
-  <text x="170" y="358" text-anchor="middle" font-size="13" class="muted">dashed = reticle fields (count illustrative)</text>
+  <text x="170" y="358" text-anchor="middle" font-size="13" class="muted">dashed = the 84 dies (12 × 7, each 17 × 30 mm)</text>
 </svg>
 </div>
-<figcaption><b>Same wafer, two products, both to scale (1 px = 1 mm).</b> Left: only whole 26 × 33 mm dies are counted; the fragments at the rim are waste. Right: the dashed lines are reticle boundaries that the fabric crosses as if they were not there <span class="tag vendor">Vendor</span> (Hot Chips 2019/2022, via secondary extracts). The 9 × 7 field grid is schematic: each field fits a reticle, but the real field count was not confirmed for this course.</figcaption>
+<figcaption><b>Same wafer, two products, both to scale (1 px = 1 mm).</b> Left: only whole 26 × 33 mm dies are counted; the fragments at the rim are waste. Right: the dashed lines are reticle boundaries that the fabric crosses as if they were not there <span class="tag vendor">Vendor</span> (Hot Chips 2019 and 2022 decks). The grid is the WSE-2's: 12 × 7 = 84 dies of 17 × 30 mm, each holding 66 × 154 cores <span class="tag vendor">Vendor</span> (HC22; the WSE-3 also has 84 dies, of about 10.7k cores each, HC2024). 84 × 510 mm² is 42,840 mm², and the 204 × 210 mm block of dies has a 293 mm diagonal, so the dies themselves fit inside the 300 mm wafer; the deck does not say what fills the rest of the quoted 215 × 215 mm <span class="tag derived">Derived</span>. The grid is centred in the square here, which is a guess.</figcaption>
 </figure>
 
 <p>Wafer stitching is one of three ways to get past the reticle limit. They differ in where the boundaries are and how defects are handled.</p>
@@ -79,7 +79,7 @@
 <p class="note">An academic comparison (Theseus, arXiv:2407.02079) argues that the known-good-die route may yield better than stitching. That is an argument, not a measurement <span class="tag indep">Indep</span>.</p>
 
 <h2>What the wafer buys</h2>
-<p>Keeping the wafer whole buys one thing above all: data never has to leave the silicon. On a GPU cluster, every byte that moves between chips crosses a package edge, a SerDes and a cable; NVLink gives an H100 about 0.9 TB/s <span class="tag vendor">Vendor</span> (not re-verified). On the wafer, wires between neighbouring cores are under 1 mm long <span class="tag vendor">Vendor</span> (Hot Chips 2022), and the fabric linking all of them carries 214 Pb/s ≈ 27 PB/s <span class="tag vendor">Vendor</span>, about 30,000× one H100's NVLink <span class="tag derived">Derived</span>.</p>
+<p>Keeping the wafer whole buys one thing above all: data never has to leave the silicon. On a GPU cluster, every byte that moves between chips crosses a package edge, a SerDes and a cable; NVLink gives an H100 about 0.9 TB/s <span class="tag vendor">Vendor</span> (Cerebras's own Hot Chips 2024 comparison uses the same 900 GB/s). On the wafer, even the bridges that cross a scribe line from one die to the next are under 1 mm long <span class="tag vendor">Vendor</span> (Hot Chips 2022: "Bridge &lt;1mm across scribe lines between die"; neighbouring cores inside a die are about 0.2 mm apart), and the fabric linking all of them carries 214 Pb/s ≈ 27 PB/s <span class="tag vendor">Vendor</span>, about 30,000× one H100's NVLink <span class="tag derived">Derived</span>.</p>
 <p>Area is the second gain. About half of each core's area is SRAM <span class="tag vendor">Vendor</span> (HC34: 50:50 logic to SRAM), so the wafer holds 44 GB of single-cycle memory: the "capacity at that speed" from Chapter 1. A GPU cannot get that on one die, because one die stops at one reticle.</p>
 
 <div class="widget" id="bw">
@@ -93,31 +93,31 @@
 </div>
 <p class="note">Two cautions. The WSE numbers are aggregates over 900,000 private memories and links, not one pipe any core can use at that rate. The fair on-chip GPU counterpart is its aggregate register-file and shared-memory bandwidth, tens to hundreds of TB/s (Chapter 1), which is not shown here. The point of the ladder is the off-chip links: the wafer replaces them with on-silicon wires.</p>
 
-<p>The wafer is also big in <em>time</em>. A wavelet moves about one hop per cycle <span class="tag indep">Indep</span> (arXiv:2209.15040). At the WSE-2's 1.1 GHz <span class="tag vendor">Vendor (HC22)</span>, crossing the 750-column width of a CS-2 takes about 0.7 µs, and going corner to corner (750 + 994 = 1,744 hops) takes about 1.6 µs; at the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span>, about 0.9 and 2 µs <span class="tag derived">Derived</span>. That is short for a whole machine, but about a thousand times longer than one hop to a neighbour, which is why the algorithms in later chapters favour locality. The rest of this chapter is the price of the bet.</p>
+<p>The wafer is also big in <em>time</em>. A wavelet moves about one hop per cycle <span class="tag vendor">Vendor</span> (Hot Chips 2022: "single cycle latency between cores", a WSE-2 statement; the SDK simulator charges 2 cycles per hop on WSE-3, Chapter 4). At the WSE-2's 1.1 GHz <span class="tag vendor">Vendor (HC22)</span>, crossing the 757-column width of a CS-2 fabric takes about 0.7 µs, and going corner to corner (756 + 995 = 1,751 hops) takes about 1.6 µs; at the 850 MHz the SDK benchmarks assume <span class="tag sdk">SDK 2.10.1</span>, about 0.9 and 2 µs <span class="tag derived">Derived</span>. That is short for a whole machine, but about a thousand times longer than one hop to a neighbour, which is why the algorithms in later chapters favour locality. The rest of this chapter is the price of the bet.</p>
 
 <h2 id="generations">The numbers, generation by generation</h2>
 <p>Every generation is the same 46,225 mm² square. Gains come from process shrinks, wider SIMD, and in 2026 (per press analysis) a higher clock.</p>
 <div class="table-wrap"><table>
 <tr><th>Spec</th><th>WSE-1 (CS-1, 2019)</th><th>WSE-2 (CS-2, 2021)</th><th>WSE-3 (CS-3, 2024)</th><th>WSE-3T (CS-4, 2026)</th></tr>
-<tr><td>Process</td><td>TSMC 16nm*</td><td>TSMC 7nm</td><td>TSMC 5nm</td><td>same silicon as WSE-3; higher clock <span class="tag indep">The Register</span></td></tr>
+<tr><td>Process</td><td>TSMC 16nm*</td><td>TSMC 7nm</td><td>TSMC 5nm</td><td>same core and transistor counts as WSE-3; "higher operating frequencies" from twice the power <span class="tag vendor">Vendor (CS-4 page)</span></td></tr>
 <tr><td>Transistors</td><td>1.2 T</td><td>2.6 T</td><td>4 T</td><td>4 T</td></tr>
 <tr><td>Cores (PEs)</td><td>400,000</td><td>850,000</td><td>900,000</td><td>900,000</td></tr>
 <tr><td>On-wafer SRAM</td><td>~18 GB</td><td>40 GB</td><td>44 GB</td><td>44 GB</td></tr>
 <tr><td>SRAM per PE</td><td>48 KB</td><td>48 KB + 256 B cache</td><td>48 KB + 512 B cache</td><td>same as WSE-3</td></tr>
-<tr><td>Memory bandwidth</td><td>—</td><td>20 PB/s</td><td>21 PB/s</td><td>43.2 PB/s</td></tr>
-<tr><td>Fabric bandwidth</td><td>—</td><td>27.5 PB/s (220 Pb/s)</td><td>26.8 PB/s (214 Pb/s)</td><td>53.5 PB/s (~428 Pb/s)</td></tr>
-<tr><td>Core clock</td><td>—</td><td>1.1 GHz <span class="tag vendor">Vendor (HC22)</span></td><td>not published</td><td>not published (press: higher than WSE-3)</td></tr>
+<tr><td>Memory bandwidth</td><td>9 PB/s</td><td>20 PB/s</td><td>21 PB/s</td><td>43.2 PB/s</td></tr>
+<tr><td>Fabric bandwidth</td><td>12.5 PB/s (100 Pb/s)</td><td>27.5 PB/s (220 Pb/s)</td><td>26.8 PB/s (214 Pb/s)</td><td>53.5 PB/s (~428 Pb/s)</td></tr>
+<tr><td>Core clock</td><td>—</td><td>1.1 GHz <span class="tag vendor">Vendor (HC22)</span></td><td>not published</td><td>not published ("higher operating frequencies" than WSE-3 <span class="tag vendor">Vendor</span>)</td></tr>
 <tr><td>Core size</td><td>—</td><td>228 × 170 µm = 0.039 mm², 30 mW peak <span class="tag vendor">Vendor (HC22)</span></td><td>~0.05 mm² <span class="tag vendor">Vendor (yield blog)</span></td><td>same as WSE-3</td></tr>
-<tr><td>FP16 SIMD per core</td><td>4-wide*</td><td>4-wide*</td><td>8-wide FP16/BF16, 16-wide INT8</td><td>same as WSE-3</td></tr>
-<tr><td>Peak AI compute</td><td>—</td><td>75 PF sparse; ~7.5 PF dense <span class="tag analyst">Analyst</span></td><td>125 PF <em>sparse</em>; ~15.6 PF dense <span class="tag analyst">Analyst</span></td><td>250 PF sparse; dense disputed (~25 PF per The Register <span class="tag analyst">Analyst</span>)</td></tr>
-<tr><td>System power</td><td>—</td><td>15–20 kW (sources conflict)</td><td>~23 kW peak, 15U</td><td>not published (3 wafers per rack; each "backpack" has 2× CS-3 power and cooling)</td></tr>
+<tr><td>FP16 SIMD per core</td><td>4-wide*</td><td>4-wide <span class="tag vendor">Vendor (HC22)</span></td><td>8-wide FP16/BF16, 16-wide INT8</td><td>same as WSE-3</td></tr>
+<tr><td>Peak AI compute</td><td>—</td><td>~7.5 PF FP16 <span class="tag analyst">Analyst (TechInsights)</span>; "75 PF sparse" appears only in secondary sources <span class="tag unv">Unverified</span></td><td>125 PF <em>sparse</em>; ~15.6 PF dense <span class="tag analyst">Analyst</span></td><td>250 PF sparse; dense disputed (~25 PF per The Register <span class="tag analyst">Analyst</span>)</td></tr>
+<tr><td>System power</td><td>—</td><td>up to 23 kW <span class="tag indep">ServeTheHome, TechInsights</span>; 15 kW in other reports</td><td>~23 kW at launch (press); "27 kW max", 16 RU on the current datasheet</td><td>not published (3 wafers per rack; each "backpack" has 2× CS-3 power and cooling)</td></tr>
 </table></div>
-<p class="note">All cells <span class="tag vendor">Vendor</span> unless tagged; byte/bit conversions in the fabric row are <span class="tag derived">Derived</span>. *4-wide FP16 on WSE-1/2 comes from a secondary source; the WSE-1 process node is widely reported but was not re-verified for this course. WSE-3T's bandwidth and sparse figures are almost exactly 2× WSE-3's on identical silicon, which would imply a roughly doubled clock; the press attributes the gain to clock, and Cerebras has not said. The slight WSE-2 → WSE-3 fabric drop is as published and unexplained.</p>
+<p class="note">All cells <span class="tag vendor">Vendor</span> unless tagged; byte/bit conversions in the fabric row are <span class="tag derived">Derived</span>. *4-wide FP16 on WSE-1 comes from a secondary source; on WSE-2 it is in the Hot Chips 2022 deck ("4x FP16 FMACs"). The WSE-1 column is from the Hot Chips 2019 deck. Cerebras labels its FLOPS as sparse itself: the CS-3 datasheet footnotes 125 petaFLOPS with "FLOPS shown as sparse". WSE-3T's bandwidth and sparse figures are almost exactly 2× WSE-3's with the same core count, which would imply a roughly doubled clock; Cerebras says only that delivering twice the power enables "higher operating frequencies", and gives no number. The WSE-3T fabric figure and the CS-4 I/O figure were checked only against press reports of Cerebras's tables. The slight WSE-2 → WSE-3 fabric drop is as published and unexplained.</p>
 
 <div class="stat-row">
   <div class="stat"><div class="v">900k</div><div class="l">PEs on a WSE-3 <span class="tag vendor">Vendor</span></div></div>
   <div class="stat"><div class="v">48 KB</div><div class="l">SRAM per PE, every generation <span class="tag vendor">Vendor</span></div></div>
-  <div class="stat"><div class="v">~737k</div><div class="l">PEs a CS-2 program can use <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span></div></div>
+  <div class="stat"><div class="v">~745k</div><div class="l">PEs a CS-2 program can use <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span></div></div>
   <div class="stat"><div class="v">1.1 GHz</div><div class="l">WSE-2 clock <span class="tag vendor">Vendor (HC22)</span>; none published for WSE-3; SDK benchmarks assume 850 MHz <span class="tag sdk">SDK 2.10.1</span></div></div>
 </div>
 
@@ -143,17 +143,17 @@
 <p class="note" style="margin:6px 0 0">Totals <span class="tag vendor">Vendor</span>; analyst dense <span class="tag analyst">Analyst</span>; every per-PE and per-cycle cell <span class="tag derived">Derived</span>; 850 MHz <span class="tag sdk">SDK 2.10.1</span>; 1.1 GHz and 30 mW peak per core are WSE-2 figures <span class="tag vendor">Vendor (HC22)</span>.</p>
 </div>
 
-<p>Read across a row and the marketing totals become one small machine repeated 900,000 times: about 48 KB of memory that can serve about 7 words a cycle, roughly 9 words a cycle of mesh links, and an 8-wide FP16 unit. The rows agree with each other within the rounding of the vendor figures. Memory bandwidth stays under the roughly 32 B/cycle ceiling of 8 banks (Chapter 3 compares the two published bank models; the bank width is not public), and fabric bandwidth sits between 4 links × 2 directions × 4 B = 32 B/cycle and 40 B/cycle with the ramp added. Power agrees too: HC22 gives 30 mW peak per WSE-2 core <span class="tag vendor">Vendor</span>, and 850k × 30 mW ≈ 25 kW is the same order as the 15–20 kW system figures <span class="tag derived">Derived</span>. That agreement is the best evidence we have that the totals are real.</p>
+<p>Read across a row and the marketing totals become one small machine repeated 900,000 times: about 48 KB of memory that can serve about 7 words a cycle, roughly 9 words a cycle of mesh links, and an 8-wide FP16 unit. The rows agree with each other within the rounding of the vendor figures. Memory bandwidth stays under the 32 B/cycle ceiling of 8 single-port banks, each 32 bits wide, and close to the "2 full reads + 1 full write per cycle" of 64 bits each (24 B/cycle) that Cerebras gives as the full datapath bandwidth <span class="tag vendor">Vendor</span> (HC22, WSE-2: 20 PB/s ÷ 850k ÷ 1.1 GHz ≈ 21 B/cycle; Chapter 3 compares this with the SDK's 16-bit bank view), and fabric bandwidth sits between 4 links × 2 directions × 4 B = 32 B/cycle and 40 B/cycle with the ramp added. Power agrees too: HC22 gives 30 mW peak per WSE-2 core <span class="tag vendor">Vendor</span>, and 850k × 30 mW ≈ 25 kW is the same order as the 15–23 kW reported for the CS-2 <span class="tag derived">Derived</span>. That agreement is the best evidence we have that the totals are real.</p>
 
 <div class="callout ok">
 <strong>What a real kernel gets</strong>
-<p>The SDK ships a benchmark that measures this: <code>single-tile-matvec</code> runs an N × N fp32 matrix-vector product on each PE and counts every SRAM byte it touches (12N² + 4N bytes). In the 2.10.1 simulator, N = 100 on one WSE-3 PE took 10,154 cycles and touched 120,400 bytes: about 12 B/cycle, and about one fp32 multiply-add per cycle <span class="tag measured">Measured</span> (SDK 2.10.1 simulator, <code>--arch wse3</code>, 8 × 3 fabric, a 1 × 1 program rectangle, <code>tile_size:100</code>). The benchmark's own scaling to the 745,500-PE CS-2 fabric at 850 MHz gives 7.5 PB/s and 1.24 PF fp32 <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span>. WSE-2 gives the same within a few cycles (10,160).</p>
+<p>The SDK ships a benchmark that measures this: <code>single-tile-matvec</code> runs an N × N fp32 matrix-vector product on each PE and counts every SRAM byte it touches (12N² + 4N bytes). In the 2.10.1 simulator, N = 100 on one WSE-3 PE took 10,154 cycles and touched 120,400 bytes: about 12 B/cycle, and about one fp32 multiply-add per cycle <span class="tag measured">Measured</span> (SDK 2.10.1 simulator, <code>--arch wse3</code>, 8 × 3 fabric, a 1 × 1 program rectangle, <code>tile_size:100</code>). The benchmark's own scaling to a 750 × 994 = 745,500-PE rectangle, the largest a program can occupy on a CS-2, at 850 MHz gives 7.5 PB/s and 1.24 PF fp32 <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span>. WSE-2 gives the same within a few cycles (10,160).</p>
 <p>Two lessons. A fp32 FMA stream uses about 3 words per cycle, roughly 40% of the ~7 the vendor total implies, because the vendor peak assumes the full 16-bit SIMD path. And the per-PE rate does not change with N, because there is no cache to miss (Chapter 3). N = 100 is close to the largest square fp32 matrix that fits in 48 KB (40 KB of A).</p>
 </div>
 
 <h2 id="defects">Surviving defects</h2>
-<p>Every wafer has defects. Cerebras's own model assumes about 46 on the wafer-scale square <span class="tag vendor">Vendor modelling</span>; real defect densities are not published. On a GPU wafer a defect landing in a die usually kills or downgrades that die, and the bigger the die, the more silicon goes with it. GPUs already soften this with spares: an H100 SXM enables 132 SMs <span class="tag vendor">Vendor</span> out of the 144 in the full GH100 design <span class="tag indep">Industry figure</span> (not re-verified), so a defect in one SM costs that SM, not the die. An SM (streaming multiprocessor) is the GPU's core unit.</p>
-<p>A wafer-scale chip cannot throw itself away, so Cerebras pushes the same idea about 100× finer. A WSE-3 core is about 0.05 mm², roughly 1/100th of an H100 SM <span class="tag vendor">Vendor (yield blog)</span>; the HC22 deck gives the WSE-2 core as 228 × 170 µm = 0.039 mm² <span class="tag vendor">Vendor (HC22)</span>. Either way it is tiny. (0.05 mm² × 900k = 45,000 mm², 97% of the square; 0.039 mm² × 850k = 33,000 mm², 71%. The two may count different things, such as the core with or without its router, or simply differ by generation <span class="tag derived">Derived</span>.) Spare cores and spare fabric links are built in, and the fabric is reconfigured to route around bad cores <span class="tag vendor">Vendor</span>. When and how that configuration is done is not public.</p>
+<p>Every wafer has defects. Cerebras's own model assumes about 46 on the wafer-scale square <span class="tag vendor">Vendor modelling</span>; real defect densities are not published. On a GPU wafer a defect landing in a die usually kills or downgrades that die, and the bigger the die, the more silicon goes with it. GPUs already soften this with spares: an H100 SXM enables 132 SMs <span class="tag vendor">Vendor</span> out of the 144 physically on the die <span class="tag vendor">Cerebras yield blog</span> (NVIDIA does not publish the physical count), so a defect in one SM costs that SM, not the die. An SM (streaming multiprocessor) is the GPU's core unit.</p>
+<p>A wafer-scale chip cannot throw itself away, so Cerebras pushes the same idea about 100× finer. A WSE-3 core is about 0.05 mm², roughly 1/100th of an H100 SM <span class="tag vendor">Vendor (yield blog)</span>; the HC22 deck gives the WSE-2 core as 228 × 170 µm = 0.039 mm² <span class="tag vendor">Vendor (HC22)</span>. Either way it is tiny. (The two count different things. 46,225 mm² ÷ 970,000 physical cores is 0.048 mm², so "about 0.05" looks like the whole square shared out per core. The HC22 figure is the core alone: a WSE-2 die of 17 × 30 mm holds 66 × 154 cores, a slot of about 258 × 195 µm = 0.050 mm² each, of which the 228 × 170 µm core fills 77% <span class="tag derived">Derived</span>. What fills the rest of the slot is not stated.) Spare cores and spare fabric links are built in, and the fabric is reconfigured to route around bad cores <span class="tag vendor">Vendor</span>. The same blog gives the size of the pool: the WSE-3 has "970,000 physical cores with 900,000 active", so about 70,000 cores (7%) are spare or disabled on each wafer <span class="tag vendor">Vendor</span>. When and how that configuration is done is not public.</p>
 
 <div class="callout">
 <strong>Worked example: why spares are not optional</strong>
@@ -187,7 +187,7 @@
   <g id="logi"></g>
 </svg>
 </div>
-<figcaption><b>Repair happens below the programming model.</b> A defective core (red ✕) is skipped, and the rest of its row shifts one place into the spare column. The numbers are logical x positions: blue cores are the remapped ones. Software sees a perfect rectangle; on a CS-2 that is 750 × 994 fabric positions (PE slots with a router) <span class="tag sdk">SDK 2.10.1</span>. Spare <em>links</em> exist so that a shifted core still reaches its logical neighbour; Cerebras says the result behaves as a uniform mesh, but the exact hop cost around a repair is not public. This repair mapping is fixed below software and invisible to it. It is not the per-color routing you will program in Chapter 4. The exact spare scheme is not public; this is a schematic.</figcaption>
+<figcaption><b>Repair happens below the programming model.</b> A defective core (red ✕) is skipped, and the rest of its row shifts one place into the spare column. The numbers are logical x positions: blue cores are the remapped ones. Software sees a perfect rectangle; on a CS-2 that is 757 × 996 fabric positions (PE slots with a router) <span class="tag sdk">SDK docs</span>. Spare <em>links</em> exist so that a shifted core still reaches its logical neighbour; Cerebras says the result behaves as a uniform mesh, but the exact hop cost around a repair is not public. This repair mapping is fixed below software and invisible to it. It is not the per-color routing you will program in Chapter 4. The exact spare scheme is not public; this is a schematic.</figcaption>
 </figure>
 
 <p><b>How many spares, and where?</b> Treat each row as a repair segment with one spare. With 46 random defects across ~994 rows, the chance that some row gets two of them is about 65% (the birthday problem), so a single spare per row would fail on most wafers. Cutting each row into 8 segments, each with its own spare, brings the failure rate down to about 12% <span class="tag derived">Derived</span> (toy model). This is why the Hot Chips 2019 slides list both "redundant cores" and "redundant fabric links" <span class="tag vendor">Vendor</span>: spare links let a repair shift around a cluster. Cerebras describes the result as "high yield with minimal spare capacity"; the real scheme is not public. Try it in the simulator below.</p>
@@ -197,7 +197,7 @@
 <p class="hint">Random point defects land on a wafer (to scale, 1 px = 1 mm). On the left, any die they hit is lost. On the right, only the tiny core they hit is lost and replaced by a spare. The slider adds or removes defects from the same random pattern; Re-roll draws a new one.</p>
 <div class="controls">
 <label>Defect density <input type="range" id="y-d" min="0.0002" max="0.003" step="0.0001" value="0.001"> <span id="y-dv" class="mono"></span></label>
-<label>GPU accounting <select id="y-acc"><option value="die">discard the whole die</option><option value="sm">disable one SM (~7.8 mm², vendor-style)</option></select></label>
+<label>GPU accounting <select id="y-acc"><option value="die">discard the whole die</option><option value="sm">disable one SM (6.2 mm², vendor-style)</option></select></label>
 <label>Spare segments per row <select id="y-seg"><option>1</option><option>2</option><option>4</option><option selected>8</option><option>12</option></select></label>
 <button class="btn secondary" id="y-roll" type="button">Re-roll defects</button>
 </div>
@@ -206,38 +206,39 @@
 <svg id="y-r" viewBox="0 0 330 345" role="img" aria-label="Defects on a wafer-scale chip"></svg>
 </div>
 <div class="table-wrap"><table class="ro" aria-live="polite"><tbody id="y-out"></tbody></table></div>
-<p class="note" style="margin:6px 0 0">Real fabs bin partially defective GPU dies as cheaper SKUs, so "discard the whole die" is a worst case. The ~7.8 mm² per defect is 2.2 mm² × 164 ÷ 46 <span class="tag derived">Derived</span> from the vendor's 164×. The repair segments are a hypothetical scheme for illustration.</p>
+<p class="note" style="margin:6px 0 0">Real fabs bin partially defective GPU dies as cheaper SKUs, so "discard the whole die" is a worst case. The 6.2 mm² per defect is the blog's own figure for one H100 SM (814 mm² ÷ 132) <span class="tag vendor">Vendor modelling</span>. The repair segments are a hypothetical scheme for illustration.</p>
 </div>
 
-<p>Cerebras's own model at 0.001 defects/mm² has the wafer taking 46 defects and losing only about 2.2 mm² of silicon (2.2 ÷ 46 ≈ 0.048 mm² per defect, one core each), which it presents as a "164× reduction in dead silicon" versus a GPU <span class="tag vendor">Vendor modelling</span>. That multiplier only works if the GPU loses about one SM per defect; if it discarded whole dies the ratio would be in the thousands. Switch the simulator's accounting to see both. Spare-core ratios are not published; a widely repeated claim of "70,000 disabled cores" traces only to a blog post and is unverified.</p>
+<p>Cerebras's own model at 0.001 defects/mm² has the wafer taking 46 defects and losing only about 2.2 mm² of silicon (2.2 ÷ 46 ≈ 0.048 mm² per defect, one core each), which it sets against a wafer of 72 H100-sized dies: 58,608 mm² of die area takes 59 defects, each costing one 6.2 mm² SM, 361 mm² in all, so "the GPU in this case loses 164x more silicon area" <span class="tag vendor">Vendor modelling</span>. Note the two sides are not the same area (58,608 against 46,225 mm²); per defect the ratio is 6.2 ÷ 0.05 ≈ 124× <span class="tag derived">Derived</span>. The multiplier only works if the GPU loses one SM per defect; if it discarded whole dies the ratio would be in the thousands. Switch the simulator's accounting to see both. The widely repeated "70,000 disabled cores" is simply 970,000 physical minus 900,000 active, from the same blog; how many of the 70,000 are defective and how many are healthy spares is not published.</p>
 <p>The comparison leaves out two fixed costs. The square uses only about 65% of the round wafer, so about 24,000 mm² of corner silicon is never used, defect or not <span class="tag derived">Derived</span>. And the spare cores and links take up area on every wafer, defective or not. There is also no binning: every wafer has to work. Cerebras trades a small, predictable overhead for having no yield lottery at all.</p>
 
 <p>How big is that overhead? The public record has only a few data points:</p>
 <div class="table-wrap"><table>
 <tr><th></th><th>Marketed cores</th><th>Visible to software</th><th>Fraction</th></tr>
 <tr><td>CS-1 / WSE-1</td><td>400,000 <span class="tag vendor">Vendor</span></td><td>~380,000 usable tiles <span class="tag measured">Measured</span> on hardware (SC20 paper, Cerebras/NETL authors)</td><td>~95% <span class="tag derived">Derived</span></td></tr>
-<tr><td>CS-2 / WSE-2</td><td>850,000 <span class="tag vendor">Vendor</span></td><td>750 × 994 = 745,500 fabric positions; a program gets ≤ 743 × 992 ≈ 737k <span class="tag sdk">SDK 2.10.1</span></td><td>~88% / ~87% <span class="tag derived">Derived</span></td></tr>
-<tr><td>CS-3 / WSE-3</td><td>900,000 <span class="tag vendor">Vendor</span></td><td>not published</td><td>—</td></tr>
+<tr><td>CS-2 / WSE-2</td><td>850,000 <span class="tag vendor">Vendor</span></td><td>757 × 996 = 753,972 fabric positions; a program gets ≤ 750 × 994 = 745,500 <span class="tag sdk">SDK docs and SDK 2.10.1</span></td><td>~89% / ~88% <span class="tag derived">Derived</span></td></tr>
+<tr><td>CS-3 / WSE-3</td><td>900,000 active of 970,000 physical <span class="tag vendor">Vendor (yield blog)</span></td><td>"most CS-3s": 762 × 1,172 = 893,064 fabric positions <span class="tag sdk">SDK docs</span>; a program gets ≤ 755 × 1,170 = 883,350 <span class="tag derived">Derived</span></td><td>~99% / ~98% of the active cores; 93% of physical cores are active <span class="tag derived">Derived</span></td></tr>
 </table></div>
-<p>The hidden 5–13% includes spare cores and infrastructure at the edge of the fabric; Cerebras does not publish the split. On a CS-2 the gap is 104,500 cores, so the "70,000 disabled cores" claim is at least arithmetically possible, but it stays unverified. The same SC20 paper gives one of the few hardware-measured efficiency numbers: a BiCGStab stencil solve on CS-1 sustained about 0.86 PF, roughly a third of peak <span class="tag measured">Measured</span> (SC20).</p>
+<p class="note">Where the fabric sizes come from: the SDK's online gemv-01 tutorial says "Most CS-3s have a fabric dimension of 762 x 1172" and that the CS-2 "has a fabric dimension of 757 x 996" <span class="tag sdk">SDK docs</span>. The 750 × 994 often quoted for the CS-2 is the largest <em>program rectangle</em>: the SDK's single-tile-matvec benchmark calls 750,994 "the dimensions of the program rectangle" and its <code>sweep.py</code> compiles it with <code>--fabric-dims</code> 7 wider and 2 taller, which is 757,996 <span class="tag sdk">SDK 2.10.1</span>. (The same README also says <code>fabric-dims</code> "must be 750,994" on a real CS-2, which contradicts its own rule that the rectangle is at least 7 columns and 2 rows smaller than the fabric.) The WSE-3 program limit is the same 7-and-2 margin applied to 762 × 1,172.</p>
+<p>The hidden 1–12% includes spare cores and infrastructure at the edge of the fabric; Cerebras does not publish the split. On a CS-2 the gap between marketed cores and fabric positions is about 96,000 cores. The Hot Chips 2022 die grid gives a hint of where they sit: 12 dies × 66 columns = 792 and 7 dies × 154 rows = 1,078, which is 35 columns and 82 rows more than the 757 × 996 fabric, or about 3 columns and 12 rows per die <span class="tag derived">Derived</span>. Whether those are the spares is not stated. On the WSE-3 the fabric is within 1% of the 900,000 active cores, so there the spares are the difference between 970,000 physical and 900,000 active. The same SC20 paper gives one of the few hardware-measured efficiency numbers: a BiCGStab stencil solve on CS-1 sustained about 0.86 PF, roughly a third of peak <span class="tag measured">Measured</span> (SC20).</p>
 
 <h2>Power, cooling and the edges</h2>
 <div class="grid2">
 <div>
 <h3>Power goes in through the face</h3>
-<p>At core voltages below 1 V, 15–20 kW into the wafer means on the order of 20,000 amperes <span class="tag derived">Derived</span> (assuming ~0.8 V; the voltage is not published). Pushed in from the edge across 215 mm of thin metal, that current would lose much of its voltage on the way. So power is delivered vertically through the face of the wafer, and a closed water loop (the CS-3 "engine block") removes the heat. A custom connector lets the wafer expand thermally without cracking <span class="tag indep">Secondary sources</span>.</p>
-<p>The density is not the problem. Spread over 46,225 mm², even the full ~23 kW system figure is about 0.5 W/mm², and the wafer itself draws less <span class="tag derived">Derived</span>. That is below a high-end GPU die (an H100 SXM at ~700 W over ~814 mm² is ~0.9 W/mm²) <span class="tag indep">Industry figures</span>. The hard part is getting tens of thousands of amperes evenly into every part of a 215 mm square. The CS-4 puts AC/DC conversion about 0.5 mm from the wafer, versus about 50 mm on GPU boards <span class="tag vendor">Vendor</span>, which shortens the path that huge current travels.</p>
+<p>At core voltages below 1 V, 15–20 kW into the wafer means on the order of 20,000 amperes <span class="tag derived">Derived</span> (assuming ~0.8 V; the voltage is not published). Pushed in from the edge across 215 mm of thin metal, that current would lose much of its voltage on the way. So power is delivered vertically through the face of the wafer, and a closed water loop (the CS-3 "engine block") removes the heat. A custom connector between wafer and PCB absorbs their different thermal expansion <span class="tag vendor">Vendor</span> (Hot Chips 2019 deck; the "engine block" name is from secondary summaries).</p>
+<p>The density is not the problem. Spread over 46,225 mm², even a full 23–27 kW system figure is about 0.5–0.6 W/mm², and the wafer itself draws less <span class="tag derived">Derived</span>. That is below a high-end GPU die (an H100 SXM at ~700 W over ~814 mm² is ~0.9 W/mm²) <span class="tag indep">Industry figures</span>. The hard part is getting tens of thousands of amperes evenly into every part of a 215 mm square. The CS-4 puts power conversion about 0.5 mm from the wafer, versus about 50 mm on GPU boards <span class="tag vendor">Vendor</span>, which shortens the path that huge current travels.</p>
 </div>
 <div>
 <h3>I/O lives on the rim</h3>
-<p>Data enters and leaves through I/O channels at the edge of the fabric <span class="tag derived">Derived</span> (physical layout not public). The rim is 860 mm long while the area is 46,225 mm², so I/O grows with the perimeter and compute with the area. Inside, the fabric carries 214 Pb/s. Through the SDK's host channels, about 16 × 7 Gb/s ≈ 112 Gb/s gets in <span class="tag sdk">SDK 2.10.1</span>, a ratio of about 2 million to one, and refilling all 44 GB that way would take about 3 s <span class="tag derived">Derived</span>. The CS-4 raises off-wafer I/O to 2.4 Tb/s per wafer <span class="tag vendor">Vendor</span>, still tiny next to the fabric. This is why weights stay resident or are streamed (Chapters 7 and 8).</p>
-<p>There is a software consequence too, which Chapter 7 covers. To move data from the edge to your PEs, the SDK's memcpy runtime compiles its own small programs onto ordinary PEs that frame your rectangle: columns on the west and east, plus a row above and below. Those PEs are not available to you. On a CS-2 your rectangle must therefore be at least 7 columns narrower and 2 rows shorter than the 750 × 994 fabric: at most 743 × 992 ≈ 737k PEs, against 850k marketed <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span>. The WSE-3 equivalent of 750 × 994 is not published in the SDK or anywhere we could find; expect the same kind of gap below 900k.</p>
+<p>Data enters and leaves through I/O channels at the edge of the fabric <span class="tag derived">Derived</span> (the CS-3 layout is not public; for the CS-4 Cerebras says its Wafer I/O Module "extends the fabric from the edges of the wafer" <span class="tag vendor">Vendor</span>). The rim is 860 mm long while the area is 46,225 mm², so I/O grows with the perimeter and compute with the area. Inside, the fabric carries 214 Pb/s. Through the SDK's host channels, about 16 × 7 Gb/s ≈ 112 Gb/s gets in <span class="tag sdk">SDK 2.10.1</span>, a ratio of about 2 million to one, and refilling all 44 GB that way would take about 3 s <span class="tag derived">Derived</span>. The CS-3's own off-wafer I/O is 1.2 Tb/s (12 × 100 GbE) <span class="tag vendor">Vendor</span>, and the CS-4 doubles it to 2.4 Tb/s per wafer <span class="tag vendor">Vendor</span>, still tiny next to the fabric. This is why weights stay resident or are streamed (Chapters 7 and 8).</p>
+<p>There is a software consequence too, which Chapter 7 covers. To move data from the edge to your PEs, the SDK's memcpy runtime compiles its own small programs onto ordinary PEs that frame your rectangle: columns on the west and east, plus a row above and below. Those PEs are not available to you. On a CS-2 your rectangle must therefore be at least 7 columns narrower and 2 rows shorter than the 757 × 996 fabric: at most 750 × 994 = 745,500 PEs, against 850k marketed <span class="tag sdk">SDK 2.10.1</span> <span class="tag derived">Derived</span>. On most CS-3s the fabric is 762 × 1,172 <span class="tag sdk">SDK docs</span>, so the same margin leaves at most 755 × 1,170 = 883,350 PEs, against 900k marketed <span class="tag derived">Derived</span>.</p>
 </div>
 </div>
 
 <figure>
 <svg id="f-cores" viewBox="0 0 760 370" width="760" role="img" aria-label="Where the 850,000 marketed CS-2 cores go: fabric, memcpy frame and program rectangle"></svg>
-<figcaption><b>Where the 850k cores go on a CS-2.</b> Left, to scale: the 750 × 994 fabric the SDK exposes, inside a dashed outline with the area of 850,000 cores. The 7-column, 2-row frame is under 2 px wide at this scale, so the middle panel zooms into the north-west corner. The west/east split (4 + 3) follows this course's <code>--fabric-offsets=4,1</code>; at <code>--channels 1</code> the compiler put memcpy programs in 3 west and 2 east columns <span class="tag measured">Measured</span> from <code>out/</code> (Chapter 7), and the roles of the remaining frame PEs are not documented. Hover a region for its count.</figcaption>
+<figcaption><b>Where the 850k cores go on a CS-2.</b> Left, to scale: the 757 × 996 fabric the SDK exposes, inside a dashed outline with the area of 850,000 cores. The 7-column, 2-row frame is under 2 px wide at this scale, so the middle panel zooms into the north-west corner. The west/east split (4 + 3) follows this course's <code>--fabric-offsets=4,1</code>; at <code>--channels 1</code> the compiler put memcpy programs in 3 west and 2 east columns <span class="tag measured">Measured</span> from <code>out/</code> (Chapter 7), and the roles of the remaining frame PEs are not documented. Hover a region for its count.</figcaption>
 </figure>
 
 <figure>
@@ -255,7 +256,7 @@
   <path d="M680 129 H708" class="s-grn" stroke-width="2" fill="none" marker-end="url(#ar-grn)"/>
   <text x="380" y="276" text-anchor="middle" font-size="13" class="muted">Schematic only: layer thicknesses and the exact stack are not public.</text>
 </svg>
-<figcaption><b>Power from above, heat out below, data out the sides.</b> Layer roles from secondary summaries of the Hot Chips 2019 talk and the CS-3 "engine block" <span class="tag indep">Secondary sources</span>.</figcaption>
+<figcaption><b>Power from above, heat out below, data out the sides.</b> The stack order (PCB, connector, wafer, cold plate), power "perpendicular to wafer" and water through a cold plate are from the Hot Chips 2019 deck <span class="tag vendor">Vendor</span>; the CS-3 "engine block" name is from secondary summaries.</figcaption>
 </figure>
 
 <div class="quiz">
@@ -265,7 +266,7 @@
 <details><summary>At 0.001 defects/mm², what fraction of 858 mm² GPU dies are defect-free, and what is the chance a 46,225 mm² chip with no spares is?</summary><p>e<sup>−0.858</sup> ≈ 42%; e<sup>−46</sup> ≈ 10<sup>−20</sup>. Without fine-grained spares a wafer-scale chip would never yield. Even with spares, one spare per row would fail on most wafers (birthday problem), so the spares must be finer-grained.</p></details>
 <details><summary>A slide says "WSE-3: 125 PFLOPS". What should you ask?</summary><p>Sparse or dense, and at what precision? 125 PF is sparse FP16; dense is not published (analysts estimate ~15.6 PF). The 125 / 15.6 ≈ 8× ratio tells you how much zero-skipping the headline assumes.</p></details>
 <details><summary>Estimate WSE-3 dense FP16 peak from first principles. Which input is weakest?</summary><p>900k PEs × 8 FMAs × 2 FLOPs × clock: ≈ 12.2 PF at the SDK's 850 MHz, ≈ 15.8 PF at WSE-2's official 1.1 GHz. The clock is the weak input, because no WSE-3 clock is published. The same arithmetic for WSE-2 at its published 1.1 GHz gives 7.5 PF, matching the analyst figure.</p></details>
-<details><summary>Why can't your program use all 850,000 WSE-2 cores?</summary><p>The SDK exposes only 750 × 994 = 745,500 positions. The rest are most likely spares and edge infrastructure; Cerebras has not published the breakdown. The memcpy runtime then runs on PEs that frame your program, so your rectangle must be at least 7 columns and 2 rows smaller: at most 743 × 992 ≈ 737k.</p></details>
+<details><summary>Why can't your program use all 850,000 WSE-2 cores?</summary><p>The CS-2 fabric the SDK compiles for is 757 × 996 = 753,972 positions. The rest are most likely spares and edge infrastructure; Cerebras has not published the breakdown. The memcpy runtime then runs on PEs that frame your program, so your rectangle must be at least 7 columns and 2 rows smaller: at most 750 × 994 = 745,500.</p></details>
 </div>
 </main>
 <script src="assets/course.js"></script>
@@ -286,8 +287,10 @@
   DIES.forEach(([x, y]) => el("rect", { x: C + x, y: CY + y, width: DW, height: DH, class: "blu", "stroke-width": 1 }, $("#dies")));
   $("#dies-n").textContent = `${DIES.length} whole 26 × 33 mm dies (one reticle each)`;
   const st = $("#stitch"), x0 = 62.5, y0 = 74.5, side = 215;
-  for (let i = 1; i < 9; i++) el("line", { x1: x0 + i * side / 9, x2: x0 + i * side / 9, y1: y0, y2: y0 + side, class: "s-acc", "stroke-dasharray": "3 3", opacity: .7 }, st);
-  for (let j = 1; j < 7; j++) el("line", { y1: y0 + j * side / 7, y2: y0 + j * side / 7, x1: x0, x2: x0 + side, class: "s-acc", "stroke-dasharray": "3 3", opacity: .7 }, st);
+  // 12 x 7 = 84 dies of 17 x 30 mm (Hot Chips 2022), centred in the 215 mm square
+  const gx = x0 + (side - 12 * 17) / 2, gy = y0 + (side - 7 * 30) / 2;
+  for (let i = 0; i <= 12; i++) el("line", { x1: gx + i * 17, x2: gx + i * 17, y1: gy, y2: gy + 210, class: "s-acc", "stroke-dasharray": "3 3", opacity: .7 }, st);
+  for (let j = 0; j <= 7; j++) el("line", { y1: gy + j * 30, y2: gy + j * 30, x1: gx, x2: gx + 204, class: "s-acc", "stroke-dasharray": "3 3", opacity: .7 }, st);
 
   /* ---------- Bandwidth ladder ---------- */
   const BW = [  // name, TB/s, area mm² (null = not in sources), kind, source
@@ -338,8 +341,8 @@
 
   /* ---------- Per-PE budget + dense FLOPs ---------- */
   const GEN = [
-    { n: "WSE-2", pes: 850000, area: 46225, sram: 40e9, mem: 20e15, fab: 220e15, simd: 4, pw: [15000, 20000], sparse: 75, sparseTag: "analyst table", dense: 7.5 },
-    { n: "WSE-3", pes: 900000, area: 46225, sram: 44e9, mem: 21e15, fab: 214e15, simd: 8, pw: [23000, 23000], sparse: 125, sparseTag: "vendor", dense: 15.6 }
+    { n: "WSE-2", pes: 850000, area: 46225, sram: 40e9, mem: 20e15, fab: 220e15, simd: 4, pw: [15000, 23000], sparse: 75, sparseTag: "secondary sources, unverified", dense: 7.5 },
+    { n: "WSE-3", pes: 900000, area: 46225, sram: 44e9, mem: 21e15, fab: 214e15, simd: 8, pw: [23000, 27000], sparse: 125, sparseTag: "vendor", dense: 15.6 }
   ];
   let gi = 1;
   function drawPE() {
@@ -353,7 +356,7 @@
       [`${g.mem / 1e15} PB/s memory`, `${(g.mem / N / 1e9).toFixed(1)} GB/s`, `${memB.toFixed(1)} B = ${(memB / 4).toFixed(1)} words`, "under ~32 B/cycle (8 banks; see Ch. 3)", true],
       [`${g.fab / 1e15} Pb/s fabric`, `${(g.fab / N / 1e9).toFixed(0)} Gb/s`, `${fabB.toFixed(1)} B = ${(fabB / 4).toFixed(1)} words`, "≈ 4 links × 2 dir × 4 B (+ ramp), Chapter 4", true],
       [`dense FP16 peak`, `${g.simd * 2} FLOP/cycle`, `${peak.toFixed(1)} PF total`, `${g.simd}-wide FP16 SIMD; analyst says ~${g.dense} PF`, true],
-      [`${g.pw[0] === g.pw[1] ? "~23" : "15–20"} kW system`, pw, "—", gi === 0 ? "system figure; HC22: 30 mW peak per core" : "system figure, so an upper bound per PE", false]
+      [`${g.pw[0] / 1e3}–${g.pw[1] / 1e3} kW system`, pw, "—", gi === 0 ? "system figure; HC22: 30 mW peak per core" : "system figure, so an upper bound per PE", false]
     ];
     $("#pe-tb").innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td class="${r[4] ? "dep" : ""}">${r[2]}</td><td>${r[3]}</td></tr>`).join("");
     // bars
@@ -442,7 +445,7 @@
 
   /* ---------- Defect simulator ---------- */
   const SC = 165, SY = 165, HALF = 107.5;      // 330-wide panels, 1 px = 1 mm
-  const sqArea = 46225, SM_MM2 = 2.2 * 164 / 46;
+  const sqArea = 46225, SM_MM2 = 6.2;   // Cerebras yield blog: 814 mm2 / 132 SMs
   let pool = [];
   function newPool() {
     pool = [];
@@ -507,16 +510,16 @@
   /* ---------- Where the 850k cores go ---------- */
   (function () {
     const svg = $("#f-cores"), k = 0.26;       // px per PE
-    const fx = 40, fy = 50, fw = 750 * k, fh = 994 * k, m = Math.sqrt(850000 / 745500);
+    const fx = 40, fy = 50, fw = 757 * k, fh = 996 * k, m = Math.sqrt(850000 / 753972);
     el("text", { x: 20, y: 22, "font-weight": 700 }, svg).textContent = "CS-2, to scale";
     const ghost = el("g", {}, svg); el("title", {}, ghost).textContent = "850,000 marketed cores (Vendor): same aspect, area only";
     el("rect", { x: fx - (m - 1) * fw / 2, y: fy - (m - 1) * fh / 2, width: fw * m, height: fh * m, fill: "none", class: "s-muted", "stroke-dasharray": "5 4", "stroke-width": 1.4 }, ghost);
-    const fab = el("g", {}, svg); el("title", {}, fab).textContent = "750 × 994 = 745,500 fabric positions (SDK 2.10.1)";
+    const fab = el("g", {}, svg); el("title", {}, fab).textContent = "757 × 996 = 753,972 fabric positions (SDK docs)";
     el("rect", { x: fx, y: fy, width: fw, height: fh, class: "pur", "stroke-width": 1.2 }, fab);
-    const usr = el("g", {}, svg); el("title", {}, usr).textContent = "≤ 743 × 992 = 737,056 PEs for your program (SDK 2.10.1, Derived)";
-    el("rect", { x: fx + 4 * k, y: fy + k, width: 743 * k, height: 992 * k, class: "acc", "stroke-width": 1 }, usr);
+    const usr = el("g", {}, svg); el("title", {}, usr).textContent = "≤ 750 × 994 = 745,500 PEs for your program (SDK 2.10.1, Derived)";
+    el("rect", { x: fx + 4 * k, y: fy + k, width: 750 * k, height: 994 * k, class: "acc", "stroke-width": 1 }, usr);
     el("text", { x: fx + fw / 2, y: fy + fh / 2 - 6, "text-anchor": "middle", "font-size": 13, "font-weight": 700 }, svg).textContent = "your rectangle";
-    el("text", { x: fx + fw / 2, y: fy + fh / 2 + 12, "text-anchor": "middle", "font-size": 12 }, svg).textContent = "≤ 743 × 992";
+    el("text", { x: fx + fw / 2, y: fy + fh / 2 + 12, "text-anchor": "middle", "font-size": 12 }, svg).textContent = "≤ 750 × 994";
     el("text", { x: fx + fw / 2, y: fy + fh + 30, "text-anchor": "middle", "font-size": 11.5, class: "muted" }, svg).textContent = "dashed: area of 850k cores";
     // zoom box marker + inset
     el("rect", { x: fx - 2, y: fy - 2, width: 14, height: 10, fill: "none", class: "s-red", "stroke-width": 1.5 }, svg);
@@ -534,7 +537,7 @@
     el("text", { x: ix, y: iy + rows * cs + 34, "font-size": 12 }, svg).textContent = "east side: 3 more columns, plus 1 south row";
     // waterfall bars
     const bx = 290, by = 262, bw = 440, MAX = 850000;
-    [["marketed cores", 850000, "box", "Vendor"], ["SDK fabric 750 × 994", 745500, "pur", "SDK 2.10.1"], ["your program ≤ 743 × 992", 737056, "acc", "SDK + Derived"]]
+    [["marketed cores", 850000, "box", "Vendor"], ["SDK fabric 757 × 996", 753972, "pur", "SDK docs"], ["your program ≤ 750 × 994", 745500, "acc", "SDK + Derived"]]
       .forEach(([lab, v, cls, src], i) => {
         const y = by + i * 34, w = v / MAX * (bw - 150), g = el("g", {}, svg);
         el("title", {}, g).textContent = `${lab}: ${fmt(v)} (${src})`;

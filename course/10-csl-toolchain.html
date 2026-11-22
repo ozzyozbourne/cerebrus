@@ -134,7 +134,7 @@
 <li><b>Every array the host touches</b>: <code>@export_name("name", [*]T, mutable)</code> in layout.csl; a <code>[*]T</code> pointer (<code>var</code> if mutable is <code>true</code>, <code>const</code> if <code>false</code>) plus <code>@export_symbol(ptr, "name")</code> in pe_program.csl; <code>rt.get_id('name')</code> in run.py.</li>
 <li><b>Every host-callable function</b>: <code>@export_name("f", fn(args)void)</code> in layout.csl; <code>fn f(...)</code> plus <code>@export_symbol(f)</code> in pe_program.csl; <code>rt.launch('f', ...)</code> in run.py.</li>
 <li><b>Every RPC</b> must end, directly or through a task it starts, with <code>sys_mod.unblock_cmd_stream()</code>.</li>
-<li><b>Every <code>param</code></b> declared in pe_program.csl must be passed in <code>@set_tile_code</code>'s struct, and every <code>param</code> declared in layout.csl must be given with <code>--params</code> (unsigned integers only).</li>
+<li><b>Every <code>param</code></b> declared in pe_program.csl must be passed in <code>@set_tile_code</code>'s struct, and every <code>param</code> declared in layout.csl must be given with <code>--params</code> (integers only).</li>
 <li><b>Keep clear of memcpy's resources</b>: colors 20–23, its task IDs and queue 0 (and 1 on WSE-3). See <a href="07-host-io.html">Chapter 7's table</a>.</li>
 </ol>
 Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol</code> or rule 3 compiles cleanly and fails only at run time (see the error decoder below).
@@ -181,7 +181,7 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 <div>
 <h3 id="ordinary">Ordinary parts</h3>
 <ul>
-<li>Types: <code>bool</code>, <code>i8</code>/<code>u8</code>, <code>i16</code>/<code>u16</code>, <code>i32</code>/<code>u32</code>, <code>i64</code>/<code>u64</code>, <code>f16</code>, <code>f32</code> (DSD vector ops need 16- or 32-bit element types; an <code>i8</code> DSD fails with "not ABI-sized" <span class="tag measured">Measured, cslc 2.10.1</span>), arrays <code>[N]f32</code>, pointers <code>*[N]f32</code> (knows its length) and many-item <code>[*]f32</code> (does not; used for exports).</li>
+<li>Types: <code>bool</code>, <code>i8</code>/<code>u8</code>, <code>i16</code>/<code>u16</code>, <code>i32</code>/<code>u32</code>, <code>i64</code>/<code>u64</code>, <code>f16</code>, <code>f32</code> (plus two other 16-bit float formats, <code>bf16</code> and <code>cb16</code>; only the one chosen with <code>--fp16-format</code> can be used in run-time code, see Flags) (DSD vector ops need 16- or 32-bit element types; an <code>i8</code> DSD fails with "not ABI-sized" <span class="tag measured">Measured, cslc 2.10.1</span>), arrays <code>[N]f32</code>, pointers <code>*[N]f32</code> (knows its length) and many-item <code>[*]f32</code> (does not; used for exports).</li>
 <li><code>const</code> / <code>var</code>, <code>fn</code>, <code>for (@range(i16, n)) |i|</code>, <code>while (c) : (i += 1)</code>.</li>
 <li><code>if</code> is also an expression: <code>const c = if (x % 2 == 0) c0 else c1;</code>. A statement <code>if</code> <em>with an <code>else</code></em> needs braces: <code>if (v &gt; m) { m = v; } else { … }</code>. Without braces it is a compile error <span class="tag measured">Measured</span>; a lone <code>if (v &gt; m) m = v;</code> is fine.</li>
 <li>Anonymous struct literals <code>.{ .N = N }</code> pass named fields everywhere: <code>@set_tile_code</code>, <code>@get_dsd</code>, <code>@import_module</code>.</li>
@@ -236,8 +236,8 @@ Breaking rule 1 or 4 is a compile error. Breaking rule 2's <code>@export_symbol<
 </details>
 
 <div class="callout warn">
-<strong><code>--params</code> takes unsigned integers only</strong>
-<code>cslc --help</code>: "a mapping is a <code>name:value</code> pair where name is a string and value is an unsigned integer" <span class="tag sdk">SDK 2.10.1</span>. Floats and negative numbers reach the device at run time instead: as an RPC argument (SAXPY's <code>a</code>) or through memcpy. Note too that <code>out.json</code> stores the value as a string (<code>{"params":{"N":"64"}}</code>), which is why run.py wraps it in <code>int()</code> <span class="tag measured">Measured</span>.
+<strong><code>--params</code> takes integers only</strong>
+<code>cslc --help</code>: "a mapping is a <code>name:value</code> pair where name is a string and value is an unsigned integer" <span class="tag sdk">SDK 2.10.1</span>. In practice cslc 2.10.1 accepts any integer literal: <code>--params=K:-5</code> compiled for a <code>param K: i16</code>, and so did <code>0x10</code> and <code>0b11</code>; a value that does not fit the declared type is a compile error ("integer value '70000' cannot be coerced to type 'i16'"). A float is not accepted: <code>F:2.5</code> aborted the compiler with an internal assertion, and <code>F:2</code> for a <code>param F: f32</code> failed with "expected type 'f32', got: 'comptime_int'" <span class="tag measured">Measured, cslc 2.10.1</span>. Floats reach the device at run time instead: as an RPC argument (SAXPY's <code>a</code>) or through memcpy. Note too that <code>out.json</code> stores each value as the string you typed (<code>{"params":{"N":"64"}}</code>; <code>K:-5,F:0x10</code> gives <code>"-5"</code> and <code>"0x10"</code>), which is why run.py wraps it in <code>int()</code>, and why a hex value would need <code>int(v, 0)</code> <span class="tag measured">Measured</span>.
 </div>
 
 <h3 id="both-chips">Writing for both chips</h3>
@@ -306,7 +306,7 @@ The scalar language is the easy part.
 <tr><td><code>benchmark-libs/allreduce</code>, <code>benchmark-libs/stencil_3d_7pts</code> (in the extras, not the image)</td><td>reusable user-level modules: rectangle allreduce; 3-D 7-point SpMV</td><td>imported by relative path, colors passed as params</td><td>7pt-stencil-spmv and the four CG-family solvers (conjugate-gradient, preconditioned-conjugate-gradient, bicgstab, power-method); Ch 15</td></tr>
 </table></div>
 <p class="legend">Function names read from <code>csl-libs/*.csl</code> in the SDK image <span class="tag sdk">SDK 2.10.1</span>. Every SDK example, with its chips and the chapter that explains it, is in <a href="appendix-d-sdk-index.html">Appendix D</a>.</p>
-<p><b>If an import fails with "Unable to open ./src/../../benchmark-libs/…".</b> Five benchmarks, <code>7pt-stencil-spmv</code> and the four CG-family solvers, import <code>benchmark-libs</code> by a relative path. The SDK wrappers run <code>cslc</code> in a container that sees only the current directory, <code>$TMPDIR</code> and any <code>CSL_IMPORT_PATH</code> entries, so the import fails even in place in the extras tree. Copy <code>benchmark-libs/</code> next to the example. If both copies are under <code>$TMPDIR</code> (<code>env.sh</code> sets it to <code>/home/user/cerebras-sdk/tmp</code>), that is enough. Anywhere else, also run <code>export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)</code> before the commands script; the wrapper bind-mounts that path. The compiler's own flag, <code>--import-path DIR</code>, adds a search directory for <code>&lt;…&gt;</code> imports, but alone it did not fix this case for us <span class="tag measured">Measured, WSE-3</span>. Details in <a href="appendix-d-sdk-index.html#run">Appendix D</a>.</p>
+<p><b>If an import fails with "Unable to open ./src/../../benchmark-libs/…".</b> Five benchmarks, <code>7pt-stencil-spmv</code> and the four CG-family solvers, import <code>benchmark-libs</code> by a relative path. The SDK wrappers run <code>cslc</code> in a container that sees only the current directory, <code>$TMPDIR</code> and any <code>CSL_IMPORT_PATH</code> entries, so the import fails even in place in the extras tree. Copy <code>benchmark-libs/</code> next to the example. Then run <code>export CSL_IMPORT_PATH=$(realpath ../benchmark-libs)</code> before the commands script; the wrapper bind-mounts that path, and this worked wherever we put the copies. If both copies are under <code>$TMPDIR</code> the export is not needed, but only when <code>$TMPDIR</code> is already a real path: on a machine where <code>/home/user/cerebras-sdk</code> was a symlink, the same copy failed until <code>TMPDIR</code> was set to its <code>realpath</code> or <code>CSL_IMPORT_PATH</code> was exported <span class="tag measured">Measured</span>. The compiler's own flag, <code>--import-path DIR</code>, adds a search directory for <code>&lt;…&gt;</code> imports, but alone it did not fix this case for us <span class="tag measured">Measured, WSE-3</span>. Details in <a href="appendix-d-sdk-index.html#run">Appendix D</a>.</p>
 
 <h2 id="source-to-sim">From source to simulation</h2>
 <div class="filename">course/programs/01-saxpy/commands.sh</div>
@@ -326,7 +326,7 @@ cs_python run.py --name out</code></pre>
   <path d="M550 60 H586" class="s-acc" stroke-width="2" marker-end="url(#a12)"/>
   </g>
 </svg>
-<figcaption><b>Two commands.</b> On a real CS system the host script is unchanged apart from passing <code>--cmaddr IP:port</code> (<code>cmaddr=None</code> selects the simulator), but you <b>recompile</b> with <code>--fabric-dims</code> set to that system's fabric (750,994 on a CS-2), so the ELFs are not the ones you simulated <span class="tag sdk">SDK 2.10.1, single-tile-matvec</span>. Nothing in this course ran on hardware; the cycle and file details are from our simulator runs <span class="tag measured">Measured</span>. One SAXPY compile took about 24 s and one simulation 7–13 s of wall time on our shared container <span class="tag measured">Measured</span>.</figcaption>
+<figcaption><b>Two commands.</b> On a real CS system the host script is unchanged apart from passing <code>--cmaddr IP:port</code> (<code>cmaddr=None</code> selects the simulator), but you <b>recompile</b> with <code>--fabric-dims</code> set to that system's fabric (757,996 on a CS-2 and 762,1172 on "most CS-3s", by the SDK's online tutorial), so the ELFs are not the ones you simulated <span class="tag vendor">SDK docs, gemv-01</span>. Nothing in this course ran on hardware; the cycle and file details are from our simulator runs <span class="tag measured">Measured</span>. One SAXPY compile took about 24 s and one simulation 7–13 s of wall time on our shared container <span class="tag measured">Measured</span>.</figcaption>
 </figure>
 
 <div class="widget" id="ft">
@@ -345,7 +345,7 @@ cs_python run.py --name out</code></pre>
 <li><code>offset_x ≥ 4 + width_west_buf</code> and <code>offset_y ≥ 1</code>;</li>
 <li><code>fabric_w ≥ offset_x + W + 3 + width_east_buf</code> and <code>fabric_h ≥ offset_y + H + 1</code>.</li>
 </ul>
-<p>At the usual offsets 4,1 that is: the rectangle must be <strong>at least</strong> 7 columns narrower and 2 rows shorter than the fabric. For an 8 × 4 rectangle: <code>--fabric-dims=15,6 --fabric-offsets=4,1</code>. A 6 × 2 rectangle needs 13,4; 12,4 fails with "Fabric dimension must be at least 13-by-4" <span class="tag measured">Measured</span>. On hardware the fabric is fixed (750 × 994 on a CS-2), so the rectangle can be at most 743 × 992 <span class="tag sdk">SDK 2.10.1</span>.</p>
+<p>At the usual offsets 4,1 that is: the rectangle must be <strong>at least</strong> 7 columns narrower and 2 rows shorter than the fabric. For an 8 × 4 rectangle: <code>--fabric-dims=15,6 --fabric-offsets=4,1</code>. A 6 × 2 rectangle needs 13,4; 12,4 fails with "Fabric dimension must be at least 13-by-4" <span class="tag measured">Measured</span>. On hardware the fabric is fixed. The SDK's online tutorial gives 757 × 996 for the CS-2 and 762 × 1172 for "most CS-3s" <span class="tag vendor">SDK docs, gemv-01</span>, so the rectangle can be at most 750 × 994 on a CS-2 and 755 × 1170 on such a CS-3 <span class="tag derived">Derived</span>. The SDK's single-tile-matvec benchmark agrees for the CS-2: its <code>sweep.py --dims 750,994</code> treats 750 × 994 as the program rectangle and compiles with <code>--fabric-dims={width+7},{height+2}</code>, that is 757,996 <span class="tag sdk">SDK 2.10.1, single-tile-matvec/sweep.py</span>. One sentence in that benchmark's README says instead that on a real CS-2 "<code>fabric-dims</code> must be <code>750,994</code>"; it contradicts the script beside it and the tutorial, so this course does not use it. Ask the system's operator for the real dimensions before you compile for hardware.</p>
 
 <div class="widget" id="cb">
 <h4>What will the cslc wrapper say?</h4>
@@ -358,7 +358,7 @@ cs_python run.py --name out</code></pre>
   <label>west/east buf <input type="number" id="cb-bw" min="0" max="10" value="0" style="width:4em" aria-label="west buffer">/<input type="number" id="cb-be" min="0" max="10" value="0" style="width:4em" aria-label="east buffer"></label>
 </div>
 <div class="controls">
-  <label>fabric <select id="cb-fab"><option value="min">smallest that fits (simulator)</option><option value="custom">custom</option><option value="cs2">CS-2: 750,994</option></select></label>
+  <label>fabric <select id="cb-fab"><option value="min">smallest that fits (simulator)</option><option value="custom">custom</option><option value="cs2">CS-2: 757,996</option><option value="cs3">CS-3 (most): 762,1172</option></select></label>
   <label>W×H <input type="number" id="cb-fw" min="1" max="2000" value="8" style="width:5em" aria-label="fabric width">,<input type="number" id="cb-fh" min="1" max="2000" value="3" style="width:5em" aria-label="fabric height"></label>
   <span><button class="btn secondary small" type="button" data-p="1,1">1 × 1</button> <button class="btn secondary small" type="button" data-p="8,4">8 × 4</button> <button class="btn secondary small" type="button" data-p="6,2">6 × 2</button></span>
 </div>
@@ -371,8 +371,8 @@ cs_python run.py --name out</code></pre>
 <tr><th>Flag</th><th>Meaning</th></tr>
 <tr><th colspan="2">cslc (wrapper)</th></tr>
 <tr><td><code>-o out</code></td><td>output directory (default <code>out</code>)</td></tr>
-<tr><td><code>--params=N:64,...</code></td><td>values for the layout's <code>param</code>s; unsigned integers only</td></tr>
-<tr><td><code>--memcpy --channels 1</code></td><td>add the host-I/O runtime and frame with one I/O channel (up to 16 <span class="tag sdk">SDK 2.10.1</span>, and no more than your rectangle's rows)</td></tr>
+<tr><td><code>--params=N:64,...</code></td><td>values for the layout's <code>param</code>s; integers only (the help text says unsigned, but negative values are accepted, see above)</td></tr>
+<tr><td><code>--memcpy --channels 1</code></td><td>add the host-I/O runtime and frame with one I/O channel (up to 16 <span class="tag sdk">SDK 2.10.1</span>, and no more than your rectangle's rows). <code>--channels</code> cannot be left out: without it, or with 0, the wrapper stops with "RuntimeError: n_channels=0 corresponds to the deprecated runtime CSELFRunner", although <code>--help</code> still describes that case as a supported default <span class="tag measured">Measured, cslc 2.10.1</span></td></tr>
 <tr><td><code>--width-west-buf</code>, <code>--width-east-buf</code></td><td>extra buffer columns "to mitigate slow input/output"; the west one shifts your offset to <code>4 + width_west_buf</code></td></tr>
 <tr><td><code>--colors name:value</code>, <code>--import-path DIR</code>, <code>--verbose</code></td><td>set color params, add a library directory, print the driver commands</td></tr>
 <tr><th colspan="2">cslc-driver (forwarded)</th></tr>
@@ -380,10 +380,10 @@ cs_python run.py --name out</code></pre>
 <tr><td><code>--fabric-dims=W,H</code></td><td>size of the whole fabric. With <code>--memcpy</code>, at least (your width + 7, your height + 2) at offsets 4,1. On a real CS system, exactly that system's fabric.</td></tr>
 <tr><td><code>--fabric-offsets=X,Y</code></td><td>where your rectangle's (0,0) sits. With <code>--memcpy</code>, <code>4,1</code> (plus any west buffer).</td></tr>
 <tr><td><code>--out-routes</code></td><td>print every PE's routing table (example below)</td></tr>
-<tr><td><code>--fp16-format</code></td><td>what <code>f16</code> means: f16 / bf16 / cb16</td></tr>
+<tr><td><code>--fp16-format</code></td><td>which one of the three 16-bit float types may exist at run time: <code>f16</code> (IEEE half, 5-bit exponent, 10-bit mantissa; the default), <code>bf16</code> (8-bit exponent, 7-bit mantissa) or <code>cb16</code> ("Cerebras float16", 6-bit exponent, 9-bit mantissa). The three are distinct types and the flag does not change what <code>f16</code> means: values of the two types not chosen must be compile-time constants, and a run-time variable of one fails with "variable of type 'bf16' must be comptime-known". <code>@fp16()</code> returns the chosen type, for code that should work under any setting <span class="tag vendor">SDK docs, FP16 Types</span> <span class="tag measured">Measured</span></td></tr>
 </table></div>
 <details class="card-d"><summary>Less common driver flags</summary>
-<p><code>--single-pe</code>, <code>--output-json</code>, <code>--warnings-as-errors</code>, <code>--g0</code>, <code>--max-parallelism=N</code>, <code>--disable-auto-microthread-id</code>, <code>--dump-dsr-alloc-graph</code>, <code>--lomem-reservation-end</code>, <code>--link-section-start-address-bytes</code>, and <code>--separate-compilation</code> ("Experimental and unsupported") <span class="tag sdk">SDK 2.10.1, cslc-driver --help</span>. Run <code>singularity exec &lt;sif&gt; cslc-driver --help</code> for the full list.</p>
+<p><code>--single-pe</code>, <code>--output-json</code>, <code>--warnings-as-errors</code>, <code>--g0</code> (no debug information), <code>--max-parallelism=N</code>, <code>--disable-auto-microthread-id</code>, <code>--dump-dsr-alloc-graph</code>, <code>--lomem-reservation-end</code>, <code>--link-section-start-address-bytes</code>, and <code>--separate-compilation</code> ("Experimental and unsupported") <span class="tag sdk">SDK 2.10.1, cslc-driver --help</span>. Run <code>singularity exec &lt;sif&gt; cslc-driver --help</code> for the full list.</p>
 </details>
 
 <h2 id="builds">What cslc actually builds</h2>
@@ -413,20 +413,27 @@ cs_python run.py --name out</code></pre>
 <svg id="elf-svg" viewBox="0 0 680 210" width="680" role="img" aria-label="6 by 2 rectangle coloured by ELF file"></svg>
 <div class="readout" id="elf-out" aria-live="polite"></div>
 </div>
-<p><code>out_i_j</code> numbers a <em>group</em> of identical PEs; it is not a PE coordinate. <code>cs_readelf -r</code> shows which fabric tiles a file covers: in the 6 × 2 build without routes, <code>out_1_0.elf</code> covers fabric (5..8, 1..2), all eight middle PEs <span class="tag measured">Measured</span>. The practical consequence: <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> removes coordinate params, but not route differences. Compile time grows with the number of groups, not with the PE count.</p>
+<p><code>out_i_j</code> numbers a <em>group</em> of identical PEs; it is not a PE coordinate. <code>cs_readelf -r</code> (and <code>-m</code>, which prints one line per tile) shows which fabric tiles a file covers: in the 6 × 2 build without routes, <code>out_1_0.elf</code> covers fabric (5..8, 1..2), all eight middle PEs <span class="tag measured">Measured</span>. The practical consequence: <code>&lt;layout&gt;</code>'s <code>get_x_coord()</code> removes coordinate params, but not route differences. Compile time grows with the number of groups, not with the PE count.</p>
 
 <h3>What memcpy adds to every PE's router</h3>
 <p><code>--out-routes</code> on the 6 × 2 build with the per-row route prints (first rows shown) <span class="tag measured">Measured</span>:</p>
-<pre class="output"><code>|    PE    | color | rx        | tx        | sw-1  |
-|    0,0   | 3     | R         | E         |       |
-|          | 21    | R         | E         | rx=R  |
-|          | 22    | W         | R,E       |       |
-|          | 23    | W         | R,E       |       |
-|    0,1   | 3     | W         | R         |       |
-|    1,0   | 3     | R         | E         |       |
-|          | 21    | W         | E         | rx=R  |
-|          | 22    | W         | R,E       |       |</code></pre>
-<p>Your color 3 sits next to memcpy's colors on every PE. Commands (22) and H2D data (23) enter from the west and are passed both to the PE (R) and east along the row; D2H data (21) leaves eastward, with a switch position that lets each PE inject its own results. PE coordinates in this table are rectangle coordinates.</p>
+<pre class="output"><code>+----------+-------+-----------+-----------+-------+-------+-------+
+|    PE    | color | rx        | tx        | sw-1  | sw-2  | sw-3  |
++----------+-------+-----------+-----------+-------+-------+-------+
+|    0,0   | 3     | R         | E         |       |       |       |
+|          | 21    | R         | E         | rx=R  |       |       |
+|          | 22    | W         | R,E       |       |       |       |
+|          | 23    | W         | R,E       |       |       |       |
+|    0,1   | 3     | W         | R         |       |       |       |
+|          | 21    | R         | E         | rx=R  |       |       |
+|          | 22    | W         | R,E       |       |       |       |
+|          | 23    | W         | R,E       |       |       |       |
++----------+-------+-----------+-----------+-------+-------+-------+
+|    1,0   | 3     | R         | E         |       |       |       |
+|          | 21    | W         | E         | rx=R  |       |       |
+|          | 22    | W         | R,E       |       |       |       |
+|          | 23    | W         | R,E       |       |       |       |</code></pre>
+<p>Your color 3 sits next to memcpy's colors on every PE. Commands (22) and H2D data (23) enter from the west and are passed both to the PE (R) and east along the row; D2H data (21) leaves eastward: the first column injects from its own ramp (rx R), and the columns east of it forward what arrives from the west, with a switch position (sw-1, rx=R) that lets each PE inject its own results. PE coordinates in this table are rectangle coordinates.</p>
 
 <h2 id="sim-outputs">Simulator outputs</h2>
 <p>The simulator writes <code>sim.log</code>, <code>sim_stats.json</code>, <code>simconfig.json</code> and <code>simfab_traces/</code> into the directory you ran <code>cs_python</code> from; the host's <code>print</code> output goes to your terminal. A real <code>sim_stats.json</code> from program 01 (WSE-3, a quiet rerun) <span class="tag measured">Measured</span>:</p>
@@ -440,7 +447,7 @@ cs_python run.py --name out</code></pre>
 <ul>
 <li><b>Idle stop.</b> The simulator stops after an idle window once the host has stopped; <code>simconfig.json</code> has <code>"sunsetCount": 50</code>, and most runs stopped after exactly 50 idle cycles <span class="tag measured">Measured</span>.</li>
 <li><b>A deadlock and a success can both end "Stopped due to idleness".</b> Only your host-side check (the <code>assert_allclose</code>) tells you which.</li>
-<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2) every time. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. The Chapter 11 review saw +1.4 % to +2.3 % for program 01 in parallel runs and up to about 4× on one variant, while in-kernel timestamps did not move <span class="tag measured">Measured</span>. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
+<li><b><code>cycle_count</code> is not fully repeatable.</b> Quiet reruns gave 7,740 (WSE-3) and 6,826 (WSE-2). In a later verification on a busy machine, WSE-3 gave 7,740 four times in a row, while WSE-2 gave 7,081 (305-cycle idle tail), 7,007 and then 6,826 <span class="tag measured">Measured</span>. First runs after a compile, and runs while other simulations loaded the machine, gave 7,786 to 11,004 for the same WSE-3 program, and 8,885 for WSE-2 with a 2,109-cycle idle tail <span class="tag measured">Measured</span>. The Chapter 11 review saw +1.4 % to +2.3 % for program 01 in parallel runs and up to about 4× on one variant, while in-kernel timestamps did not move <span class="tag measured">Measured</span>. The simulator keeps counting cycles while it waits for slow host commands. Run one simulation at a time when you compare totals.</li>
 <li><b>To time a kernel</b>, read the PE's own timestamp counter with <code>&lt;time&gt;</code> (topic-02), which stays stable under load, or difference two runs as Lab 3 does. Do not read a single <code>cycle_count</code>.</li>
 <li>A fatal stop writes no <code>sim_stats.json</code> at all <span class="tag measured">Measured</span>. <code>sim.log</code> names the chip internally: FYN = WSE-2, SDR = WSE-3.</li>
 </ul>
@@ -477,9 +484,9 @@ cs_python run.py --name out</code></pre>
   prt.fmt_with_coords(<span class="s">"saxpy start, a = {f}"</span>, .{a});
   …</code></pre>
 <div class="filename">sim.log (6 × 2 run)</div>
-<pre class="output"><code>@4232 PE(0,0): saxpy start, a = 2.5
-@4233 PE(0,1): saxpy start, a = 2.5
-@4234 PE(1,0): saxpy start, a = 2.5</code></pre>
+<pre class="output"><code>@4233 PE(0,0): saxpy start, a = 2.5
+@4235 PE(1,0): saxpy start, a = 2.5
+@4236 PE(0,1): saxpy start, a = 2.5</code></pre>
 <p class="legend">Each line is prefixed with the cycle; <code>fmt_with_coords</code> adds the PE (rectangle coordinates). Output is flushed at each newline; <code>fmt</code> adds one, <code>print_string</code> does not <span class="tag sdk">SDK 2.10.1, topic-13</span> <span class="tag measured">Measured</span>.</p>
 </div>
 <div>
@@ -544,19 +551,19 @@ rt.read_symbol(1, 0, <span class="s">'buffer'</span>, dtype=<span class="s">'uin
 <h2 id="setup">Setting up the SDK</h2>
 <ol>
 <li><b>Get the SDK.</b> Cerebras distributes the SDK 2.10.1 tarball (it is not in a package manager). Unpack it into a directory such as <code>~/cerebras-sdk</code>. It contains the wrapper scripts <code>cslc</code>, <code>cs_python</code>, <code>csdb</code>, <code>cs_readelf</code>, <code>sdk_debug_shell</code> and a 3.5 GB Singularity image (<code>sdk-cbcore-2.10.1-….sif</code>) with the compiler, runtime and simulator <span class="tag measured">Measured</span>. Unpack <code>csl-extras-*.tar.gz</code> inside it to get the tutorials and benchmarks.</li>
-<li><b>Install a container runtime.</b> The wrappers call <code>singularity</code>. On Ubuntu, <code>apt-get install singularity-container</code> (SingularityCE 4.1.1) works <span class="tag measured">Measured</span>.</li>
+<li><b>Install a container runtime.</b> The wrappers call <code>singularity</code>. On Ubuntu, <code>apt-get install singularity-container</code> (SingularityCE 4.1.1) works <span class="tag measured">Measured</span>. Apptainer 1.5.5, which installs a <code>singularity</code> command, also ran every tool in this chapter <span class="tag measured">Measured</span>.</li>
 <li><b>Create <code>env.sh</code></b> and source it in every shell:
 <pre><code><span class="k">export</span> PATH=$HOME/cerebras-sdk:$PATH
-<span class="k">export</span> TMPDIR=$HOME/cerebras-sdk/tmp    <span class="c"># cs_python fails under /tmp</span>
+<span class="k">export</span> TMPDIR=$HOME/cerebras-sdk/tmp    <span class="c"># mounted over the container's /tmp</span>
 mkdir -p <span class="s">"$TMPDIR"</span>
 <span class="k">export</span> SINGULARITY_DROP_CAPS=CAP_SYS_RESOURCE  <span class="c"># only if root without CAP_SYS_RESOURCE</span></code></pre>
-In this course's cloud container, running as root without <code>CAP_SYS_RESOURCE</code>, every tool failed with "Requesting capability set … while permitted capability set is …" until that last line was added <span class="tag measured">Measured</span>. Run <code>cs_python</code> from a directory outside <code>/tmp</code>, with run.py in the directory you run it from.</li>
+In this course's cloud container, running as root without <code>CAP_SYS_RESOURCE</code>, every tool failed with "Requesting capability set … while permitted capability set is …" until that last line was added <span class="tag measured">Measured</span>. With Apptainer there is a second fix: <code>root default capabilities = no</code> in <code>/etc/apptainer/apptainer.conf</code>, after which the tools run without the variable (Apptainer accepts the variable too, with a note that it prefers <code>APPTAINER_DROP_CAPS</code>) <span class="tag measured">Measured, Apptainer 1.5.5</span>. Run <code>cs_python</code> with run.py in the directory you run it from: the wrappers run everything in a container that sees only the current directory, <code>$TMPDIR</code> (mounted over the container's <code>/tmp</code>, which hides the host's <code>/tmp</code>) and, for <code>cslc</code> and the other tools that go through <code>sdk_debug_shell</code>, any <code>CSL_IMPORT_PATH</code> entries; <code>cs_python</code> does not read that variable, so everything run.py opens must sit under the current directory <span class="tag sdk">SDK 2.10.1, sdk_debug_shell, cs_python</span>. Earlier in this course's history <code>cs_python</code> failed in a working directory under <code>/tmp</code>; in a later verification run both <code>cslc</code> and <code>cs_python</code> worked from a directory under <code>/tmp</code> (the current directory is bind-mounted on top), though each run left empty mount-point directories behind in <code>$TMPDIR</code> <span class="tag measured">Measured</span>. A working directory outside <code>/tmp</code> avoids both.</li>
 <li><b>Smoke test</b>: <code>cslc --help</code>, then <code>bash commands.sh</code> in a copy of <code>programs/01-saxpy</code>; it should print <code>SUCCESS!</code>.</li>
 </ol>
 <p class="legend">If you are using this course's repository, <code>.claude/skills/cerebras-sdk/scripts/setup.sh</code> does all of this idempotently. Then <code>source ~/cerebras-sdk/env.sh; cd course/programs &amp;&amp; ARCH=wse3 bash run_all.sh</code>.</p>
 
 <h2>Break it on purpose</h2>
-<p>Copy <code>programs/01-saxpy</code> to a scratch directory outside <code>/tmp</code> and make one change at a time. Predict the message first; each takes under a minute.</p>
+<p>Copy <code>programs/01-saxpy</code> to a scratch directory (preferably outside <code>/tmp</code>, see Setting up) and make one change at a time. Predict the message first; each takes under a minute.</p>
 <ol class="break">
 <li>Change <code>var y_ptr</code> to <code>const y_ptr</code>. <details><summary>what you'll see</summary> "exported symbol mutability mismatch" at compile time.</details></li>
 <li>Drop <code>--params=N:64</code> from commands.sh. <details><summary>what you'll see</summary> "only 'var' and 'extern const' variables may be uninitialized".</details></li>
@@ -570,7 +577,7 @@ In this course's cloud container, running as root without <code>CAP_SYS_RESOURCE
 <h3>Check yourself</h3>
 <details><summary>In program 03, which file decides that PE (3,0) talks to PE (4,0) on color 1, and how does device code use the color?</summary><p><code>layout.csl</code>, through <code>@set_color_config</code> on both PEs (tx EAST on (3,0), rx WEST on (4,0)). The device code receives the color as a param and uses it: on WSE-2 directly, on WSE-3 through an input/output queue it binds to the color with <code>@initialize_queue</code>.</p></details>
 <details><summary>Program 03 passes each PE a role (first / middle / last) and send/receive colors that alternate by column. For P = 16, how many PE programs does cslc build, and why not 16?</summary><p>One per distinct combination of code, params and routes: first, last, and middle-even / middle-odd, so 4, the same as for P = 8. Compile time grows with the number of distinct combinations, not with the PE count. Passing <code>.x = x</code> to every PE would make 16; read coordinates at run time with <code>&lt;layout&gt;</code> instead. Different routes still split programs.</p></details>
-<details><summary>You need a 10 × 3 rectangle with memcpy. What flags do you pass in the simulator, and what changes on a CS-2?</summary><p><code>--fabric-dims=17,5 --fabric-offsets=4,1</code> (width + 7, height + 2). On a CS-2 you recompile with <code>--fabric-dims=750,994</code> (same offsets) and pass <code>--cmaddr</code> to run.py.</p></details>
+<details><summary>You need a 10 × 3 rectangle with memcpy. What flags do you pass in the simulator, and what changes on a CS-2?</summary><p><code>--fabric-dims=17,5 --fabric-offsets=4,1</code> (width + 7, height + 2). On a CS-2 you recompile with <code>--arch=wse2</code> and that system's fabric, <code>--fabric-dims=757,996</code> by the SDK's online tutorial (same offsets), and pass <code>--cmaddr</code> to run.py.</p></details>
 <details><summary>Your program compiles, then run.py dies with "could be a kernel stall". Where do you look, in order?</summary><p>The RPC just before the failing memcpy: does every path call <code>unblock_cmd_stream()</code>? Then <code>&lt;simprint&gt;</code> lines in <code>sim.log</code> to see which PE stopped where; then the routes (<code>--out-routes</code>); then the instruction trace or csdb. Rerun once first: heavy host load can also trigger it. Do not trust "Stopped due to idleness" as success.</p></details>
 <details><summary>You delete <code>@export_symbol(saxpy)</code>. Does it compile?</summary><p>Yes. The function just never appears in <code>out/bin/out_rpc.json</code>, and <code>rt.launch</code> fails at run time with "the function saxpy does not exist".</p></details>
 <details><summary>Which file shows you that cslc kept the route you asked for?</summary><p>The <code>--out-routes</code> table at compile time, or <code>cs_readelf --routing</code> on the ELF in <code>out/bin/</code> that covers that PE (<code>cs_readelf -r</code> tells you which one).</p></details>
@@ -954,10 +961,11 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     const W = v("w"), H = v("h"), ox = v("ox"), oy = v("oy"), ch = v("ch"), bw = v("bw"), be = v("be"), mode = g("fab").value;
     const bx = ox + W + 3 + be, by = oy + H + 1;
     if (mode === "min") { g("fw").value = bx; g("fh").value = by; }
-    if (mode === "cs2") { g("fw").value = 750; g("fh").value = 994; }
+    if (mode === "cs2") { g("fw").value = 757; g("fh").value = 996; }
+    if (mode === "cs3") { g("fw").value = 762; g("fh").value = 1172; }
     g("fw").disabled = g("fh").disabled = mode !== "custom";
     const fw = v("fw"), fh = v("fh");
-    let cmd = `cslc --arch=wse3 ./layout.csl --fabric-dims=${fw},${fh} --fabric-offsets=${ox},${oy} --params=... -o out --memcpy --channels ${ch}`;
+    let cmd = `cslc --arch=${mode === "cs2" ? "wse2" : "wse3"} ./layout.csl --fabric-dims=${fw},${fh} --fabric-offsets=${ox},${oy} --params=... -o out --memcpy --channels ${ch}`;
     if (bw) cmd += ` --width-west-buf ${bw}`; if (be) cmd += ` --width-east-buf ${be}`;
     let err = null;
     if (!(ox >= 4 + bw && oy >= 1)) err = "RuntimeError: The core must have --fabric-offsets=4+width_west_buf,1";
@@ -969,7 +977,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     out.innerHTML = `<div>${esc(cmd)}</div><div style="margin-top:6px">` + (err
       ? `<span class="err-t">✕ ${esc(err)}</span>`
       : `<span class="ok-t">✓ passes the wrapper's checks.</span> Smallest fabric for this rectangle: ${bx} × ${by}. A SAXPY-style program (same params, no routes) gets ${groups} PE program${groups > 1 ? "s" : ""} (${W >= 3 ? "first, middle, last column" : W === 2 ? "first and last column" : "one PE"}).` +
-        (mode === "cs2" ? " On hardware also pass --cmaddr to run.py." : "")) + `</div>`;
+        (mode === "cs2" || mode === "cs3" ? " On hardware also pass --cmaddr to run.py." : "")) + `</div>`;
   }
   ["w", "h", "ox", "oy", "ch", "bw", "be", "fw", "fh"].forEach(id => g(id).oninput = run);
   g("fab").onchange = run;
@@ -1002,7 +1010,7 @@ const isComment = s => /^\s*(\/\/|#)/.test(s);
     el("text", { x: X0, y: 200, "font-size": 12, class: "muted" }, svg).textContent = "Same pe_program.csl and same .N everywhere. File names number groups, not PE coordinates.";
     out.textContent = r
       ? "out/bin/: out_0_0 out_0_1 out_1_0 out_1_1 out_2_0 out_2_1 .elf (Measured). cs_readelf --routing on out_0_1.elf shows color 3 WEST → RAMP."
-      : "out/bin/: out_0_0 out_1_0 out_2_0 .elf (Measured). cs_readelf -m out_1_0.elf: fabric (5..8, 1..2), 5,088 bytes each.";
+      : "out/bin/: out_0_0 out_1_0 out_2_0 .elf (Measured). cs_readelf -m out_1_0.elf: fabric (5..8, 1..2), 4,752 bytes each (5,088 once the <simprint> line of the Debugging section is added).";
   }
   cbx.onchange = draw; draw();
 })();
